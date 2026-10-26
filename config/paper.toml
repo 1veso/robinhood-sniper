@@ -1,0 +1,28 @@
+# Research defaults. Money values are strings to preserve decimal precision.
+# A 2% cap means aggregate FULL-LOSS exposure, including friction reserves.
+# Ticket is a maximum; the engine sizes down to the risk budget.
+[risk]
+paper_only = true
+starting_cash_usd = "1000"
+min_liquidity_usd = "50000"
+min_independent_wallets = 5
+max_account_risk_pct = "2"
+per_position_risk_pct = "0.5"
+max_open_positions = 4
+ticket_usd = "25"
+max_entries_per_day = 6
+daily_loss_halt_pct = "2"
+cooldown_seconds = 86400
+max_quote_age_seconds = 30
+max_evidence_age_seconds = 300
+max_confirmation_age_seconds = 900
+min_wallet_spend_usd = "10"
+max_price_impact_bps = "100"
+stop_loss_pct = "35"
+take_profit_pct = "100"
+take_profit_fraction = "0.5"
+trailing_stop_pct = "30"
+time_stop_seconds = 21600
+time_stop_min_gain_pct = "20"
+max_api_cost_usd_day = "1"
+required_safety_checks = ["contract_controls", "sellability", "liquidity_controls", "holder_distribution", "deployer_history"]
