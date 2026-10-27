@@ -16,6 +16,8 @@ from sniper.adapters.evm_store import EvmStore
 from sniper.alerts import fresh, qualify, reviewed_wallets
 from sniper.policy import RiskPolicy
 from sniper.telegram import AlertStore, TelegramClient
+from sniper.adapters.goplus import GoPlusClient, combine_review
+from sniper.models import SafetyEvidence
 from supervise import atomic_json, instance_lock
 
 
@@ -48,7 +50,7 @@ def rpc_url(runtime):
     return os.environ.get("SNIPER_OBSERVATION_RPC_URL") or "https://rpc.mainnet.chain.robinhood.com"
 
 
-def cycle(runtime, *, send=False, rpc=None, collector_seconds=45):
+def cycle(runtime, *, send=False, rpc=None, collector_seconds=45, live_screening=False):
     folder = runtime / "telegram"
     folder.mkdir(parents=True, exist_ok=True)
     policy = RiskPolicy.from_file(ROOT / "config/paper.toml")
@@ -108,13 +110,44 @@ def cycle(runtime, *, send=False, rpc=None, collector_seconds=45):
         except (ValueError, OSError, RuntimeError) as exc:
             status.update(health="DEGRADED", safety_error=f"{type(exc).__name__}: remaining launches retry next cycle")
         safety = read_object(runtime / "safety.json", {})
+        if live_screening:
+            observation_path = runtime / "safety-observations.json"
+            observations = read_object(observation_path, {})
+            screening_errors = []
+            screened = 0
+            # Two public API calls per cycle, with stale/unchecked tokens first.
+            screen_queue = sorted(targets, key=lambda token: observations.get(
+                f"eip155:{CHAIN_ID}/erc20:{token}", {}).get("observed_at", 0))
+            for token in screen_queue[:2]:
+                asset = f"eip155:{CHAIN_ID}/erc20:{token}"
+                if fresh(observations.get(asset, {}).get("observed_at"), int(time.time()), 180):
+                    continue
+                try:
+                    observations[asset] = GoPlusClient().screen(token).as_dict()
+                    screened += 1
+                except (ValueError, OSError, RuntimeError) as exc:
+                    screening_errors.append({"asset_id": asset, "error": type(exc).__name__})
+            atomic_json(observation_path, observations)
+            status["safety_screening"] = {"updated": screened, "errors": screening_errors}
+
+        def safety_for(asset):
+            reviewed = read_object(runtime / "safety.json", {}).get(asset)
+            if not live_screening:
+                return reviewed
+            raw = read_object(runtime / "safety-observations.json", {}).get(asset)
+            if raw is None:
+                return None
+            try:
+                return combine_review(SafetyEvidence.from_dict(raw), reviewed, now=int(time.time())).as_dict()
+            except ValueError:
+                return None
         reasons = {}
         # A failed/incomplete source read cannot authorize an outgoing alert.
         source_ok = collected is not None and collected.get("status") != "budget_exhausted" and not collected.get("errors")
         for pool in pools:
             token = pool["token1"] if pool["token0"] in bases else pool["token0"]
             asset = f"eip155:{CHAIN_ID}/erc20:{token}"
-            signal, reason = qualify(pool, buys, wallets, safety.get(asset), alerts.assessment(token), policy, int(time.time()))
+            signal, reason = qualify(pool, buys, wallets, safety_for(asset), alerts.assessment(token), policy, int(time.time()))
             reasons[reason] = reasons.get(reason, 0) + 1
             if source_ok and signal:
                 status["alerts_queued"] += alerts.enqueue(token, signal, int(time.time()))
@@ -140,7 +173,7 @@ def cycle(runtime, *, send=False, rpc=None, collector_seconds=45):
                 token = payload["token"]
                 asset = f"eip155:{CHAIN_ID}/erc20:{token}"
                 signal, _ = qualify(payload["pool"], [payload["buy"]], current_wallets(runtime),
-                    read_object(runtime / "safety.json", {}).get(asset), alerts.assessment(token), policy, current)
+                    safety_for(asset), alerts.assessment(token), policy, current)
                 if signal is None:
                     return False
                 for number, expected in payload["anchors"]:
@@ -182,7 +215,7 @@ def main(argv=None):
             while not (folder / "STOP").exists():
                 started = time.monotonic()
                 try:
-                    status = cycle(runtime, send=args.send)
+                    status = cycle(runtime, send=args.send, live_screening=True)
                 except Exception as exc:
                     status = {"mode": "ALERTS_ONLY", "health": "ERROR", "finished_at": int(time.time()),
                               "error": f"{type(exc).__name__}: check credentials, manifests and journals; retry next cycle"}

@@ -3,13 +3,46 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, MagicMock, patch
 
 import research
 from sniper.adapters.evm import RpcError
 
 
 class ResearchIntegrationTests(unittest.TestCase):
+    def test_history_retains_old_snapshot_and_resumes_active_wallet(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = Path(temporary)
+            folder = runtime / "research"
+            folder.mkdir()
+            (runtime / "blockscout-api-key.txt").write_text("test-key-not-real")
+            snapshot = {"block": 105, "timestamp": int(time.time()) - 2 * 86400,
+                        "hash": "0x" + "ab" * 32, "start_block": 10}
+            (folder / "history-snapshot.json").write_text(json.dumps(snapshot))
+            cohort = folder / "cohort-105"
+            cohort.mkdir()
+            first, active = "0x" + "11" * 20, "0x" + "22" * 20
+            (cohort / "progress.json").write_text(json.dumps({"active_wallet": active}))
+            state = {"updated_at": int(time.time()), "candidates": {
+                w: {"wallet": w, "first_seen_at": i, "sampled_transactions": 1}
+                for i, w in enumerate((first, active))}}
+            (folder / "discovery.json").write_text(json.dumps(state))
+            rpc = MagicMock(url="https://rpc.example")
+            rpc.call.return_value = {"hash": snapshot["hash"]}
+            with patch.object(research, "discover") as discover, patch.object(
+                    research, "RpcClient", return_value=rpc), patch.object(
+                    research, "ResearchCache") as cache, patch.object(
+                    research, "reconstruct_wallet", side_effect=research.ResearchPending("Cycle budget reached")) as reconstruct:
+                cache.return_value.max_calls = 48
+                cache.return_value.remaining = 0
+                cache.return_value.progress = {}
+                result = research.run_research(runtime)
+            discover.assert_not_called()
+            self.assertEqual(reconstruct.call_args.args[1:], (active, snapshot))
+            self.assertEqual(result["snapshot"], snapshot)
+            self.assertEqual(cache.call_args.kwargs["seconds"], 35)
+            self.assertEqual(cache.call_args.kwargs["max_calls"], 48)
+
     def test_dense_discovery_interval_retries_without_skipping_blocks(self):
         block_hash = "0x" + "ab" * 32
         rpc = Mock()
@@ -36,10 +69,10 @@ class ResearchIntegrationTests(unittest.TestCase):
             wallet = "0x" + "12" * 20
             state = {"candidates": {wallet: {"wallet": wallet, "first_seen_at": 1,
                                             "sampled_transactions": 1}}}
-            rpc = Mock()
+            rpc = MagicMock()
             rpc.url = "https://rpc.example"
             rpc.call.return_value = {"hash": snapshot["hash"]}
-            cache = Mock()
+            cache = Mock(max_calls=48, remaining=47, progress={})
             cache.call.side_effect = RpcError("historical state is not available")
             with patch.object(research, "discover", return_value=(state, {})), patch.object(
                     research, "RpcClient", return_value=rpc), patch.object(
@@ -61,9 +94,9 @@ class ResearchIntegrationTests(unittest.TestCase):
             wallet = "0x" + "12" * 20
             state = {"candidates": {wallet: {"wallet": wallet, "first_seen_at": 1,
                                             "sampled_transactions": 1}}}
-            archive = Mock(url="https://archive.example/private-key")
+            archive = MagicMock(url="https://archive.example/private-key")
             archive.verify_chain.side_effect = RpcError("wrong chain: expected 4663, received 1")
-            observation = Mock(url="https://observe.example")
+            observation = MagicMock(url="https://observe.example")
             with patch.object(research, "discover", return_value=(state, {"new_candidates": 1})), patch.object(
                     research, "RpcClient", side_effect=[archive, observation]), patch.object(
                     research, "reconstruct_wallet") as history:

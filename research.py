@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 from sniper.adapters.evm import RpcClient, RpcError, DEFAULT_RPC, USDG, SWAP_TOPIC, decode_swap, address, hash32, quantity
-from sniper.adapters.wallet_history import ResearchCache, ResearchPending, block_at_or_before, reconstruct_wallet
+from sniper.adapters.wallet_history import ResearchCache, ResearchPending, CoverageExceeded, block_at_or_before, reconstruct_wallet
 from sniper.wallet_analysis import analyse_wallet, cluster_controllers, apply_controller_reviews
 from supervise import atomic_json, child_environment, instance_lock
 
@@ -99,27 +99,36 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
     key = key_file.read_text(encoding="utf-8-sig").strip() if key_file.exists() else os.environ.get("BLOCKSCOUT_API_KEY", "")
     rpc = RpcClient(env.get("SNIPER_RPC_URL") or DEFAULT_RPC, timeout=10, max_retries=1)
     discovery_rpc = RpcClient(env.get("SNIPER_OBSERVATION_RPC_URL") or rpc.url, timeout=10, max_retries=1)
-    cache = ResearchCache(folder / "cache", discovery_rpc, blockscout_key=key, max_calls=max_calls, seconds=seconds)
+    discovery_seconds = min(10, seconds / 4)
+    discovery_calls = min(12, max_calls // 4)
+    cache = ResearchCache(folder / "cache", discovery_rpc, blockscout_key=key,
+                          max_calls=discovery_calls, seconds=discovery_seconds)
     path = folder / "discovery.json"
     state = json.loads(path.read_text()) if path.exists() else {}
     pending = []
     discovery = {}
     try:
-        state, discovery = discover(cache, state)
-        atomic_json(path, state)
+        # Discovery must not spend the history worker's budget. Once candidates
+        # exist, a five-minute discovery cadence leaves time to finish histories.
+        if not state.get("candidates") or time.time() - state.get("updated_at", 0) >= 300:
+            with discovery_rpc.budget(discovery_seconds):
+                state, discovery = discover(cache, state, sample=4)
+            atomic_json(path, state)
+        else:
+            discovery = {"status": "cached", "cursor": state.get("cursor"),
+                         "next_due_at": state.get("updated_at", 0) + 300}
     except ResearchPending as exc:
         pending.append(str(exc))
     except RpcError as exc:
         pending.append(f"DISCOVERY_RPC_UNAVAILABLE: {exc}")
-    # One shared request/time budget; immutable evidence is keyed by chain and
-    # block anchor. Verify the archive provider independently before using it.
-    cache.rpc = rpc
+    cache = ResearchCache(folder / "cache", rpc, blockscout_key=key,
+                          max_calls=max_calls - discovery_calls,
+                          seconds=seconds - discovery_seconds)
     candidates = state.get("candidates", {})
     snapshot_path = folder / "history-snapshot.json"
     snapshot = json.loads(snapshot_path.read_text()) if snapshot_path.exists() else None
-    # Daily cohorts retain earlier results without mixing observation cutoffs.
-    if snapshot and time.time() - snapshot["timestamp"] > 86400:
-        snapshot = None
+    # Keep an unfinished cohort stable. Daily automatic resets discarded large
+    # histories before they could finish; freshness is checked at qualification.
     cohort = folder / f"cohort-{snapshot['block']}" if snapshot else None
     snapshot_verified = False
     if not key:
@@ -149,18 +158,30 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
             attempts = json.loads(attempts_path.read_text()) if attempts_path.exists() else {}
             queue = sorted(candidates.items(), key=lambda x: (x[1]["first_seen_at"], x[0]))
             queue = [(w, c) for w, c in queue if not (cohort / f"wallet-{w}.json").exists()][:100]
-            queue.sort(key=lambda x: (attempts.get(x[0], 0), x[1]["first_seen_at"], x[0]))
-            for wallet, candidate in queue:
+            progress_path = cohort / "progress.json"
+            progress = json.loads(progress_path.read_text()) if progress_path.exists() else {}
+            active = progress.get("active_wallet")
+            queue.sort(key=lambda x: (x[0] != active, attempts.get(x[0], 0), x[1]["first_seen_at"], x[0]))
+            for wallet, candidate in queue[:5]:
                 report_path = cohort / f"wallet-{wallet}.json"
                 if report_path.exists():
                     continue
                 attempts[wallet] = int(time.time())
                 atomic_json(attempts_path, attempts)
-                history = reconstruct_wallet(cache, wallet, snapshot)
+                atomic_json(progress_path, {"active_wallet": wallet, "last_attempt_at": int(time.time())})
+                try:
+                    history = reconstruct_wallet(cache, wallet, snapshot)
+                except CoverageExceeded:
+                    # This is a recorded rejection, never a truncated profitable
+                    # history. Move on instead of retrying this candidate forever.
+                    history = {"wallet": wallet, "cutoff": snapshot["timestamp"],
+                               "complete": False, "gaps": ["history_exceeds_10000_records_per_index"],
+                               "records": [], "source": "Blockscout coverage limit; no performance conclusion"}
                 atomic_json(cohort / f"history-{wallet}.json", history)
                 report = analyse_wallet(history)
                 atomic_json(report_path, report)
-                break
+                atomic_json(progress_path, {"active_wallet": None, "completed_wallet": wallet,
+                                            "completed_at": int(time.time())})
         except ResearchPending as exc:
             pending.append(str(exc))
         except RpcError as exc:
@@ -185,6 +206,8 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
                "discovery": discovery, "candidate_count": len(candidates), "history_reports": len(reports),
                "performance_qualified_count": len(shortlist), "approved_wallet_count": len(selected),
                "pending": pending, "snapshot": snapshot, "shortlist": shortlist,
+               "history_progress": {"requests_this_cycle": cache.max_calls - cache.remaining,
+                                    "last_operation": cache.progress},
                "controller_policy": "Automatic links merge suspected controllers. No observed link is not proof of independence; no automatic qualified:true assertion.",
                "reports": reports, "candidate_file": str(folder / "wallet-candidates.csv")}
     atomic_json(folder / "wallet-research.json", summary)

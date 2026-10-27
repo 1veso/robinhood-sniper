@@ -33,7 +33,8 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(result["health"], "OK")
         self.assertEqual(result["entry_status"], "BLOCKED")
         self.assertEqual(result["reviewed_clusters"], 0)
-        self.assertEqual(len(result["entry_prerequisite_gaps"]), 3)
+        self.assertEqual(len(result["entry_prerequisite_gaps"]), 2)
+        self.assertTrue(any("liquidity-control" in gap for gap in result["entry_prerequisite_gaps"]))
         self.assertEqual(json.loads((self.runtime / "wallets.json").read_text()), {})
         self.assertTrue((self.runtime / "account.html").exists())
 

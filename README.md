@@ -5,7 +5,11 @@ Robinhood Chain events, checks supplied wallet and token evidence, models entrie
 and exits, and keeps a durable account ledger. Solana screening and optional Grok
 research annotation are included as separate adapters.
 
-This is version **0.1.3**: runnable software for testing the proposed strategy.
+This is version **0.1.4**: runnable software for testing the proposed strategy.
+
+Live paper setup and the seven-day readiness requirements are described in
+[PAPER_TRIAL.md](docs/PAPER_TRIAL.md). A running collector is not evidence of an
+active trading trial; the account report shows blocked prerequisites separately.
 
 The separate [two-minute Telegram monitor](docs/TELEGRAM.md) sends conditional
 research alerts after current safety checks and a corroborated reviewed-wallet

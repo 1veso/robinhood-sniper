@@ -21,6 +21,10 @@ class ResearchPending(RuntimeError):
     pass
 
 
+class CoverageExceeded(ResearchPending):
+    """A candidate exceeds the declared analysis scope, not a transient outage."""
+
+
 def account_rows(raw, action):
     rows = raw.get("result") if isinstance(raw, dict) else None
     if not isinstance(rows, list):
@@ -42,6 +46,9 @@ class ResearchCache:
         self.remaining = max_calls
         self.deadline = time.monotonic() + seconds
         self.last_request = 0.0
+        self.memo = {}
+        self.progress = {}
+        self.max_calls = max_calls
 
     def reserve(self):
         if self.remaining <= 0 or time.monotonic() >= self.deadline:
@@ -54,11 +61,14 @@ class ResearchCache:
 
     def cached(self, key, fetch, *, validate=None):
         path = self.root / (hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest() + ".json")
+        if path.name in self.memo:
+            return self.memo[path.name]
         if path.exists():
             result = json.loads(path.read_text(encoding="utf-8"))
             try:
                 if validate:
                     validate(result)
+                self.memo[path.name] = result
                 return result
             except ResearchPending:
                 # Earlier versions cached HTTP-200 API errors. Discard only
@@ -71,13 +81,16 @@ class ResearchCache:
         temp = path.with_suffix(".tmp")
         temp.write_text(json.dumps(result, allow_nan=False), encoding="utf-8")
         temp.replace(path)
+        self.memo[path.name] = result
         return result
 
     def call(self, method, params, *, anchor):
+        self.progress = {"stage": "archive_rpc", "method": method}
         return self.cached(["rpc", CHAIN_ID, anchor, method, params], lambda: self.rpc.call(method, params))
 
     def get(self, url, *, headers=None):
         parts = urllib.parse.urlsplit(url)
+        self.progress = {"stage": "historical_http", "host": parts.hostname}
         action = urllib.parse.parse_qs(parts.query).get("action", [None])[0]
         validate = (lambda raw: account_rows(raw, action)) if (
             parts.hostname == "api.blockscout.com" and action in {"txlist", "txlistinternal", "tokentx"}) else None
@@ -130,7 +143,7 @@ class ResearchCache:
             results.extend(rows)
             if len(rows) < 100:
                 return results
-        raise ResearchPending("Wallet history exceeds 100-page coverage budget")
+        raise CoverageExceeded("Wallet history exceeds 100-page coverage budget")
 
 
 def historical_price(series: list, timestamp: int, max_age: int = 7200) -> Decimal:
@@ -183,6 +196,17 @@ def reconstruct_wallet(cache: ResearchCache, wallet: str, snapshot: dict) -> dic
     wallet = address(wallet)
     end, cutoff, anchor = snapshot["block"], snapshot["timestamp"], snapshot["hash"]
     start = snapshot["start_block"]
+    code = cache.call("eth_getCode", [wallet, hex(end)], anchor=anchor)
+    if code != "0x":
+        return {"wallet": wallet, "cutoff": cutoff, "complete": False, "records": [],
+                "gaps": ["contract_wallet_or_delegated_account_not_supported"], "is_eoa": False,
+                "source": "Pinned archive code check; unsupported account, no performance conclusion"}
+    before_nonce = quantity(cache.call("eth_getTransactionCount", [wallet, hex(max(0, start - 1))], anchor=anchor))
+    after_nonce = quantity(cache.call("eth_getTransactionCount", [wallet, hex(end)], anchor=anchor))
+    if after_nonce < before_nonce:
+        raise ValueError("Historical account nonce decreased")
+    if after_nonce - before_nonce >= 10000:
+        raise CoverageExceeded("Wallet exceeds transaction coverage budget")
     txs = cache.account_history(wallet, "txlist", start, end)
     # Include the lifetime transfer-index universe when finding boundary
     # holdings. Otherwise a losing token held untouched for the whole window
@@ -207,11 +231,6 @@ def reconstruct_wallet(cache: ResearchCache, wallet: str, snapshot: dict) -> dic
         if not isinstance(raw, dict) or not isinstance(raw.get("prices"), list):
             raise ResearchPending("Historical price series unavailable")
         prices[token] = raw["prices"]
-    code = cache.call("eth_getCode", [wallet, hex(end)], anchor=anchor)
-    if code != "0x":
-        gaps.append("contract_wallet_or_delegated_account_not_supported")
-    before_nonce = quantity(cache.call("eth_getTransactionCount", [wallet, hex(max(0, start - 1))], anchor=anchor))
-    after_nonce = quantity(cache.call("eth_getTransactionCount", [wallet, hex(end)], anchor=anchor))
     receipt_tokens, normalized_by_tx = {}, {}
     for tx_hash in hashes:
         tx = cache.call("eth_getTransactionByHash", [tx_hash], anchor=anchor)

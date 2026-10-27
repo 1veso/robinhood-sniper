@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from contextlib import ExitStack
 from dataclasses import replace
+from decimal import Decimal
 import json
 import os
 import sqlite3
@@ -221,7 +222,13 @@ def command_run(args):
         resources.callback(store.close)
         market = DexScreenerClient(chain_id="robinhoodchain")
         collector = EvmCollector(RpcClient(args.rpc), store=store, watchlist=watchlist,
-                                 confirmations=args.confirmations, max_blocks_per_request=100)
+                                 confirmations=args.confirmations, max_blocks_per_request=500)
+        live_evidence = getattr(args, "live_evidence", False)
+        if live_evidence:
+            from .adapters.goplus import GoPlusClient, combine_review
+            from .adapters.v3_route import V3RouteClient
+            safety_client = GoPlusClient()
+            routes = V3RouteClient(RpcClient(args.rpc, timeout=6, max_retries=1), market)
         # Selection belongs to an experiment, including across process restarts.
         selection = json.dumps(watchlist, sort_keys=True, default=str, allow_nan=False)
         with ledger.transaction():
@@ -240,6 +247,10 @@ def command_run(args):
             return asset_id.split(":")[-1]
 
         def safety_provider(asset_id, now):
+            if live_evidence:
+                automatic = safety_client.screen(token_from_asset(asset_id))
+                reviewed = manifest_record(args.safety, asset_id) if args.safety else None
+                return combine_review(automatic, reviewed, now=int(time.time()))
             if args.safety:
                 record = manifest_record(args.safety, asset_id)
                 if record is not None:
@@ -248,6 +259,16 @@ def command_run(args):
                                   "unverified:independent-contract-and-exit-evidence-required")
 
         def quote_provider(asset_id, pool_id, now):
+            if live_evidence:
+                held = [p for p in ledger.positions() if p["asset_id"] == asset_id and p["pool_id"] == pool_id]
+                quantity = max((p["qty"] for p in held), default=Decimal(0))
+                quote = routes.quote(token_from_asset(asset_id), pool_id, max_notional=policy.ticket_usd,
+                                     sell_quantity=quantity)
+                with ledger.transaction():
+                    proof = routes.last_evidence
+                    ledger.record_event(f"route:{asset_id}:{pool_id}:{proof['block_hash']}:{proof['sell_input_raw']}:{quote.observed_at}",
+                                        "paper_route_evidence", proof, quote.observed_at)
+                return quote
             if args.quotes:
                 record = manifest_record(args.quotes, asset_id)
                 if record is not None:
@@ -486,6 +507,8 @@ def parser() -> argparse.ArgumentParser:
                                  help="Cooperative RPC time budget; completed chunks persist, unfinished chunks retry")
             collect.add_argument("--safety", help="Timestamped external safety evidence by canonical asset ID")
             collect.add_argument("--quotes", help="Timestamped external route observations by canonical asset ID")
+            collect.add_argument("--live-evidence", action="store_true",
+                                 help="Fetch GoPlus screening and bounded V3 buy/sell quotes for paper simulation")
         collect.set_defaults(func=handler)
     rank = sub.add_parser("rank", help="Deterministically rank supplied verified wallet statistics")
     rank.add_argument("--input", required=True)

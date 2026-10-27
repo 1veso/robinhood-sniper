@@ -116,7 +116,7 @@ class RpcClient:
     READ_METHODS = frozenset({
         "eth_chainId", "eth_blockNumber", "eth_getBlockByNumber", "eth_getLogs",
         "eth_getTransactionByHash", "eth_getTransactionReceipt", "eth_getCode", "eth_call",
-        "eth_getTransactionCount",
+        "eth_getTransactionCount", "eth_gasPrice",
     })
 
     def __init__(self, url: str = DEFAULT_RPC, *, timeout: float = 15,
@@ -133,6 +133,7 @@ class RpcClient:
         self.transport, self.max_retries, self.sleeper = transport, max_retries, sleeper
         self._id = 0
         self._deadline: float | None = None
+        self.batch_enabled = transport is None
 
     @contextmanager
     def budget(self, seconds: float | None):
@@ -168,9 +169,44 @@ class RpcClient:
             result = json.loads(raw)
         except (ValueError, UnicodeDecodeError) as exc:
             raise RpcError("RPC returned invalid JSON") from exc
-        if not isinstance(result, dict):
-            raise RpcError("RPC returned a non-object response")
+        if not isinstance(result, (dict, list)):
+            raise RpcError("RPC returned an invalid response")
         return result
+
+    def call_many(self, calls: list[tuple[str, list[Any]]]) -> list[Any]:
+        """Read-only batch with exact ID matching; partial responses fail closed."""
+        if not 1 <= len(calls) <= 50:
+            raise ValueError("RPC batch must contain 1..50 requests")
+        if any(method not in self.READ_METHODS for method, _ in calls):
+            raise RpcError("read-only RPC refuses batch containing a write method")
+        payload = []
+        for method, params in calls:
+            self._id += 1
+            payload.append({"jsonrpc": "2.0", "id": self._id, "method": method, "params": params})
+        for attempt in range(self.max_retries + 1):
+            self.remaining()
+            try:
+                response = (self.transport or self._http)(payload)
+                self.remaining()
+                break
+            except urllib.error.HTTPError as exc:
+                if exc.code not in {429, 500, 502, 503, 504} or attempt == self.max_retries:
+                    raise RpcError(f"RPC batch HTTP failure ({exc.code})") from None
+            except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
+                if attempt == self.max_retries:
+                    raise RpcError("RPC batch connection failed") from None
+            self.sleeper(min(0.25 * (2 ** attempt), 2, self.remaining()))
+        if not isinstance(response, list) or len(response) != len(payload):
+            raise RpcError("RPC batch response is incomplete")
+        by_id = {}
+        expected = {p["id"] for p in payload}
+        for item in response:
+            if (not isinstance(item, dict) or item.get("jsonrpc") != "2.0"
+                    or type(item.get("id")) is not int or item["id"] not in expected
+                    or item["id"] in by_id or item.get("error") is not None or "result" not in item):
+                raise RpcError("RPC batch envelope, result, or response identity is invalid")
+            by_id[item["id"]] = item["result"]
+        return [by_id[p["id"]] for p in payload]
 
     def call(self, method: str, params: list[Any] | None = None) -> Any:
         if method not in self.READ_METHODS:
@@ -492,6 +528,27 @@ class EvmCollector:
         headers: dict[int, dict[str, Any]] = {}
         end_anchor = self.block(end)
         events, pools, swaps, buys, errors = [], [], [], [], []
+        def prefetch_headers(logs):
+            if not self.rpc.batch_enabled:
+                return
+            numbers = set()
+            for raw in logs:
+                try:
+                    number = quantity(raw.get("blockNumber"))
+                    if start <= number <= end and number not in headers:
+                        numbers.add(number)
+                except (ValueError, AttributeError):
+                    pass  # Normal event decoding records malformed logs below.
+            numbers = sorted(numbers)
+            for offset in range(0, len(numbers), 50):
+                batch = numbers[offset:offset + 50]
+                rows = self.rpc.call_many([("eth_getBlockByNumber", [hex(n), False]) for n in batch])
+                for number, row in zip(batch, rows):
+                    if not isinstance(row, dict) or quantity(row.get("number")) != number:
+                        raise RpcError("Batch block header does not match requested height")
+                    headers[number] = {"number": number, "hash": hash32(row["hash"]),
+                                       "parent_hash": hash32(row["parentHash"]),
+                                       "timestamp": quantity(row["timestamp"])}
         def enrich(event: dict[str, Any]) -> dict[str, Any]:
             number = event["block_number"]
             if not start <= number <= end:
@@ -503,7 +560,9 @@ class EvmCollector:
             return {**event, "chain_id": self.registry.chain_id, "observed_at": now,
                     "chain_timestamp": headers[number]["timestamp"],
                     "event_id": f'{self.registry.chain_id}:{event["tx_hash"]}:{event["log_index"]}:{event["kind"]}'}
-        for raw in self._logs(self.registry.factory, POOL_CREATED_TOPIC, start, end):
+        pool_logs = self._logs(self.registry.factory, POOL_CREATED_TOPIC, start, end)
+        prefetch_headers(pool_logs)
+        for raw in pool_logs:
             try:
                 pool = decode_pool_created(raw)
                 if pool["address"] != self.registry.factory:
@@ -523,7 +582,9 @@ class EvmCollector:
         seen_buys: set[tuple[str, str, str]] = set()
         pool_ids = sorted(eligible)
         for offset in range(0, len(pool_ids), 50):
-            for raw in self._logs(pool_ids[offset:offset + 50], SWAP_TOPIC, start, end):
+            swap_logs = self._logs(pool_ids[offset:offset + 50], SWAP_TOPIC, start, end)
+            prefetch_headers(swap_logs)
+            for raw in swap_logs:
                 try:
                     swap = enrich(decode_swap(raw))
                     if swap["address"] not in eligible:

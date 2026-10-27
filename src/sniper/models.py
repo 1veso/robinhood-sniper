@@ -89,10 +89,16 @@ class MarketQuote:
     gas_usd: Decimal = Decimal("0.02")
     executable: bool = False
     source: str = "unspecified"
+    route_max_notional_usd: Decimal | None = None
+    route_max_sell_quantity: Decimal | None = None
+    route_impact_bps: Decimal | None = None
 
     def __post_init__(self) -> None:
         for name in ("price_usd", "liquidity_usd", "buy_cost_bps", "sell_cost_bps", "gas_usd"):
             object.__setattr__(self, name, decimal(getattr(self, name), name, minimum=Decimal(0)))
+        for name in ("route_max_notional_usd", "route_max_sell_quantity", "route_impact_bps"):
+            if getattr(self, name) is not None:
+                object.__setattr__(self, name, decimal(getattr(self, name), name, minimum=Decimal(0)))
         self.validate()
 
     def validate(self) -> None:
@@ -108,6 +114,12 @@ class MarketQuote:
             raise ValueError("Costs must be between 0 and 10000 basis points")
         if self.executable and (self.price_usd <= 0 or self.liquidity_usd <= 0):
             raise ValueError("An executable quote needs positive price and liquidity")
+        bounds = (self.route_max_notional_usd, self.route_max_sell_quantity, self.route_impact_bps)
+        if any(x is not None for x in bounds):
+            if any(x is None for x in bounds) or any(decimal(x, minimum=Decimal(0)) < 0 for x in bounds):
+                raise ValueError("Route bounds must be complete and nonnegative")
+            if self.route_max_notional_usd <= 0 or self.route_max_sell_quantity <= 0:
+                raise ValueError("Route size coverage must be positive")
 
     def as_dict(self) -> dict[str, Any]:
         return json_safe(self)

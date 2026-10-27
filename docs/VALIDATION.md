@@ -1,5 +1,24 @@
 # Validation and scope
 
+## v0.1.4 live evidence and collection recovery, 2026-10-27
+
+209 offline tests passed on local Python 3.12.10. New coverage includes reordered,
+missing, duplicate and erroneous RPC batch responses; read-only restrictions;
+canonical batch collection; stable history resumption; GoPlus unknown/failed
+fields; review conflicts; pinned bidirectional V3 quotes; route-size bounds;
+reorgs; failed sell quotes; fee/impact separation; and monitoring integration.
+
+Live read-only checks verified public RPC batching on chain 4663, GoPlus token
+data, and the deployed V3 quoter's factory and WETH references. A WETH/USDG quote
+produced positive buy/sell amounts and explicit gas/cost assumptions. A 12-cycle
+catch-up retained the existing journal and finished 5–10 blocks behind the
+observed head with no source errors. These are infrastructure checks, not market
+performance or evidence that any candidate token is safe.
+
+The measured seven-day trading trial has not started. Wallet qualification and
+scoped liquidity/deployer evidence remain required; see PAPER_TRIAL.md. No
+real transaction or paid xAI inference was submitted.
+
 ## v0.1.3 Telegram monitor, 2026-10-27
 
 **194 offline tests passed on Python 3.12.10.** The installed Telegram token

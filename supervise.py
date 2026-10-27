@@ -112,7 +112,7 @@ def run_cycle(runtime: Path, account: str, max_blocks: int, timeout: int) -> dic
     command = [sys.executable, str(ROOT / "run.py"), "--config", str(policy_path),
                "--db", str(runtime / f"{account}.sqlite3"), "--existing-account", "run",
                "--events-db", str(runtime / f"{account}-events.sqlite3"),
-               "--max-blocks", str(max_blocks)]
+               "--max-blocks", str(max_blocks), "--live-evidence"]
     for name, path in paths.items():
         command.extend([f"--{name}", str(path)])
     started = int(time.time())
@@ -141,9 +141,8 @@ def run_cycle(runtime: Path, account: str, max_blocks: int, timeout: int) -> dic
                 and item.get("qualification_evidence")}
     if len(clusters) < policy.min_independent_wallets:
         blockers.append(f"Reviewed wallet clusters: {len(clusters)}/{policy.min_independent_wallets}")
-    for name in ("safety", "quotes"):
-        if not read_json(paths[name]):
-            blockers.append(f"No external {name} evidence; entries remain blocked")
+    if not read_json(paths["safety"]):
+        blockers.append("Live screening and V3 quotes enabled; scoped liquidity-control and deployer-history reviews are still required")
     errors = cycle.get("source_errors", [])
     if return_code or cycle.get("error"):
         health = "ERROR"
@@ -204,7 +203,7 @@ def main(argv=None) -> int:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--account", default="observation-001")
     parser.add_argument("--interval", type=int, default=60)
-    parser.add_argument("--max-blocks", type=int, default=3000)
+    parser.add_argument("--max-blocks", type=int, default=5000)
     parser.add_argument("--timeout", type=int, default=180)
     args = parser.parse_args(argv)
     if not re.fullmatch(r"[a-zA-Z0-9_-]{1,60}", args.account):

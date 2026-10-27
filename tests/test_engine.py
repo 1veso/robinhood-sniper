@@ -58,6 +58,31 @@ class EngineTests(unittest.TestCase):
         self.assertLess(snapshot["equity"], D("1000"))
         self.assertGreater(snapshot["fees_paid"], 0)
 
+    def test_paper_entry_cannot_exceed_verified_route_size(self):
+        q = quote(route_max_notional_usd=D('2'), route_max_sell_quantity=D('1'), route_impact_bps=D('5'))
+        result = self.engine.consider(candidate(), q, NOW)
+        self.assertEqual(result['verdict'], 'PAPER_BUY')
+        self.assertLessEqual(result['quantity'], D('1'))
+
+    def test_undersized_or_wrong_pool_exit_quote_preserves_position(self):
+        self.buy()
+        original = self.ledger.positions()[0]['qty']
+        small = quote(now=NOW+1, price='0.1', route_max_notional_usd=D('2'),
+                      route_max_sell_quantity=D('.001'), route_impact_bps=D('5'))
+        result = self.engine.watch({small.asset_id: small}, NOW+1)
+        self.assertEqual(result[0]['reason'], 'route_size_not_covered')
+        self.assertEqual(self.ledger.positions()[0]['qty'], original)
+        other = quote(now=NOW+2, price='0.1', pool_id='different-pool')
+        result = self.engine.watch({other.asset_id: other}, NOW+2)
+        self.assertEqual(result[0]['reason'], 'quote_pool_mismatch')
+        self.assertEqual(self.ledger.positions()[0]['qty'], original)
+
+    def test_observed_route_impact_can_block_entry(self):
+        q = quote(route_max_notional_usd=D('25'), route_max_sell_quantity=D('25'), route_impact_bps=D('200'))
+        result = self.engine.consider(candidate(), q, NOW)
+        self.assertEqual(result['verdict'], 'SKIP')
+        self.assertFalse(self.ledger.positions())
+
     def test_aggregate_full_loss_budget_and_position_count(self):
         for i in range(4):
             result = self.buy(f"event{i}", f"asset{i}", NOW + i)

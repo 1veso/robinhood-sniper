@@ -11,6 +11,7 @@ from sniper.adapters.evm import RpcClient, CHAIN_ID
 from sniper.alerts import qualify, reviewed_wallets
 from sniper.policy import RiskPolicy
 from sniper.telegram import AlertStore
+from sniper.models import SafetyEvidence
 from test_evm import FakeChain, TOKEN, POOL, WALLET, USDG, bh
 
 
@@ -103,6 +104,16 @@ class MonitorIntegrationTests(unittest.TestCase):
         self.assertEqual(second["alerts_queued"], 0)
         self.assertEqual(second["outbox"], {"pending": 1})
         self.assertFalse((self.runtime / "observation-001.sqlite3").exists())
+
+    def test_live_screening_persists_failure_and_cannot_be_overridden_by_manifest(self):
+        asset = f"eip155:4663/erc20:{TOKEN}"
+        evidence = SafetyEvidence(asset, self.now, {'contract_controls': False}, 'offline-provider-fixture')
+        with patch('test_evm.NOW', self.now), patch.object(monitor, 'GoPlusClient') as client:
+            client.return_value.screen.return_value = evidence
+            result = monitor.cycle(self.runtime, rpc=self.rpc, live_screening=True)
+        self.assertEqual(result['alerts_queued'], 0)
+        saved = json.loads((self.runtime / 'safety-observations.json').read_text())
+        self.assertFalse(saved[asset]['checks']['contract_controls'])
 
     def test_rpc_timeout_retains_cursor_and_later_cycle_recovers(self):
         self.cycle()

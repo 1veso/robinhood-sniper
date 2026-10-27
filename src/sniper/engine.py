@@ -163,6 +163,10 @@ class PaperEngine:
                 and c["liquidation"] > ZERO
             )
         low, high = ZERO, min(self.policy.ticket_usd, snapshot["cash"])
+        if quote.route_max_notional_usd is not None:
+            high = min(high, quote.route_max_notional_usd, quote.route_max_sell_quantity * quote.price_usd)
+            if quote.route_impact_bps > self.policy.max_price_impact_bps:
+                return None
         if high <= ZERO:
             return None
         if not fits(high):
@@ -343,8 +347,12 @@ class PaperEngine:
             for p in self.ledger._positions():
                 quote = quotes.get(p["asset_id"])
                 problem = "missing_quote" if quote is None else self._quote_problem(quote, p["asset_id"], now)
+                if not problem and normalize_wallet(quote.pool_id) != normalize_wallet(p["pool_id"]):
+                    problem = "quote_pool_mismatch"
                 if not problem and quote.observed_at < max(p["mark_at"], p["opened_at"]):
                     problem = "out_of_order_quote"
+                if not problem and quote.route_max_sell_quantity is not None and p["qty"] > quote.route_max_sell_quantity:
+                    problem = "route_size_not_covered"
                 if problem:
                     self.ledger.conn.execute("UPDATE positions SET mark_status=? WHERE position_id=?", (problem, p["position_id"]))
                     result = {"mode": "PAPER", "verdict": "UNRESOLVED", "asset_id": p["asset_id"],
