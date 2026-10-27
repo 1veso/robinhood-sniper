@@ -45,6 +45,9 @@ execution without waiting for a PowerShell launcher. It ignores overlapping
 invocations. An OS lock also blocks concurrent writers. A slower run finishes
 before another can acquire the lock. Task Scheduler runs only while Windows is
 awake and this user is signed in; the schedule is not a latency guarantee.
+Both SNIPER tasks use normal priority 4. Windows' default task priority 7 also
+lowers I/O and memory priority, which can delay startup on a busy desktop;
+see [Microsoft's priority mapping](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-priority-settingstype-element).
 Do not also run `monitor.py --send --watch` while using Task Scheduler.
 
 The task may be installed before pairing: discovery and checks run, while
