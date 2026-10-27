@@ -45,6 +45,20 @@ class RpcBatchTests(unittest.TestCase):
         with self.assertRaises(RpcError):
             RpcClient(transport=transport).call_many([("eth_sendRawTransaction", ["0x00"])])
 
+    def test_correlated_contract_revert_is_reported_without_partial_results_or_provider_message(self):
+        def transport(requests):
+            return [{'jsonrpc':'2.0','id':requests[0]['id'],'error':{'code':3,'message':'private provider URL'}},
+                    {'jsonrpc':'2.0','id':requests[1]['id'],'result':'0x1'}]
+        with self.assertRaisesRegex(RpcError, '^RPC eth_call returned error 3; observation unavailable$'):
+            RpcClient(transport=transport).call_many([('eth_call',[]),('eth_blockNumber',[])])
+
+    def test_error_cannot_mask_another_response_with_wrong_identity(self):
+        def transport(requests):
+            return [{'jsonrpc':'2.0','id':requests[0]['id'],'error':{'code':3,'message':'reverted'}},
+                    {'jsonrpc':'2.0','id':999,'result':'0x1'}]
+        with self.assertRaisesRegex(RpcError,'response identity is invalid'):
+            RpcClient(transport=transport).call_many([('eth_call',[]),('eth_blockNumber',[])])
+
     def test_batched_collector_matches_serial_canonical_events(self):
         chain = FakeChain()
         def transport(request):

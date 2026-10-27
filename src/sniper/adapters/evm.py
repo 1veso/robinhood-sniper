@@ -210,10 +210,19 @@ class RpcClient:
         for item in response:
             if (not isinstance(item, dict) or item.get("jsonrpc") != "2.0"
                     or type(item.get("id")) is not int or item["id"] not in expected
-                    or item["id"] in by_id or item.get("error") is not None or "result" not in item):
+                    or item["id"] in by_id or ("error" in item) == ("result" in item)):
                 raise RpcError("RPC batch envelope, result, or response identity is invalid")
-            by_id[item["id"]] = item["result"]
-        return [by_id[p["id"]] for p in payload]
+            if "error" in item and (not isinstance(item['error'], dict) or type(item['error'].get('code')) is not int
+                                    or not isinstance(item['error'].get('message'), str)):
+                raise RpcError("RPC batch error envelope is invalid")
+            by_id[item["id"]] = item
+        # Validate ALL identities before classifying any contract error. Never
+        # return partial success or echo provider messages that may contain URLs.
+        for request in payload:
+            item = by_id[request['id']]
+            if 'error' in item:
+                raise RpcError(f"RPC {request['method']} returned error {item['error']['code']}; observation unavailable")
+        return [by_id[p["id"]]['result'] for p in payload]
 
     def call(self, method: str, params: list[Any] | None = None) -> Any:
         if method not in self.READ_METHODS:
