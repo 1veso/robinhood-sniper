@@ -1,5 +1,7 @@
 # Solana RUG DESK
 
+**0.1.16:** [Trader selection and leader signals](TRADER_SIGNALS.md) add a paper-only manual/replay input path, reusing this desk's checks, costs, limits and exits. No CopyFomo execution connection or paid model activation is included. The initialized configuration remains unchanged.
+
 **0.1.12 requirement update:** live trading must be automatic, as specified in [AUTOMATED_EXECUTION.md](AUTOMATED_EXECUTION.md). The article’s manual-signing workflow is superseded. The existing manual-record commands below remain legacy bookkeeping/testing utilities, not the intended live product. Automatic live execution is not implemented or enabled.
 
 **0.1.9 update:** the user subsequently authorized execution-cost accounting. The installed empty paper account now uses the versioned [cost-aware model and live-preparation tools](LIVE_PREPARATION.md). References below to the article's no-cost model describe the original 0.1.8 reproduction; current report labels come from the ledger's active policy. Trading thresholds and `config.py` remain unchanged.

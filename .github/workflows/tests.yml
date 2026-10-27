@@ -24,3 +24,5 @@ jobs:
         run: python run.py --config config/paper.toml doctor
       - name: Isolated executor recovery acceptance
         run: python executor.py acceptance
+      - name: Isolated trader selection and paper signal acceptance
+        run: python rug_desk/trader_acceptance.py

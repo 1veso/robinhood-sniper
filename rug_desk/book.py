@@ -225,7 +225,7 @@ class Book:
             f"Price: ${fill['price']} | Realized P&L: ${fill['pnl']}\n{fill['reason']}\n"
             + (self.model_label() if self.identity['mode'] == 'paper' else 'User-confirmed fill; consult receipt evidence for chain verification.'))
 
-    def open_paper(self, quote, judgment, now):
+    def open_paper(self, quote, judgment, now, *, entry_guard=None, entry_hook=None):
         if self.identity['mode'] != 'paper':
             raise RuntimeError('Paper entry cannot mutate a manual account')
         from rug_desk.market import check_limits, validate_quote
@@ -242,14 +242,20 @@ class Book:
             from sniper.execution_costs import simulate
             execution = simulate(self.cost_policy(), 'buy', quote, config.TICKET_USD, now)
         with self.transaction():
+            if entry_guard:
+                entry_guard()
             failure = self.limits(quote['mint'], now)
             if failure:
                 raise ValueError(failure)
             if execution:
-                return self._open({**quote, 'price': execution['fill_price']}, Decimal(execution['quantity']),
+                position = self._open({**quote, 'price': execution['fill_price']}, Decimal(execution['quantity']),
                     Decimal(execution['explicit_fee_usd']), now, 'paper:' + uuid.uuid4().hex, judgment, execution=execution)
-            return self._open(quote, config.TICKET_USD / number(quote['price'], positive=True),
-                              Decimal(0), now, 'paper:' + uuid.uuid4().hex, judgment)
+            else:
+                position = self._open(quote, config.TICKET_USD / number(quote['price'], positive=True),
+                                     Decimal(0), now, 'paper:' + uuid.uuid4().hex, judgment)
+            if entry_hook:
+                entry_hook(position)
+            return position
 
     def _open(self, quote, quantity, fee, now, fill_id, judgment, execution=None):
         price = number(quote['price'], positive=True)

@@ -96,9 +96,11 @@ def summary(book, now):
     from rug_desk.grok import Judge
     paid = Judge(book.root).recurring_enabled()
     from sniper.live_readiness import evaluate
+    from rug_desk.traders import selection_status
     return {'identity': book.identity, 'generated_at': now, 'day': today, 'timezone': config.TIMEZONE,
         'trial_status': 'NOT_STARTED: preflight/X evidence required' if not (book.runtime / 'trial.json').exists() else json.loads((book.runtime / 'trial.json').read_text()),
         'paid_ai_enabled': paid, 'checks_today': len(daily_checks),
+        'leader_selection': selection_status(book, now),
         'rejections_today': dict(Counter(c['reason'] for c in daily_checks if c['verdict'] == 'SKIP')),
         'buy_signals_today': sum(c['verdict'] == 'BUY' for c in daily_checks),
         'paper_entries_today': sum(f['kind'] == 'buy' for f in daily),

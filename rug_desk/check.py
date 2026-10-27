@@ -13,7 +13,8 @@ from rug_desk.rugcheck import Rugcheck
 from sniper.adapters.solana import validate_address
 
 
-def check(book, mint, *, market=None, rugcheck=None, judge=None, clock=time.time):
+def check(book, mint, *, market=None, rugcheck=None, judge=None, clock=time.time,
+          entry_guard=None, entry_hook=None, signal_context=None):
     mint = validate_address(mint)
     now = int(clock())
     if not book.claim(mint, now):
@@ -40,8 +41,10 @@ def check(book, mint, *, market=None, rugcheck=None, judge=None, clock=time.time
             return result
         result['stage'] = 'judge'
         judgment = judge.ask(mint, facts, quote)
+        if signal_context is not None:
+            judgment = {**judgment, 'leader_signal': signal_context}
         result['judgment'] = judgment
-        if judgment['verdict'] != 'BUY' or number(judgment['confidence']) < number(config.MIN_CONFIDENCE) or judgment.get('validated') is not True:
+        if judgment['verdict'] != 'BUY' or not number(config.MIN_CONFIDENCE) <= number(judgment['confidence']) <= 1 or judgment.get('validated') is not True:
             result['reason'] = judgment.get('why', 'Judgment did not qualify')
             return result
         result['verdict'] = 'BUY'  # A signal is not yet an entry.
@@ -55,7 +58,8 @@ def check(book, mint, *, market=None, rugcheck=None, judge=None, clock=time.time
             result['reason'] = reason
             return result
         result['stage'] = 'entry'
-        position = book.open_paper(fresh, judgment, int(clock()))
+        position = book.open_paper(fresh, judgment, int(clock()),
+                                  entry_guard=entry_guard, entry_hook=entry_hook)
         result.update(entry=True, position_id=position['id'], reason='Paper entry recorded at refreshed indicative price')
         return result
     except Exception as exc:

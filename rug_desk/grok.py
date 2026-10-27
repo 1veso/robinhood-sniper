@@ -97,11 +97,10 @@ class Judge:
         return (proof.get('model') == config.MODEL and proof.get('validated') is True
                 and basic.get('model') == config.MODEL and basic.get('validated') is True)
 
-    def ask(self, mint, facts, quote):
+    def _request(self, payload, validator, context):
         enabled = self.recurring_enabled() if self.enabled is None else self.enabled
         if enabled is not True:
-            return {'verdict': 'SKIP', 'confidence': '0', 'why': 'Paid X judgment disabled; funded access and successful X test required', 'validated': False}
-        validate_address(mint)
+            raise ValueError('Paid model judgment disabled')
         runtime = self.root / 'runtime'
         with process_lock(runtime / 'paid-request.lock'):
             now = int(self.clock())
@@ -110,35 +109,58 @@ class Judge:
                 raise ValueError('Missing or malformed xAI credential file')
             request_id = 'rug-desk:' + uuid.uuid4().hex
             budget = DailyBudget(runtime / 'ai-budget.sqlite3', Decimal(config.AI_DAILY_LIMIT_USD))
-            schema = {'type': 'object', 'additionalProperties': False, 'required': sorted(FIELDS), 'properties': {
-                'verdict': {'type': 'string', 'enum': ['BUY', 'SKIP']},
-                'confidence': {'type': 'number', 'minimum': 0, 'maximum': 1},
-                **{k: {'type': 'string'} for k in ('why', 'x_read', 'main_risk')}}}
-            today = datetime.fromtimestamp(now, timezone.utc).date()
-            payload = {'model': config.MODEL, 'store': False, 'max_output_tokens': 1600, 'max_turns': 2,
-                'reasoning': {'effort': 'low'},
-                'tools': [{'type': 'x_search', 'from_date': str(today - timedelta(days=3)),
-                           'to_date': str(today + timedelta(days=1))}],
-                'input': [{'role': 'system', 'content': JUDGE_PROMPT},
-                          {'role': 'user', 'content': encode({'mint': mint, 'facts': facts, 'pool': quote})}],
-                'text': {'format': {'type': 'json_schema', 'name': 'rug_desk_verdict', 'strict': True, 'schema': schema}}}
-            audit = {'request_id': request_id, 'at': now, 'model': config.MODEL, 'mint': mint}
+            audit = {'request_id': request_id, 'at': now, 'model': config.MODEL, **context}
             try:
                 budget.reserve(request_id, Decimal(config.AI_RESERVATION_USD), now)
                 response = self.transport('POST', URL, payload, {'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}, 90)
-                usage = response_usage(response)
-                budget.record_usage(request_id, response)
+                usage = budget.record_usage(request_id, response)
                 audit.update(response=response, usage=usage)
-                result = validate(response)
+                if not usage['cost_verified']:
+                    raise ValueError('Billed usage unavailable')
+                result = validator(response)
                 audit['validated'] = True
                 return {**result, 'request_id': request_id, 'model': config.MODEL}
             except Exception as exc:
-                # Never retain provider exception URLs/headers or credential contents.
                 audit.update(validated=False, error_type=type(exc).__name__)
-                raise ValueError('X judgment unavailable or invalid; inspect redacted response journal') from None
+                raise ValueError('Model judgment unavailable or invalid; inspect redacted response journal') from None
             finally:
                 budget.close()
                 atomic(runtime / 'x-responses' / (request_id.replace(':', '-') + '.json'), encode(audit))
+
+    def ask(self, mint, facts, quote, *, context=None):
+        enabled = self.recurring_enabled() if self.enabled is None else self.enabled
+        if enabled is not True:
+            return {'verdict': 'SKIP', 'confidence': '0', 'why': 'Paid X judgment disabled; funded access and successful X test required', 'validated': False}
+        validate_address(mint)
+        schema = {'type': 'object', 'additionalProperties': False, 'required': sorted(FIELDS), 'properties': {
+            'verdict': {'type': 'string', 'enum': ['BUY', 'SKIP']},
+            'confidence': {'type': 'number', 'minimum': 0, 'maximum': 1},
+            **{k: {'type': 'string'} for k in ('why', 'x_read', 'main_risk')}}}
+        today = datetime.fromtimestamp(int(self.clock()), timezone.utc).date()
+        evidence = {'mint': mint, 'facts': facts, 'pool': quote}
+        if context is not None:
+            evidence['leader_context'] = context
+        payload = {'model': config.MODEL, 'store': False, 'max_output_tokens': 1600, 'max_turns': 2,
+            'reasoning': {'effort': 'low'},
+            'tools': [{'type': 'x_search', 'from_date': str(today - timedelta(days=3)),
+                       'to_date': str(today + timedelta(days=1))}],
+            'input': [{'role': 'system', 'content': JUDGE_PROMPT},
+                      {'role': 'user', 'content': encode(evidence)}],
+            'text': {'format': {'type': 'json_schema', 'name': 'rug_desk_verdict', 'strict': True, 'schema': schema}}}
+        return self._request(payload, validate, {'mint': mint, 'purpose': 'token_judgment'})
+
+    def rank_traders(self, candidates):
+        from rug_desk.prompts import TRADER_PROMPT
+        from rug_desk.traders import RANK_SCHEMA, validate_rank
+        payload = {'model': config.MODEL, 'store': False, 'max_output_tokens': 1200,
+            'reasoning': {'effort': 'low'},
+            'input': [{'role': 'system', 'content': TRADER_PROMPT},
+                      {'role': 'user', 'content': encode({'traders': candidates})}],
+            'text': {'format': {'type': 'json_schema', 'name': 'rug_desk_leaders', 'strict': True, 'schema': RANK_SCHEMA}}}
+        # Same credential, transport, lock, budget, model and audit as token judgment.
+        # No external tools: rank only the supplied evidence, without imagined relationships.
+        return self._request(payload, lambda response: validate_rank(response, candidates),
+                             {'purpose': 'trader_selection'})
 
 
 def main():

@@ -5,7 +5,9 @@ Robinhood Chain events, checks supplied wallet and token evidence, models entrie
 and exits, and keeps a durable account ledger. Solana screening and optional Grok
 research annotation are included as separate adapters.
 
-This is version **0.1.15**: runnable software for testing the proposed strategy.
+This is version **0.1.16**: runnable software for testing the proposed strategy.
+
+[Solana trader selection and signals](docs/TRADER_SIGNALS.md) reuse the history analyser, model budget and paper pipeline. Versioned leader selections fail closed; manual/replayed events deduplicate before entry and never replace position exits. CopyFomo has no verified external approval/order/fill connection here. Paid model calls and live copying remain disabled. Run `python rug_desk/trader_acceptance.py` for the isolated six-case demonstration.
 
 The [automatic executor](docs/EXECUTOR_OPERATIONS.md) adds a separate durable order journal, restricted Router02 signer, exact approvals, recovery, finalized receipt accounting and independent exits. `python executor.py once --mode shadow` observes current candidate inputs with no keys, signing or submissions. Real-money deployment remains disabled pending separate wallet/capital authorization and wallet-specific validation; no per-trade manual approval is part of the intended live workflow.
 
