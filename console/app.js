@@ -118,7 +118,7 @@ function renderEvidence(){
 function renderReasons(){html('rejections',state.reasons.length?state.reasons.slice(0,7).map(r=>`<div class="reason-row"><span>${esc(pretty(r.reason))}<span class="muted"> · ${esc(r.verdict)}</span></span><strong>${r.count}</strong></div>`).join(''):'<p class="compact muted">No decisions recorded yet.</p>');}
 
 function canvasContext(canvas){const rect=canvas.getBoundingClientRect(),dpr=window.devicePixelRatio||1;canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);return {ctx,w:rect.width,h:rect.height};}
-function clearCanvas(canvas){return canvasContext(canvas);}
+function clearCanvas(canvas){if(canvas.id==='price-chart'){plot=null;$('chart-tip').hidden=true;}return canvasContext(canvas);}
 function sampled(points){const buckets=new Map();for(const p of points)buckets.set(Math.floor(p.at/300),{at:p.at,price:Number(p.price)});return [...buckets.values()];}
 function technical(points){
   // Indicators reset after a >15-minute observation gap; never bridge an outage.
@@ -134,7 +134,7 @@ function technical(points){
   });
 }
 function drawChart(){
-  const {ctx,w,h}=canvasContext($('price-chart'));plot=null;
+  const {ctx,w,h}=clearCanvas($('price-chart'));plot=null;
   if(!chart?.points.length){$('chart-empty').hidden=false;$('chart-empty').textContent=state?.setup_blocked?'No market positions in this account. Screening continues; the paid X gate is disabled.':'No recorded prices for this selected pool yet.';$('quote-price').textContent='—';$('quote-age').textContent='No quote';$('quote-change').textContent='No recorded market series';html('ta','<span>RSI 14 <b>—</b></span><span>EMA 9 <b>—</b></span><span>EMA 21 <b>—</b></span><span>Samples <b>0</b></span>');return;}
   $('chart-empty').hidden=true;
   const all=chart.points.map(p=>({...p,price:Number(p.price)}));const end=Math.max(all.at(-1).at,...chart.fills.map(f=>f.observed_at)),start=range?end-range:Math.min(all[0].at,...chart.fills.map(f=>f.observed_at));
