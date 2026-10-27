@@ -98,7 +98,7 @@ class ConsoleData:
         def load():
             if os.name != 'nt':
                 return {'available': False, 'items': []}
-            command = "$ErrorActionPreference='Stop'; Get-ScheduledTask | Where-Object { $_.TaskName -in @('SNIPER Exploratory Paper','SNIPER Paper Research','SNIPER Telegram Monitor','RUG DESK Watch','RUG DESK Scan','RUG DESK Report','RUG DESK Console') } | ForEach-Object { $i=$_ | Get-ScheduledTaskInfo; [pscustomobject]@{name=$_.TaskName;state=[string]$_.State;last_result=$i.LastTaskResult;last_run=$i.LastRunTime.ToUniversalTime().ToString('o');next_run=$i.NextRunTime.ToUniversalTime().ToString('o')} } | ConvertTo-Json -Compress"
+            command = "$ErrorActionPreference='Stop'; Get-ScheduledTask | Where-Object { $_.TaskName -in @('SNIPER Exploratory Paper','SNIPER Paper Research','SNIPER Telegram Monitor','SNIPER Automatic Executor Shadow','RUG DESK Watch','RUG DESK Scan','RUG DESK Report','RUG DESK Console') } | ForEach-Object { $i=$_ | Get-ScheduledTaskInfo; [pscustomobject]@{name=$_.TaskName;state=[string]$_.State;last_result=$i.LastTaskResult;last_run=$i.LastRunTime.ToUniversalTime().ToString('o');next_run=$i.NextRunTime.ToUniversalTime().ToString('o')} } | ConvertTo-Json -Compress"
             try:
                 result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', command], capture_output=True, timeout=12, creationflags=subprocess.CREATE_NO_WINDOW)
                 if result.returncode:
@@ -118,6 +118,11 @@ class ConsoleData:
                          'refresh_seconds': 5, 'read_only': True, 'real_money_enabled': False,
                          'execution_target': 'automatic', 'live_execution_ready': False,
                          'jobs': self.jobs()})
+            if bot=='robinhood':
+                try:
+                    executor=read_json(self.root/'runtime/executor/status.json')
+                    data['executor']=selected(executor,('mode','finished_at','health','observed_candidates','signer_loaded','signing_calls','broadcast_calls','blockers','real_money_enabled'))
+                except (OSError,ValueError):data['executor']={'mode':'UNAVAILABLE'}
             return data
         return self.cached(('state', bot), 3, load)
 

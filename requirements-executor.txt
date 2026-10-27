@@ -1,0 +1,3 @@
+# Optional automatic EVM execution only; the paper runtime remains unchanged.
+# Maintained transaction signing/recovery; never use hand-written cryptography.
+eth-account==0.14.0

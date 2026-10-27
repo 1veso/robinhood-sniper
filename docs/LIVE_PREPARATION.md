@@ -2,7 +2,7 @@
 
 The user's 2026-10-27 request authorizes adding execution costs and preparing later live execution. Existing trading thresholds, exits, wallet rules and `rug_desk/config.py` remain unchanged. The Solana account gets an explicitly versioned cost model before its first strategy fill. The existing Robinhood paper engine already includes same-block V3 pool fees/impact, 100 bps adverse execution stress, and conservative gas: twice the larger quoter estimate plus 100,000 gas units, valued at the current gas/ETH price. That is still a paper estimate, not a wallet-specific executed transaction.
 
-**Latest execution requirement:** the user requires automatic trading, with no routine per-trade approval or manual signing. [Automatic execution requirements](AUTOMATED_EXECUTION.md) supersede the article’s manual workflow. The current preparation reader is not a live executor; signing, submission and unattended recovery remain unimplemented.
+**Latest execution requirement:** the user requires automatic trading, with no routine per-trade approval or manual signing. [Automatic execution requirements](AUTOMATED_EXECUTION.md) supersede the article’s manual workflow. The current preparation reader is not a live executor; the Solana signing/instruction-validation path remains unimplemented. The separate Robinhood executor is documented in [Executor operations](EXECUTOR_OPERATIONS.md) and stays disabled for real funds.
 
 ## Solana paper accounting
 
@@ -35,7 +35,7 @@ Activation command, used only for the authorized empty Solana account:
 
 The report's draft review criteria require seven days of the cost-aware trial, at least 30 completed positions, reconciled API costs, current open-position marks, positive net results after costs and open losses, positive results after the extra cost shock, profitable chronological halves, positive closed-trade results after removing the best trade, and review of operational errors. These are practical review gates, not statistically proven evidence of an edge. They can identify insufficient evidence; they cannot guarantee future profit.
 
-Passing them sets **performance ready for human review**, never `real_money_enabled`. No profitable balance, deadline or configuration flag causes a wallet to sign. The user controls initial live deployment and approves its wallet, capital and risk limits. The required future executor must then validate, sign, submit and reconcile ordinary trades automatically under that authority, with no per-trade human approval. It is not implemented yet. Any eventual real-money validation must use a separately authorized, bounded deployment; paper and real holdings remain separate.
+Passing them sets **performance ready for human review**, never `real_money_enabled`. No profitable balance, deadline or configuration flag causes a wallet to sign. The user controls initial live deployment and approves its wallet, capital and risk limits. The required future executor must then validate, sign, submit and reconcile ordinary trades automatically under that authority, with no per-trade human approval. The Robinhood implementation is available in shadow/disabled mode; the Solana instruction validator and signing path remain incomplete. Any eventual real-money validation must use a separately authorized, bounded deployment; paper and real holdings remain separate.
 
 The existing Robinhood trial keeps its account/deadline and its own results. The Solana trial still waits for funded xAI inference/X Search validation. Do not combine their P&L or count synthetic acceptance fills as performance.
 
@@ -68,7 +68,7 @@ New entries must pass the unchanged safety and market filters. An exit preparati
 
 The example input is **25 USDC in raw units**, not a guarantee that USDC equals $1. Amounts and capital allocation need review before any real order. Sell preparation uses `--side sell` and the actual token's raw quantity. Both buy and exit routes must be checked for the exact intended size before the future executor can accept a live entry under its approved policy.
 
-The result is a review artifact in `runtime/live-preparation/intents/`. It records transaction and message hashes, short quote expiry, expected outputs, fee estimates, safety observations and simulation results. Simulation replaces the recent blockhash and does not verify signatures. It does not reserve liquidity or guarantee landing. Independent instruction/program/recipient review is explicitly unverified and must be implemented and validated before an automatic signer can use the intent. There is no signer, `/execute`, `/submit` or `sendTransaction` method in this application.
+The result is a review artifact in `runtime/live-preparation/intents/`. It records transaction and message hashes, short quote expiry, expected outputs, fee estimates, safety observations and simulation results. Simulation replaces the recent blockhash and does not verify signatures. It does not reserve liquidity or guarantee landing. Independent instruction/program/recipient review is explicitly unverified and must be implemented and validated before an automatic signer can use the intent. This Solana preparation module has no signer, `/execute`, `/submit` or `sendTransaction` method. The separate restricted EVM executor cannot sign Solana transactions.
 
 ## Actual fills and costs
 
