@@ -17,6 +17,7 @@ screening**, rather than adding a separate Solana trading strategy.
 | JSON/CSV writes can diverge or race; article reports partial exits as separate green exits | Existing SQLite transactions and whole-position accounting retained. |
 | Missing account file can silently reset a book | Service now pins an account UUID separately and refuses missing/replaced databases; CLI supports `--existing-account`. |
 | Slow collection precedes exit checks in SNIPER | Existing positions are checked first, before base-price acquisition and chain collection. This does not create an independent real-time watcher. |
+| Long collection cycles can time out before research runs | Collection uses 100-block commits and a 60-second cooperative RPC budget. Completed chunks persist; unfinished ranges retry. Budget exhaustion defers entries and still permits research. |
 | Rugcheck and market code independently choose the largest pool | Solana screen pins the exact Rugcheck pool and refuses caller mismatch, unavailable pools and ambiguous duplicate records. |
 | Missing creator/insider fields become zero in article; absent authorities resemble explicit null | Existing unknown-value handling retained; no invented zero or authority revocation. Rugcheck units/labels remain provider assumptions requiring audit. |
 | Original market parser defaults missing transaction counts to zero and rounds age | Screen validates exact millisecond age, future timestamps and nonnegative integer hourly counts. |

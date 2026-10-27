@@ -11,6 +11,7 @@ import re
 import time
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation, localcontext
 from typing import Any, Callable, Mapping
@@ -31,6 +32,10 @@ ZERO_ADDRESS = "0x" + "0" * 40
 
 class RpcError(RuntimeError):
     """An RPC transport, protocol, or server failure. Never means 'safe'."""
+
+
+class RpcBudgetExceeded(RpcError):
+    """A cooperative collection deadline expired; retry the uncommitted chunk."""
 
 
 class DecodeError(ValueError):
@@ -127,13 +132,35 @@ class RpcClient:
         self.url, self.timeout = url, timeout
         self.transport, self.max_retries, self.sleeper = transport, max_retries, sleeper
         self._id = 0
+        self._deadline: float | None = None
+
+    @contextmanager
+    def budget(self, seconds: float | None):
+        previous = self._deadline
+        if seconds is not None:
+            if isinstance(seconds, bool) or not 0 < seconds <= 120:
+                raise ValueError("RPC collection budget must be positive and at most 120 seconds")
+            deadline = time.monotonic() + seconds
+            self._deadline = min(previous, deadline) if previous is not None else deadline
+        try:
+            yield
+        finally:
+            self._deadline = previous
+
+    def remaining(self) -> float:
+        if self._deadline is None:
+            return self.timeout
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
+            raise RpcBudgetExceeded("Collection time budget reached; unfinished chunk will retry")
+        return min(self.timeout, remaining)
 
     def _http(self, payload: dict[str, Any]) -> dict[str, Any]:
         body = json.dumps(payload, allow_nan=False).encode()
         req = urllib.request.Request(self.url, data=body,
                                      headers={"Content-Type": "application/json", "User-Agent": "SNIPER-Paper/0.1"},
                                      method="POST")
-        with urllib.request.urlopen(req, timeout=self.timeout) as response:
+        with urllib.request.urlopen(req, timeout=self.remaining()) as response:
             raw = response.read(16_000_001)
         if len(raw) > 16_000_000:
             raise RpcError("RPC response exceeds 16 MB; reduce the block range")
@@ -151,8 +178,10 @@ class RpcClient:
         self._id += 1
         payload = {"jsonrpc": "2.0", "id": self._id, "method": method, "params": params or []}
         for attempt in range(self.max_retries + 1):
+            self.remaining()
             try:
                 response = (self.transport or self._http)(payload)
+                self.remaining()
                 break
             except urllib.error.HTTPError as exc:
                 if exc.code not in {429, 500, 502, 503, 504} or attempt == self.max_retries:
@@ -160,7 +189,7 @@ class RpcClient:
             except (urllib.error.URLError, TimeoutError, ConnectionError, OSError):
                 if attempt == self.max_retries:
                     raise RpcError("RPC connection failed; observation unavailable") from None
-            self.sleeper(min(0.25 * (2 ** attempt), 2))
+            self.sleeper(min(0.25 * (2 ** attempt), 2, self.remaining()))
         if not isinstance(response, dict) or response.get("jsonrpc") != "2.0" or response.get("id") != payload["id"]:
             raise RpcError("RPC envelope or response id is invalid")
         if response.get("error") is not None:
@@ -582,15 +611,26 @@ class EvmCollector:
             "new_pools": [], "swaps": [], "verified_buys": [], "errors": [], "inserted_events": 0,
             "tracked_wallets": len(self.watchlist)}
         for start in range(from_block, to_block + 1, self.max_blocks_per_request):
-            chunk = self._chunk(start, min(start + self.max_blocks_per_request - 1, to_block))
+            try:
+                self.rpc.remaining()
+                chunk = self._chunk(start, min(start + self.max_blocks_per_request - 1, to_block))
+            except RpcBudgetExceeded:
+                result["status"] = "budget_exhausted"
+                break
             for name in ["new_pools", "swaps", "verified_buys", "errors"]:
                 result[name].extend(chunk[name])
             result["inserted_events"] += chunk["inserted_events"]
         result["cursor"] = self.store.cursor(self.registry.chain_id)
+        result.setdefault("status", "complete")
         self._metadata.clear()
         return result
 
-    def poll(self, start_block: int | None = None, max_blocks: int = 500) -> dict[str, Any]:
+    def poll(self, start_block: int | None = None, max_blocks: int = 500,
+             max_seconds: float | None = None) -> dict[str, Any]:
+        with self.rpc.budget(max_seconds):
+            return self._poll(start_block, max_blocks)
+
+    def _poll(self, start_block: int | None, max_blocks: int) -> dict[str, Any]:
         if isinstance(max_blocks, bool) or not isinstance(max_blocks, int) or not 1 <= max_blocks <= 5000:
             raise ValueError("max_blocks must be between 1 and 5000")
         self.rpc.verify_chain(self.registry.chain_id)

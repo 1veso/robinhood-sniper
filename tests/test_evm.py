@@ -5,12 +5,13 @@ import sqlite3
 import uuid
 import unittest
 import urllib.error
+from unittest.mock import patch
 from decimal import Decimal
 from pathlib import Path
 
 from sniper.adapters.evm import (
     CHAIN_ID, FACTORY, USDG, WETH, POOL_CREATED_TOPIC, SWAP_TOPIC, TRANSFER_TOPIC,
-    DecodeError, EvmCollector, EvmRegistry, ReorgError, RpcClient, RpcError,
+    DecodeError, EvmCollector, EvmRegistry, ReorgError, RpcClient, RpcError, RpcBudgetExceeded,
     decode_pool_created, decode_swap, decode_transfer, token_units, verify_purchase,
 )
 from sniper.adapters.evm_store import EvmStore
@@ -128,6 +129,20 @@ def collector(chain, store=None):
 
 
 class RpcTests(unittest.TestCase):
+    def test_expired_budget_prevents_retry_and_scope_restores_access(self):
+        tick, calls = [0.0], []
+        def transport(payload):
+            calls.append(payload)
+            tick[0] = 2.0
+            raise urllib.error.URLError("down")
+        rpc = RpcClient(transport=transport, sleeper=lambda _: self.fail("Expired budget must not sleep"))
+        with patch("sniper.adapters.evm.time.monotonic", side_effect=lambda: tick[0]):
+            with self.assertRaises(RpcBudgetExceeded), rpc.budget(1):
+                rpc.verify_chain()
+            self.assertEqual(len(calls), 1)
+            rpc.transport = FakeChain()
+            self.assertEqual(rpc.verify_chain(), CHAIN_ID)
+
     def test_method_allowlist_refuses_transactions(self):
         rpc = RpcClient(transport=lambda p: self.fail("should never call transport"))
         for method in ["eth_sendRawTransaction", "eth_sendTransaction", "personal_sign", "eth_sign", "wallet_addEthereumChain"]:
@@ -262,6 +277,31 @@ class StoreIdentityTests(unittest.TestCase):
 
 
 class CollectionTests(unittest.TestCase):
+    def test_budget_preserves_completed_chunk_and_retries_uncommitted_range(self):
+        chain, tick, expire = FakeChain(), [0.0], [True]
+        chain.head = 115
+        def transport(payload):
+            result = chain(payload)
+            if (expire[0] and payload["method"] == "eth_getBlockByNumber"
+                    and payload["params"][0] == hex(109)):
+                tick[0], expire[0] = 61.0, False
+            return result
+        c = collector(chain)
+        self.addCleanup(c.store.close)
+        c.rpc.transport = transport
+        c.max_blocks_per_request = 5
+        with patch("sniper.adapters.evm.time.monotonic", side_effect=lambda: tick[0]):
+            partial = c.poll(start_block=100, max_blocks=10, max_seconds=60)
+            self.assertEqual(partial["status"], "budget_exhausted")
+            self.assertEqual(partial["cursor"]["block_number"], 104)
+            self.assertEqual(len(partial["verified_buys"]), 1)
+            before = c.store.events(CHAIN_ID)
+            resumed = c.poll(max_blocks=5, max_seconds=60)
+            self.assertEqual(resumed["from_block"], 105)
+            self.assertEqual(resumed["cursor"]["block_number"], 109)
+            self.assertEqual(resumed["status"], "complete")
+            self.assertEqual(c.store.events(CHAIN_ID), before)
+
     def test_collect_persist_restart_and_rescan_idempotent(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "collector.sqlite3"

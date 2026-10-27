@@ -2,11 +2,14 @@
 
 ## v0.1.2 article integration, 2026-10-27
 
-**168 offline tests passed on Python 3.12.10.** New coverage verifies missing or
+**172 offline tests passed on Python 3.12.10.** New coverage verifies missing or
 replaced account protection, exit processing before collection, same-pool
 Solana screening, strict age/activity data, persistent seen-once scans,
 explicit AI completion, actual billed-cost accounting, X tool activity,
 returned citation matching, and disabled paid requests.
+Collector budget coverage verifies retry deadlines, retained completed chunks,
+resumption without gaps/duplicates, continued research after budget exhaustion,
+and deferred paper entries with recoverable signals.
 
 X API behavior is covered with schema fixtures derived from current official
 documentation. This is not a claim that the operator's xAI account has passed a

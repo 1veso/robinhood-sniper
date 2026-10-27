@@ -9,6 +9,12 @@ It resumes persisted cursors after restarts. It does not run while this computer
 is asleep, powered off, or the user is signed out.
 Each paper cycle processes up to 3,000 blocks, in smaller RPC chunks, to catch
 up after outages even when a research cycle overlaps the next scheduled minute.
+The runner uses 100-block chunks and a 60-second cooperative RPC budget
+(`run --collection-seconds`, maximum 120). Completed chunks and their cursor
+persist; an unfinished chunk is discarded and retried without skipping blocks.
+Budget exhaustion reports DEGRADED and defers entries for that cycle, while
+wallet/Solana research still runs. The outer process timeout remains a fallback
+for stalled network reads or other work; this budget is not a real-time guarantee.
 Position exits are checked before collection and entry-source requests. This
 prioritizes existing exposure within each cycle; it is not a separate real-time
 exit service or an exchange stop order.

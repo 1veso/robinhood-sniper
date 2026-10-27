@@ -84,7 +84,7 @@ class RunnerIntegrationTests(unittest.TestCase):
     def ledger(self):
         return Ledger(self.args.db, self.policy.starting_cash_usd)
 
-    def run_once(self, *, poll_error=None, polled_buys=None, market_quote=None):
+    def run_once(self, *, poll_error=None, polled_buys=None, market_quote=None, collector_status="complete"):
         calls = self.pipeline_calls
         class InstrumentedPipeline(PaperPipeline):
             def __init__(self, *args, **kwargs):
@@ -101,6 +101,7 @@ class RunnerIntegrationTests(unittest.TestCase):
         collector.poll.return_value = {
             "cursor": {"block_number": 104, "block_hash": HASH}, "head": 109,
             "tracked_wallets": 5, "reorg": None, "errors": [],
+            "status": collector_status,
             "new_pools": [], "swaps": [], "verified_buys": polled_buys or [],
         }
         market = Mock()
@@ -116,6 +117,14 @@ class RunnerIntegrationTests(unittest.TestCase):
              patch("sniper.cli.output", side_effect=self.outputs.append):
             cli.command_run(self.args)
         return self.outputs[-1], market
+
+    def test_collection_budget_exhaustion_defers_entries_without_losing_signals(self):
+        self.seed_source(); self.set_evidence()
+        cycle, _ = self.run_once(collector_status="budget_exhausted")
+        self.assertEqual(cycle["decisions"], [])
+        self.assertEqual(cycle["account"]["open_positions"], 0)
+        recovered, _ = self.run_once()
+        self.assertTrue(any(d["verdict"] == "PAPER_BUY" for d in recovered["decisions"]))
 
     def test_restart_replays_source_committed_before_pipeline_crash(self):
         # Collector persisted these before an imagined process crash. The next

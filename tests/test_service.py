@@ -37,6 +37,20 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(json.loads((self.runtime / "wallets.json").read_text()), {})
         self.assertTrue((self.runtime / "account.html").exists())
 
+    def test_cooperative_collection_limit_allows_research_and_blocks_entries(self):
+        commands = []
+        def child(command, **kwargs):
+            commands.append(Path(command[1]).name)
+            payload = {"collector": {"status": "budget_exhausted", "head": 200,
+                                      "cursor": {"block_number": 100}}, "account": {}}
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+        with patch.object(supervise, "ROOT", self.root), patch.object(supervise.subprocess, "run", side_effect=child):
+            result = supervise.run_cycle(self.runtime, "research", 1000, 180)
+        self.assertEqual(commands, ["run.py", "research.py", "solana_research.py"])
+        self.assertEqual(result["health"], "DEGRADED")
+        self.assertEqual(result["entry_status"], "BLOCKED")
+        self.assertEqual(result["collector_lag_blocks"], 100)
+
     def test_timeout_retains_manifests_and_records_failure(self):
         wallet_file = self.runtime / "wallets.json"
         wallet_file.write_text('{"candidate": {"qualified": false}}')

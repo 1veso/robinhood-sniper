@@ -155,6 +155,10 @@ def run_cycle(runtime: Path, account: str, max_blocks: int, timeout: int) -> dic
     cursor = collector.get("cursor") or {}
     head = collector.get("head")
     lag = max(0, head - cursor["block_number"]) if head is not None and cursor.get("block_number") is not None else None
+    if collector.get("status") == "budget_exhausted":
+        if health == "OK":
+            health = "DEGRADED"
+        blockers.append("Collector time budget reached; saved progress resumes next cycle")
     if lag is not None and lag > max_blocks:
         health = "DEGRADED"
         blockers.append(f"Collector catching up: {lag} blocks behind head")

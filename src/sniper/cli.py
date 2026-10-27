@@ -201,6 +201,9 @@ def command_run(args):
     from .adapters.evm_store import EvmStore
     from .adapters.solana import DexScreenerClient
     from .pipeline import PaperPipeline
+    collection_seconds = getattr(args, "collection_seconds", 60)
+    if not 1 <= collection_seconds <= 120:
+        raise ValueError("collection-seconds must be between 1 and 120")
     watchlist = read_json(args.wallets) if args.wallets else {}
     if not isinstance(watchlist, dict):
         raise ValueError("Wallet file must be an address-to-record object")
@@ -218,7 +221,7 @@ def command_run(args):
         resources.callback(store.close)
         market = DexScreenerClient(chain_id="robinhoodchain")
         collector = EvmCollector(RpcClient(args.rpc), store=store, watchlist=watchlist,
-                                 confirmations=args.confirmations)
+                                 confirmations=args.confirmations, max_blocks_per_request=100)
         # Selection belongs to an experiment, including across process restarts.
         selection = json.dumps(watchlist, sort_keys=True, default=str, allow_nan=False)
         with ledger.transaction():
@@ -296,8 +299,10 @@ def command_run(args):
             collected = None
             try:
                 collected = collector.poll(start_block=args.start_block if iterations == 0 else None,
-                                           max_blocks=args.max_blocks)
-                cycle["collector"] = {k: collected.get(k) for k in ("cursor", "head", "tracked_wallets", "reorg", "errors")}
+                                           max_blocks=args.max_blocks, max_seconds=collection_seconds)
+                cycle["collector"] = {k: collected.get(k) for k in ("cursor", "head", "tracked_wallets", "reorg", "errors", "status")}
+                if collected.get("status") == "budget_exhausted":
+                    entry_inputs_ok = False
                 cycle["counts"] = {k: len(collected.get(k, [])) for k in ("new_pools", "swaps", "verified_buys")}
             except (ValueError, OSError, RuntimeError) as exc:
                 cycle["source_errors"].append({"stage": "collector", "reason": str(exc)[:300]})
@@ -477,6 +482,8 @@ def parser() -> argparse.ArgumentParser:
         collect.add_argument("--iterations", type=int, help="Bounded number of polls with --follow")
         collect.add_argument("--interval", type=int, default=15)
         if command == "run":
+            collect.add_argument("--collection-seconds", type=int, default=60,
+                                 help="Cooperative RPC time budget; completed chunks persist, unfinished chunks retry")
             collect.add_argument("--safety", help="Timestamped external safety evidence by canonical asset ID")
             collect.add_argument("--quotes", help="Timestamped external route observations by canonical asset ID")
         collect.set_defaults(func=handler)
