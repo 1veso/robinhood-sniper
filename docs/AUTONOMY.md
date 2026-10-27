@@ -39,6 +39,10 @@ Save the full HTTPS URL on one line in `runtime/rpc-url.txt`. The service reads
 it at each invocation and passes it through the environment, not command-line
 arguments. The CLI also accepts `SNIPER_RPC_URL`; diagnostics print only its host.
 Historical `eth_call` and transaction-count reads require archive support.
+The public endpoint passed current-state checks but returned RPC error -32000
+for the frozen 30-day history's state reads on 2026-10-27. An archive-capable
+endpoint is therefore required for historical qualification. The research runner
+checks archive availability before spending further indexed-history requests.
 
 Indexed histories use [Blockscout's unified API](https://docs.blockscout.com/devs/blockscout-api-responses-and-routes).
 Create a key in [the developer portal](https://dev.blockscout.com/) and save it

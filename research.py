@@ -12,7 +12,7 @@ import time
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
-from sniper.adapters.evm import RpcClient, DEFAULT_RPC, SWAP_TOPIC, decode_swap, address, hash32, quantity
+from sniper.adapters.evm import RpcClient, RpcError, DEFAULT_RPC, USDG, SWAP_TOPIC, decode_swap, address, hash32, quantity
 from sniper.adapters.wallet_history import ResearchCache, ResearchPending, block_at_or_before, reconstruct_wallet
 from sniper.wallet_analysis import analyse_wallet, cluster_controllers, apply_controller_reviews
 from supervise import atomic_json, child_environment, instance_lock
@@ -120,6 +120,10 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
             canonical = rpc.call("eth_getBlockByNumber", [hex(snapshot["block"]), False])
             if canonical["hash"] != snapshot["hash"]:
                 raise ResearchPending("Frozen history snapshot reorged; do not use its qualifications")
+            try:
+                cache.call("eth_call", [{"to": USDG, "data": "0x313ce567"}, hex(snapshot["start_block"])], anchor=snapshot["hash"])
+            except RpcError:
+                raise ResearchPending("ARCHIVE_RPC_REQUIRED: historical state unavailable; discovery continues") from None
             snapshot_verified = True
             # Oldest unprocessed candidates first. Cache and budgets allow large
             # histories to continue across invocations instead of being truncated.
