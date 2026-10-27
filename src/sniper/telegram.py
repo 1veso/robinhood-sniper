@@ -65,7 +65,7 @@ class TelegramClient:
         if type(chat_id) is not int or not isinstance(text, str) or not 1 <= len(text.encode("utf-16-le")) // 2 <= 4096:
             raise ValueError("Invalid Telegram destination or message length")
         result = self.call("sendMessage", {"chat_id": chat_id, "text": text,
-                            "link_preview_options": {"is_disabled": True}, "protect_content": True})
+                            "link_preview_options": {"is_disabled": True}})
         if (not isinstance(result, dict) or type(result.get("message_id")) is not int
                 or not isinstance(result.get("chat"), dict) or result["chat"].get("id") != chat_id):
             raise DeliveryError("Telegram acknowledgement missing or mismatched", uncertain=True)
