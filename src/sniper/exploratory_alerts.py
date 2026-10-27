@@ -10,8 +10,12 @@ def notify_fills(ledger, folder, runtime, *, client_factory=TelegramClient):
     token_file, recipient_file = runtime / 'telegram-bot-token.txt', runtime / 'telegram-recipient.json'
     if not token_file.exists() or not recipient_file.exists():
         return {'configured': False, 'sent': 0}
-    if ledger._get('engine_mode') != 'exploratory_paper_v1':
+    mode = ledger._get('engine_mode')
+    if mode not in ('exploratory_paper_v1', 'execution_validation_v1'):
         raise ValueError('Exploratory notifications require their own paper account')
+    label = 'EXECUTION TEST — PAPER' if mode == 'execution_validation_v1' else 'EXPLORATORY PAPER'
+    purpose = ('Isolated execution test with a one-second time exit. Excluded from strategy/week results. '
+               if mode == 'execution_validation_v1' else '')
     path = folder / 'notifications.sqlite3'
     expected = ledger._get('notification_journal')
     if expected and not path.is_file():
@@ -26,7 +30,7 @@ def notify_fills(ledger, folder, runtime, *, client_factory=TelegramClient):
         for row in ledger.conn.execute('SELECT * FROM fills ORDER BY id'):
             fill = dict(row)
             moment = datetime.fromtimestamp(fill['observed_at'], timezone.utc).isoformat()
-            message = (f"SNIPER | EXPLORATORY PAPER {fill['action']}\n\n"
+            message = (f"SNIPER | {label} {fill['action']}\n\n{purpose}"
                 f"Token: {fill['symbol']}\nAsset: {fill['asset_id']}\n"
                 f"Notional: ${Decimal(fill['gross_usd']):.4f}\n"
                 f"Quantity: {fill['quantity']}\nModeled price: ${fill['fill_price']}\n"

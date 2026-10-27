@@ -16,6 +16,7 @@ from supervise import atomic_json, instance_lock
 from sniper.adapters.evm import RpcClient, DEFAULT_RPC, CHAIN_ID, RpcError, ReorgError
 from sniper.adapters.evm_store import EvmStore
 from sniper.adapters.goplus import GoPlusClient
+from sniper.adapters.crius import supplement_from_runtime
 from sniper.adapters.solana import DexScreenerClient, SourceError
 from sniper.adapters.v3_route import V3RouteClient
 from sniper.exploration import ExploratoryEngine, exploratory_policy, pool_adjusted_screen, observed_pool_screen, observe_creator_balance
@@ -268,6 +269,7 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                     # A current creator concentration failure is meaningful even
                     # when the provider omits its complete holder list.
                     safety = observe_creator_balance(safety, rpc)
+                    safety = supplement_from_runtime(safety, pool, rpc, runtime)
                     if book:
                         safety = enhance_rug_screen(safety)
                         status['rug_screens'].append({'asset_id': asset, **safety.details['rug_screen']})

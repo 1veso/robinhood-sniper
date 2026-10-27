@@ -31,6 +31,9 @@ def enhance_rug_screen(screen):
             'status': 'REJECT' if any(v is False for v in checks.values()) else 'INCOMPLETE' if any(v is None for v in checks.values()) else 'NO_DETECTED_FLAGS',
             'failed_checks': [k for k,v in checks.items() if v is False],
             'unknown_checks': [k for k,v in checks.items() if v is None],
-            'warnings': ['Token has transaction or holding limits; route-size checks remain required'] if available and raw.get('is_anti_whale') == '1' else [],
+            'warnings': (['Token has transaction or holding limits; route-size checks remain required'] if available and raw.get('is_anti_whale') == '1' else [])
+                        + screen.details.get('supplemental_evidence', {}).get('warnings', []),
+            'supplemental_evidence': {k:v for k,v in screen.details.get('supplemental_evidence', {}).items()
+                                      if not k.startswith('raw_')},
             'provider': 'GoPlus Token Security / Robinhood 4663',
             'limitations': 'Provider screening plus separately recorded chain and route checks. Unknown liquidity withdrawal control and deployer history are not a safety pass. No guarantee against a rug pull.'}})

@@ -12,6 +12,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from .history_progress import HistoryProgress
+
 from .evm import (RpcClient, RpcError, CHAIN_ID, FACTORY, WETH, USDG, SWAP_TOPIC,
                   TRANSFER_TOPIC, address, hash32, quantity, decode_swap,
                   decode_transfer, verify_purchase, token_units, _words, _address_word)
@@ -48,6 +50,7 @@ class ResearchCache:
         self.last_request = 0.0
         self.memo = {}
         self.progress = {}
+        self.checkpoint_progress = {}
         self.max_calls = max_calls
 
     def reserve(self):
@@ -56,6 +59,8 @@ class ResearchCache:
         self.remaining -= 1
         wait = .35 - (time.monotonic() - self.last_request)
         if wait > 0:
+            if time.monotonic() + wait >= self.deadline:
+                raise ResearchPending("Cycle budget reached; cached progress will resume")
             time.sleep(wait)
         self.last_request = time.monotonic()
 
@@ -107,7 +112,7 @@ class ResearchCache:
                 temporary.replace(budget_path)
             req = urllib.request.Request(url, headers={"User-Agent": "SNIPER-Research/0.1", "Accept": "application/json", **(headers or {})})
             try:
-                with urllib.request.urlopen(req, timeout=15) as response:
+                with urllib.request.urlopen(req, timeout=max(.1, min(15, self.deadline - time.monotonic()))) as response:
                     raw = response.read(16_000_001)
                 if len(raw) > 16_000_000:
                     raise ValueError("History response exceeds size budget")
@@ -187,6 +192,14 @@ def verified_pool(cache: ResearchCache, pool: str, block: int, anchor: str) -> d
 
 
 def reconstruct_wallet(cache: ResearchCache, wallet: str, snapshot: dict) -> dict:
+    progress = HistoryProgress(getattr(cache, "root", None), address(wallet), snapshot)
+    try:
+        return _reconstruct_wallet(cache, wallet, snapshot, progress)
+    finally:
+        progress.close()
+
+
+def _reconstruct_wallet(cache, wallet, snapshot, progress):
     """Reconcile every indexed tx/transfer in a frozen 30-day window against RPC.
 
     Unsupported routes, unknown opening basis, missing historical prices, and
@@ -207,13 +220,19 @@ def reconstruct_wallet(cache: ResearchCache, wallet: str, snapshot: dict) -> dic
         raise ValueError("Historical account nonce decreased")
     if after_nonce - before_nonce >= 10000:
         raise CoverageExceeded("Wallet exceeds transaction coverage budget")
-    txs = cache.account_history(wallet, "txlist", start, end)
+    def index_rows(action, first):
+        rows = progress.get("index:" + action)
+        if rows is None:
+            rows = cache.account_history(wallet, action, first, end)
+            progress.save("index:" + action, rows)
+        return rows
+    txs = index_rows("txlist", start)
     # Include the lifetime transfer-index universe when finding boundary
     # holdings. Otherwise a losing token held untouched for the whole window
     # would disappear from the open-inventory assessment.
-    all_transfers = cache.account_history(wallet, "tokentx", 0, end)
+    all_transfers = index_rows("tokentx", 0)
     transfers = [row for row in all_transfers if int(row["blockNumber"]) >= start]
-    internals = cache.account_history(wallet, "txlistinternal", start, end)
+    internals = index_rows("txlistinternal", start)
     def indexed_hash(row):
         # Blockscout's internal-transaction endpoint uses transactionHash;
         # normal transactions and ERC-20 transfers use hash.
@@ -231,104 +250,24 @@ def reconstruct_wallet(cache: ResearchCache, wallet: str, snapshot: dict) -> dic
         if not isinstance(raw, dict) or not isinstance(raw.get("prices"), list):
             raise ResearchPending("Historical price series unavailable")
         prices[token] = raw["prices"]
-    receipt_tokens, normalized_by_tx = {}, {}
-    for tx_hash in hashes:
-        tx = cache.call("eth_getTransactionByHash", [tx_hash], anchor=anchor)
-        receipt = cache.call("eth_getTransactionReceipt", [tx_hash], anchor=anchor)
-        if not isinstance(tx, dict) or not isinstance(receipt, dict):
-            raise ResearchPending("Transaction or receipt unavailable")
-        block = quantity(receipt["blockNumber"])
-        if not start <= block <= end or hash32(tx["hash"]) != tx_hash or hash32(receipt["transactionHash"]) != tx_hash:
-            raise ValueError("History/RPC transaction mismatch")
-        header = cache.call("eth_getBlockByNumber", [hex(block), False], anchor=anchor)
-        if hash32(header["hash"]) != hash32(receipt["blockHash"]) or hash32(tx["blockHash"]) != hash32(header["hash"]):
-            raise ValueError("History/RPC canonical block mismatch")
-        timestamp = quantity(header["timestamp"])
-        sender = address(tx["from"])
-        recipient = address(tx["to"]) if tx.get("to") else None
-        mine = sender == wallet
-        gas_usd = Decimal(0)
-        if mine:
-            try:
-                gas_usd = token_units(quantity(receipt["gasUsed"]) * quantity(receipt["effectiveGasPrice"]), 18) * historical_price(prices[WETH], timestamp)
-            except (KeyError, ValueError):
-                gaps.append("missing_gas_cost:" + tx_hash)
-        record = {"id": tx_hash, "timestamp": timestamp, "block_number": block,
-                  "transaction_index": quantity(receipt["transactionIndex"]),
-                  "kind": "GAS", "gas_usd": str(gas_usd), "verified": False}
-        if quantity(receipt["status"]) != 1:
-            records.append(record)
-            continue
-        if recipient == wallet and sender != wallet and quantity(tx.get("value", "0x0")) > 0:
-            funders.add(sender)
-        if mine and recipient and quantity(tx.get("value", "0x0")) > 0:
-            counterparties.add(recipient)
-        token_flows = []
-        swaps = []
-        for raw in receipt.get("logs", []):
-            topic = (raw.get("topics") or [None])[0]
-            if topic == TRANSFER_TOPIC and len(raw.get("topics", [])) == 3:
-                transfer = decode_transfer(raw)
-                if wallet in (transfer["from"], transfer["to"]):
-                    token_flows.append(transfer)
-                    assets.add(transfer["address"])
-            elif topic == SWAP_TOPIC:
-                swaps.append(decode_swap(raw))
-        receipt_tokens[tx_hash] = token_flows
-        supported = []
-        if mine:
-            for swap in swaps:
-                try:
-                    pool = verified_pool(cache, swap["address"], block, anchor)
-                except (RpcError, ValueError):
-                    gaps.append("pool_verification_unavailable:" + tx_hash)
-                    continue
-                if not pool:
-                    continue
-                bases = {WETH: "WETH", USDG: "USDG"}
-                buy = verify_purchase(swap, pool, receipt, tx, wallet, bases)
-                if buy:
-                    supported.append(("BUY", buy))
-                    continue
-                # Reverse the base/token roles to prove a sell using the same
-                # exact direct-transfer and whole-transaction net-flow checks.
-                nonbases = {x: "token" for x in (pool["token0"], pool["token1"]) if x not in bases}
-                sell = verify_purchase(swap, pool, receipt, tx, wallet, nonbases)
-                if sell and sell["token_address"] in bases:
-                    supported.append(("SELL", {"token_address": sell["quote_address"],
-                                      "quote_address": sell["token_address"],
-                                      "amount_raw": sell["spent_raw"], "spent_raw": sell["amount_raw"]}))
-        if len(supported) == 1 and len(swaps) == 1:
-            side, trade = supported[0]
-            token, base = trade["token_address"], trade["quote_address"]
-            try:
-                def decimals(token):
-                    raw = cache.call("eth_call", [{"to": token, "data": "0x313ce567"}, hex(block)], anchor=anchor)
-                    return int(_words(raw, 1)[0], 16)
-                units = token_units(int(trade["amount_raw"]), decimals(token))
-                value = token_units(int(trade["spent_raw"]), decimals(base)) * historical_price(prices[base], timestamp)
-                record.update(kind=side, token=token, quantity=str(units), value_usd=str(value), verified=True)
-            except (RpcError, ValueError):
-                gaps.append("trade_valuation_unavailable:" + tx_hash)
-        elif token_flows or (mine and swaps):
-            record.update(kind="TRANSFER", tokens=sorted({t["address"] for t in token_flows if t["address"] not in (WETH, USDG)}))
-            if mine and swaps:
-                gaps.append("unsupported_swap_route:" + tx_hash)
-            if mine and token_flows:
-                gaps.append("unsupported_token_transaction:" + tx_hash)
-            for t in token_flows:
-                if t["address"] in (WETH, USDG):
-                    if t["to"] == wallet and t["from"] != wallet:
-                        funders.add(t["from"])
-                    if t["from"] == wallet and t["to"] != wallet:
-                        counterparties.add(t["to"])
-        records.append(record)
-        normalized_by_tx[tx_hash] = record
-        if mine and quantity(tx.get("value", "0x0")) > 0:
-            gaps.append("native_value_transaction_needs_trace_review:" + tx_hash)
+    receipt_tokens = {}
+    outgoing = 0
+    for index, tx_hash in enumerate(hashes):
+        cache.checkpoint_progress = {"stage": "receipts", "completed": index, "total": len(hashes)}
+        part = progress.get("tx:" + tx_hash)
+        if part is None:
+            part = reconcile_transaction(cache, wallet, snapshot, tx_hash, prices)
+            progress.save("tx:" + tx_hash, part)
+        records.append(part["record"])
+        receipt_tokens[tx_hash] = part["flows"]
+        gaps.extend(part["gaps"])
+        assets.update(part["assets"])
+        funders.update(part["funders"])
+        counterparties.update(part["counterparties"])
+        outgoing += part["mine"]
+    cache.checkpoint_progress = {"stage": "balances", "completed": len(hashes), "total": len(hashes)}
     # Reconcile the index's token rows with actual receipt logs, then reconcile
     # net flows against boundary balanceOf values to expose omitted transfers.
-    outgoing = sum(1 for tx_hash in hashes if address(cache.call("eth_getTransactionByHash", [tx_hash], anchor=anchor)["from"]) == wallet)
     if after_nonce - before_nonce != outgoing:
         gaps.append("outgoing_transaction_history_does_not_reconcile_with_nonce")
     for row in transfers:
@@ -339,13 +278,21 @@ def reconstruct_wallet(cache: ResearchCache, wallet: str, snapshot: dict) -> dic
                    for t in receipt_tokens.get(tx_hash, [])):
             gaps.append("index_transfer_not_corroborated:" + tx_hash)
     opening = []
+    net_flows = {}
+    for flows in receipt_tokens.values():
+        for t in flows:
+            net_flows[t['address']] = net_flows.get(t['address'], 0) + int(t['amount_raw']) * (
+                (t['to'] == wallet) - (t['from'] == wallet))
     for token in sorted(assets):
         data = "0x70a08231" + wallet[2:].zfill(64)
         try:
-            before = int(_words(cache.call("eth_call", [{"to": token, "data": data}, hex(max(0, start - 1))], anchor=anchor), 1)[0], 16)
-            after = int(_words(cache.call("eth_call", [{"to": token, "data": data}, hex(end)], anchor=anchor), 1)[0], 16)
-            net = sum((int(t["amount_raw"]) * ((t["to"] == wallet) - (t["from"] == wallet))
-                       for flows in receipt_tokens.values() for t in flows if t["address"] == token), 0)
+            balances = progress.get('balance:' + token)
+            if balances is None:
+                before = int(_words(cache.call("eth_call", [{"to": token, "data": data}, hex(max(0, start - 1))], anchor=anchor), 1)[0], 16)
+                after = int(_words(cache.call("eth_call", [{"to": token, "data": data}, hex(end)], anchor=anchor), 1)[0], 16)
+                balances = progress.save('balance:' + token, [before, after])
+            before, after = balances
+            net = net_flows.get(token, 0)
             if before + net != after:
                 gaps.append("token_balance_history_does_not_reconcile:" + token)
             if before and token not in (WETH, USDG):
@@ -369,3 +316,101 @@ def reconstruct_wallet(cache: ResearchCache, wallet: str, snapshot: dict) -> dic
             "controller_coverage_complete": not internals and not gaps,
             "source": "Blockscout indexed window + RPC receipts and balances + historical CoinGecko ETH/USDG",
             "coverage": "30-day Robinhood Chain window; supported direct factory swaps only; no cross-chain ownership proof"}
+
+
+def reconcile_transaction(cache, wallet, snapshot, tx_hash, prices):
+    start, end, anchor = snapshot["start_block"], snapshot["block"], snapshot["hash"]
+    gaps, funders, counterparties, assets = [], set(), set(), set()
+    tx = cache.call("eth_getTransactionByHash", [tx_hash], anchor=anchor)
+    receipt = cache.call("eth_getTransactionReceipt", [tx_hash], anchor=anchor)
+    if not isinstance(tx, dict) or not isinstance(receipt, dict):
+        raise ResearchPending("Transaction or receipt unavailable")
+    block = quantity(receipt["blockNumber"])
+    if not start <= block <= end or hash32(tx["hash"]) != tx_hash or hash32(receipt["transactionHash"]) != tx_hash:
+        raise ValueError("History/RPC transaction mismatch")
+    header = cache.call("eth_getBlockByNumber", [hex(block), False], anchor=anchor)
+    if hash32(header["hash"]) != hash32(receipt["blockHash"]) or hash32(tx["blockHash"]) != hash32(header["hash"]):
+        raise ValueError("History/RPC canonical block mismatch")
+    timestamp = quantity(header["timestamp"])
+    sender = address(tx["from"])
+    recipient = address(tx["to"]) if tx.get("to") else None
+    mine = sender == wallet
+    gas_usd = Decimal(0)
+    if mine:
+        try:
+            gas_usd = token_units(quantity(receipt["gasUsed"]) * quantity(receipt["effectiveGasPrice"]), 18) * historical_price(prices[WETH], timestamp)
+        except (KeyError, ValueError):
+            gaps.append("missing_gas_cost:" + tx_hash)
+    record = {"id": tx_hash, "timestamp": timestamp, "block_number": block,
+              "transaction_index": quantity(receipt["transactionIndex"]),
+              "kind": "GAS", "gas_usd": str(gas_usd), "verified": False}
+    if quantity(receipt["status"]) != 1:
+        return {"record": record, "flows": [], "gaps": gaps, "funders": [],
+                "counterparties": [], "assets": [], "mine": mine}
+    if recipient == wallet and sender != wallet and quantity(tx.get("value", "0x0")) > 0:
+        funders.add(sender)
+    if mine and recipient and quantity(tx.get("value", "0x0")) > 0:
+        counterparties.add(recipient)
+    token_flows = []
+    swaps = []
+    for raw in receipt.get("logs", []):
+        topic = (raw.get("topics") or [None])[0]
+        if topic == TRANSFER_TOPIC and len(raw.get("topics", [])) == 3:
+            transfer = decode_transfer(raw)
+            if wallet in (transfer["from"], transfer["to"]):
+                token_flows.append(transfer)
+                assets.add(transfer["address"])
+        elif topic == SWAP_TOPIC:
+            swaps.append(decode_swap(raw))
+    supported = []
+    if mine:
+        for swap in swaps:
+            try:
+                pool = verified_pool(cache, swap["address"], block, anchor)
+            except (RpcError, ValueError):
+                gaps.append("pool_verification_unavailable:" + tx_hash)
+                continue
+            if not pool:
+                continue
+            bases = {WETH: "WETH", USDG: "USDG"}
+            buy = verify_purchase(swap, pool, receipt, tx, wallet, bases)
+            if buy:
+                supported.append(("BUY", buy))
+                continue
+            # Reverse the base/token roles to prove a sell using the same
+            # exact direct-transfer and whole-transaction net-flow checks.
+            nonbases = {x: "token" for x in (pool["token0"], pool["token1"]) if x not in bases}
+            sell = verify_purchase(swap, pool, receipt, tx, wallet, nonbases)
+            if sell and sell["token_address"] in bases:
+                supported.append(("SELL", {"token_address": sell["quote_address"],
+                                  "quote_address": sell["token_address"],
+                                  "amount_raw": sell["spent_raw"], "spent_raw": sell["amount_raw"]}))
+    if len(supported) == 1 and len(swaps) == 1:
+        side, trade = supported[0]
+        token, base = trade["token_address"], trade["quote_address"]
+        try:
+            def decimals(token):
+                raw = cache.call("eth_call", [{"to": token, "data": "0x313ce567"}, hex(block)], anchor=anchor)
+                return int(_words(raw, 1)[0], 16)
+            units = token_units(int(trade["amount_raw"]), decimals(token))
+            value = token_units(int(trade["spent_raw"]), decimals(base)) * historical_price(prices[base], timestamp)
+            record.update(kind=side, token=token, quantity=str(units), value_usd=str(value), verified=True)
+        except (RpcError, ValueError):
+            gaps.append("trade_valuation_unavailable:" + tx_hash)
+    elif token_flows or (mine and swaps):
+        record.update(kind="TRANSFER", tokens=sorted({t["address"] for t in token_flows if t["address"] not in (WETH, USDG)}))
+        if mine and swaps:
+            gaps.append("unsupported_swap_route:" + tx_hash)
+        if mine and token_flows:
+            gaps.append("unsupported_token_transaction:" + tx_hash)
+        for t in token_flows:
+            if t["address"] in (WETH, USDG):
+                if t["to"] == wallet and t["from"] != wallet:
+                    funders.add(t["from"])
+                if t["from"] == wallet and t["to"] != wallet:
+                    counterparties.add(t["to"])
+    if mine and quantity(tx.get("value", "0x0")) > 0:
+        gaps.append("native_value_transaction_needs_trace_review:" + tx_hash)
+    return {"record": record, "flows": token_flows, "gaps": gaps,
+            "funders": sorted(funders), "counterparties": sorted(counterparties),
+            "assets": sorted(assets), "mine": mine}

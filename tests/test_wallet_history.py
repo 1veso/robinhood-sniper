@@ -60,6 +60,45 @@ class FakeHistory:
 
 
 class WalletHistoryTests(unittest.TestCase):
+    def test_checkpoint_resumes_without_replaying_completed_receipts(self):
+        snapshot = {"block": 105, "timestamp": NOW, "hash": bh(105), "start_block": 100}
+        first_hash = min(TX_SWAP, TX_SELL)
+        second_hash = max(TX_SWAP, TX_SELL)
+        with tempfile.TemporaryDirectory() as tmp:
+            class Interrupted(FakeHistory):
+                root = Path(tmp)
+                def call(self, method, params, *, anchor):
+                    if method == 'eth_getTransactionReceipt' and params[0] == second_hash:
+                        raise ResearchPending('cycle ended')
+                    return super().call(method, params, anchor=anchor)
+            with self.assertRaises(ResearchPending):
+                reconstruct_wallet(Interrupted(), WALLET, snapshot)
+            class Resumed(FakeHistory):
+                root = Path(tmp)
+                def account_history(self, *args):
+                    raise AssertionError('complete indexes must not replay')
+                def call(self, method, params, *, anchor):
+                    if method in ('eth_getTransactionByHash', 'eth_getTransactionReceipt') and params[0] == first_hash:
+                        raise AssertionError('completed receipt must not replay')
+                    return super().call(method, params, anchor=anchor)
+            resumed = reconstruct_wallet(Resumed(), WALLET, snapshot)
+            expected = reconstruct_wallet(FakeHistory(), WALLET, snapshot)
+            self.assertEqual(resumed, expected)
+
+    def test_checkpoint_is_bound_to_wallet_and_snapshot(self):
+        from sniper.adapters.history_progress import HistoryProgress
+        with tempfile.TemporaryDirectory() as tmp:
+            original = HistoryProgress(Path(tmp), WALLET, {'block': 100, 'hash': bh(100)})
+            original.save('tx:test', {'verified': True})
+            original.close()
+            for wallet, snap in ((WALLET, {'block': 100, 'hash': bh(101)}),
+                                 ('0x' + '77' * 20, {'block': 100, 'hash': bh(100)})):
+                changed = HistoryProgress(Path(tmp), wallet, snap)
+                try:
+                    self.assertIsNone(changed.get('tx:test'))
+                finally:
+                    changed.close()
+
     def test_internal_transaction_hash_field_matches_live_blockscout_schema(self):
         class InternalHistory(FakeHistory):
             def account_history(self, wallet, action, start, end):

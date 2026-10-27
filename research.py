@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import sqlite3
 import time
 from urllib.parse import urlsplit
 
@@ -17,6 +18,41 @@ from sniper.adapters.evm import RpcClient, RpcError, DEFAULT_RPC, USDG, SWAP_TOP
 from sniper.adapters.wallet_history import ResearchCache, ResearchPending, CoverageExceeded, block_at_or_before, reconstruct_wallet
 from sniper.wallet_analysis import analyse_wallet, cluster_controllers, apply_controller_reviews
 from supervise import atomic_json, child_environment, instance_lock
+
+
+def import_observed_buyers(runtime, state):
+    """Prioritize actual paper-source recipients, without granting qualification."""
+    path = runtime / 'exploration/events.sqlite3'
+    if not path.exists():
+        return 0
+    conn = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)
+    added = 0
+    try:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_confirmations'").fetchone():
+            return 0
+        rows = conn.execute('''SELECT p.payload FROM paper_confirmations p JOIN evm_events e
+            ON e.chain_id=4663 AND e.tx_hash=p.tx_hash AND e.log_index=p.log_index
+            AND e.block_hash=p.block_hash AND e.kind='sampled_swap' AND e.canonical=1
+            ORDER BY p.observed_at DESC LIMIT 1000''')
+        candidates = state.setdefault('candidates', {})
+        for row in rows:
+            proof = json.loads(row[0])
+            if proof.get('verified_swap') is not True or proof.get('factory_verified') is not True:
+                continue
+            wallet = address(proof['wallet'])
+            if wallet not in candidates:
+                if len(candidates) >= 5000:
+                    break
+                added += 1
+                candidates[wallet] = {'wallet': wallet, 'first_seen_at': int(time.time()),
+                    'sampled_transactions': 0, 'example_transaction': proof['tx_hash'],
+                    'example_pool': proof['pool'], 'qualified': False,
+                    'source': 'canonical funded recipient observation; historical qualification pending'}
+            candidates[wallet]['observed_recipient'] = True
+            candidates[wallet]['last_seen_at'] = max(candidates[wallet].get('last_seen_at', 0), proof['observed_at'])
+        return added
+    finally:
+        conn.close()
 
 
 def discover(cache, state, *, blocks=2000, sample=12):
@@ -105,6 +141,9 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
                           max_calls=discovery_calls, seconds=discovery_seconds)
     path = folder / "discovery.json"
     state = json.loads(path.read_text()) if path.exists() else {}
+    imported = import_observed_buyers(runtime, state)
+    if state.get('candidates'):
+        atomic_json(path, state)
     pending = []
     discovery = {}
     try:
@@ -156,19 +195,25 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
             # histories to continue across invocations instead of being truncated.
             attempts_path = cohort / "attempts.json"
             attempts = json.loads(attempts_path.read_text()) if attempts_path.exists() else {}
-            queue = sorted(candidates.items(), key=lambda x: (x[1]["first_seen_at"], x[0]))
+            queue = sorted(candidates.items(), key=lambda x: (not x[1].get('observed_recipient', False), x[1]["first_seen_at"], x[0]))
             queue = [(w, c) for w, c in queue if not (cohort / f"wallet-{w}.json").exists()][:100]
             progress_path = cohort / "progress.json"
             progress = json.loads(progress_path.read_text()) if progress_path.exists() else {}
             active = progress.get("active_wallet")
-            queue.sort(key=lambda x: (x[0] != active, attempts.get(x[0], 0), x[1]["first_seen_at"], x[0]))
+            # Checkpoints make rotation safe. A huge or unavailable history must
+            # not prevent every other candidate from being assessed forever.
+            if progress.get('consecutive_batches', 0) >= 3:
+                active = None
+            queue.sort(key=lambda x: (x[0] != active, attempts.get(x[0], 0), not x[1].get('observed_recipient', False), x[1]["first_seen_at"], x[0]))
             for wallet, candidate in queue[:5]:
                 report_path = cohort / f"wallet-{wallet}.json"
                 if report_path.exists():
                     continue
                 attempts[wallet] = int(time.time())
                 atomic_json(attempts_path, attempts)
-                atomic_json(progress_path, {"active_wallet": wallet, "last_attempt_at": int(time.time())})
+                batches = progress.get('consecutive_batches', 0) + 1 if wallet == progress.get('active_wallet') else 1
+                atomic_json(progress_path, {"active_wallet": wallet, "last_attempt_at": int(time.time()),
+                                            "consecutive_batches": batches})
                 try:
                     history = reconstruct_wallet(cache, wallet, snapshot)
                 except CoverageExceeded:
@@ -204,10 +249,12 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
                "rpc_hosts": {"discovery": urlsplit(discovery_rpc.url).hostname,
                              "history": urlsplit(rpc.url).hostname},
                "discovery": discovery, "candidate_count": len(candidates), "history_reports": len(reports),
+               "imported_observed_buyers": imported,
                "performance_qualified_count": len(shortlist), "approved_wallet_count": len(selected),
                "pending": pending, "snapshot": snapshot, "shortlist": shortlist,
                "history_progress": {"requests_this_cycle": cache.max_calls - cache.remaining,
-                                    "last_operation": cache.progress},
+                                    "last_operation": cache.progress,
+                                    "checkpoint": getattr(cache, 'checkpoint_progress', {})},
                "controller_policy": "Automatic links merge suspected controllers. No observed link is not proof of independence; no automatic qualified:true assertion.",
                "reports": reports, "candidate_file": str(folder / "wallet-candidates.csv")}
     atomic_json(folder / "wallet-research.json", summary)

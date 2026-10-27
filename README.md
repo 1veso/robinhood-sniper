@@ -5,7 +5,11 @@ Robinhood Chain events, checks supplied wallet and token evidence, models entrie
 and exits, and keeps a durable account ledger. Solana screening and optional Grok
 research annotation are included as separate adapters.
 
-This is version **0.1.6**: runnable software for testing the proposed strategy.
+This is version **0.1.7**: runnable software for testing the proposed strategy.
+
+The [pipeline validation guide](docs/PIPELINE_VALIDATION.md) covers resumable wallet
+history, supplemental safety evidence, and the isolated live-quote entry/exit test
+with delivered Telegram alerts. Qualification remains evidence-driven.
 
 The active [paper strategy](docs/EXPLORATORY_PAPER.md) can follow two distinct observed buyers within 15 minutes with at least $30,000 pool liquidity. It retains monetary risk limits, requires live route quotes and a current GoPlus rug-screen response, and labels unproven independence and unknown safety evidence. Activate the user-requested revision with `python explore.py --activate-v2`; it preserves the existing paper cash, holdings, exit rules, deadline and historical decisions. The original strict configuration remains a separate research reference.
 
