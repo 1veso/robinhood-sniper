@@ -2,7 +2,8 @@
 
 ## v0.1.4 live evidence and collection recovery, 2026-10-27
 
-209 offline tests passed on local Python 3.12.10. New coverage includes reordered,
+210 offline tests passed on local Python 3.12.10. New coverage includes paced,
+bounded batches and reordered,
 missing, duplicate and erroneous RPC batch responses; read-only restrictions;
 canonical batch collection; stable history resumption; GoPlus unknown/failed
 fields; review conflicts; pinned bidirectional V3 quotes; route-size bounds;

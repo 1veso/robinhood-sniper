@@ -134,6 +134,7 @@ class RpcClient:
         self._id = 0
         self._deadline: float | None = None
         self.batch_enabled = transport is None
+        self._next_batch_at = 0.0
 
     @contextmanager
     def budget(self, seconds: float | None):
@@ -175,8 +176,8 @@ class RpcClient:
 
     def call_many(self, calls: list[tuple[str, list[Any]]]) -> list[Any]:
         """Read-only batch with exact ID matching; partial responses fail closed."""
-        if not 1 <= len(calls) <= 50:
-            raise ValueError("RPC batch must contain 1..50 requests")
+        if not 1 <= len(calls) <= 10:
+            raise ValueError("RPC batch must contain 1..10 requests")
         if any(method not in self.READ_METHODS for method, _ in calls):
             raise RpcError("read-only RPC refuses batch containing a write method")
         payload = []
@@ -185,6 +186,12 @@ class RpcClient:
             payload.append({"jsonrpc": "2.0", "id": self._id, "method": method, "params": params})
         for attempt in range(self.max_retries + 1):
             self.remaining()
+            if self.batch_enabled:
+                delay = max(0.0, self._next_batch_at - time.monotonic())
+                if delay:
+                    self.sleeper(min(delay, self.remaining()))
+                self.remaining()
+                self._next_batch_at = time.monotonic() + 0.5
             try:
                 response = (self.transport or self._http)(payload)
                 self.remaining()
@@ -540,8 +547,8 @@ class EvmCollector:
                 except (ValueError, AttributeError):
                     pass  # Normal event decoding records malformed logs below.
             numbers = sorted(numbers)
-            for offset in range(0, len(numbers), 50):
-                batch = numbers[offset:offset + 50]
+            for offset in range(0, len(numbers), 10):
+                batch = numbers[offset:offset + 10]
                 rows = self.rpc.call_many([("eth_getBlockByNumber", [hex(n), False]) for n in batch])
                 for number, row in zip(batch, rows):
                     if not isinstance(row, dict) or quantity(row.get("number")) != number:

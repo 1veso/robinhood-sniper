@@ -1,9 +1,23 @@
 import unittest
+from unittest.mock import patch
 from sniper.adapters.evm import RpcClient, RpcError, EvmCollector
 from test_evm import FakeChain
 
 
 class RpcBatchTests(unittest.TestCase):
+    def test_batch_bursts_are_bounded_and_paced(self):
+        waits = []
+        def transport(requests):
+            return [{"jsonrpc": "2.0", "id": r["id"], "result": "0x1"} for r in requests]
+        rpc = RpcClient(transport=transport, sleeper=waits.append)
+        rpc.batch_enabled = True
+        with patch('sniper.adapters.evm.time.monotonic', return_value=100):
+            rpc.call_many([('eth_chainId', [])])
+            rpc.call_many([('eth_chainId', [])])
+        self.assertEqual(waits, [0.5])
+        with self.assertRaises(ValueError):
+            rpc.call_many([('eth_chainId', [])] * 11)
+
     def test_reordered_results_preserve_request_order(self):
         def transport(requests):
             return [{"jsonrpc": "2.0", "id": r["id"], "result": r["method"]}

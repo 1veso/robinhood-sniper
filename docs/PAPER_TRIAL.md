@@ -11,6 +11,9 @@ Preparation, not an active seven-day strategy trial. Collection catch-up was
 verified on 2026-10-27: a bounded 12-cycle pass retained the original cursor and
 finished 5–10 blocks behind the observed head, without source errors. No blocks
 were skipped to create this result. Normal scheduling has been restored.
+The public endpoint subsequently returned a rate limit during supervised
+operation. Header batches are limited to ten calls and paced at least half a
+second apart per client; errors retain completed progress for a later cycle.
 
 Wallet qualification is still required. Unsupported/oversized histories are
 recorded as unqualified, not silently truncated. Discovery has a separate small
