@@ -166,7 +166,14 @@ def reconstruct_wallet(cache: ResearchCache, wallet: str, snapshot: dict) -> dic
     all_transfers = cache.account_history(wallet, "tokentx", 0, end)
     transfers = [row for row in all_transfers if int(row["blockNumber"]) >= start]
     internals = cache.account_history(wallet, "txlistinternal", start, end)
-    hashes = sorted({hash32(r["hash"]) for rows in (txs, transfers, internals) for r in rows})
+    def indexed_hash(row):
+        # Blockscout's internal-transaction endpoint uses transactionHash;
+        # normal transactions and ERC-20 transfers use hash.
+        value = row.get("hash", row.get("transactionHash"))
+        if row.get("hash") and row.get("transactionHash") and row["hash"] != row["transactionHash"]:
+            raise ValueError("Conflicting indexed transaction identities")
+        return hash32(value)
+    hashes = sorted({indexed_hash(r) for rows in (txs, transfers, internals) for r in rows})
     gaps, records, funders, counterparties, assets = [], [], set(), set(), set()
     assets.update(address(row["contractAddress"]) for row in all_transfers)
     prices = {}

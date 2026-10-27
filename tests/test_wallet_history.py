@@ -56,6 +56,17 @@ class FakeHistory:
 
 
 class WalletHistoryTests(unittest.TestCase):
+    def test_internal_transaction_hash_field_matches_live_blockscout_schema(self):
+        class InternalHistory(FakeHistory):
+            def account_history(self, wallet, action, start, end):
+                if action == "txlistinternal":
+                    return [{"transactionHash": TX_SWAP, "blockNumber": "102", "isError": "0", "value": "0"}]
+                return super().account_history(wallet, action, start, end)
+        h = reconstruct_wallet(InternalHistory(), WALLET, {"block": 105, "timestamp": NOW, "hash": bh(105), "start_block": 100})
+        self.assertTrue(h["complete"], h["gaps"])
+        self.assertEqual(len(h["records"]), 2)
+        self.assertFalse(h["controller_coverage_complete"])
+
     def test_receipt_reconstruction_proves_buy_and_sell_and_reconciles_balances(self):
         h = reconstruct_wallet(FakeHistory(), WALLET, {"block": 105, "timestamp": NOW, "hash": bh(105), "start_block": 100})
         self.assertTrue(h["complete"], h["gaps"])
