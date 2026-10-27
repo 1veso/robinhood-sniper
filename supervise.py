@@ -52,11 +52,13 @@ def instance_lock(path: Path):
 
 def child_environment(runtime: Path) -> dict:
     env = dict(os.environ)
-    private_rpc = runtime / "rpc-url.txt"
-    if private_rpc.exists():
-        env["SNIPER_RPC_URL"] = private_rpc.read_text(encoding="utf-8-sig").strip()
-        if not env["SNIPER_RPC_URL"]:
-            raise ValueError("runtime/rpc-url.txt is empty; remove it to use the public endpoint")
+    for filename, variable in (("rpc-url.txt", "SNIPER_RPC_URL"),
+                               ("observation-rpc-url.txt", "SNIPER_OBSERVATION_RPC_URL")):
+        private_rpc = runtime / filename
+        if private_rpc.exists():
+            env[variable] = private_rpc.read_text(encoding="utf-8-sig").strip()
+            if not env[variable]:
+                raise ValueError(f"runtime/{filename} is empty; remove it to use the default endpoint")
     history_key = runtime / "blockscout-api-key.txt"
     if history_key.exists():
         env["BLOCKSCOUT_API_KEY"] = history_key.read_text(encoding="utf-8-sig").strip()
@@ -65,7 +67,7 @@ def child_environment(runtime: Path) -> dict:
 
 
 def redact(value: str, env: dict) -> str:
-    for name in ("SNIPER_RPC_URL", "XAI_API_KEY", "BLOCKSCOUT_API_KEY"):
+    for name in ("SNIPER_RPC_URL", "SNIPER_OBSERVATION_RPC_URL", "XAI_API_KEY", "BLOCKSCOUT_API_KEY"):
         if env.get(name):
             value = value.replace(env[name], "[REDACTED]")
     return value
@@ -80,6 +82,9 @@ def run_cycle(runtime: Path, account: str, max_blocks: int, timeout: int) -> dic
         if not path.exists():
             atomic_json(path, {})
     env = child_environment(runtime)
+    observation_env = dict(env)
+    if env.get("SNIPER_OBSERVATION_RPC_URL"):
+        observation_env["SNIPER_RPC_URL"] = env["SNIPER_OBSERVATION_RPC_URL"]
     command = [sys.executable, str(ROOT / "run.py"), "--config", str(policy_path),
                "--db", str(runtime / f"{account}.sqlite3"), "run",
                "--events-db", str(runtime / f"{account}-events.sqlite3"),
@@ -88,7 +93,7 @@ def run_cycle(runtime: Path, account: str, max_blocks: int, timeout: int) -> dic
         command.extend([f"--{name}", str(path)])
     started = int(time.time())
     try:
-        result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True,
+        result = subprocess.run(command, cwd=ROOT, env=observation_env, capture_output=True,
                                 text=True, encoding="utf-8", timeout=timeout)
         safe_output = redact(result.stdout, env)
         try:

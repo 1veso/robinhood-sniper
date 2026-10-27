@@ -48,11 +48,30 @@ class ServiceTests(unittest.TestCase):
 
     def test_private_rpc_is_not_written_to_status_or_logs(self):
         secret_url = "https://rpc.example/v2/private-key-for-test"
+        observation_url = "https://observe.example/v2/other-private-key"
         (self.runtime / "rpc-url.txt").write_text(secret_url)
-        result = subprocess.CompletedProcess([], 2, json.dumps({"error": secret_url}), "")
+        (self.runtime / "observation-rpc-url.txt").write_text(observation_url)
+        result = subprocess.CompletedProcess([], 2, json.dumps({"error": secret_url + observation_url}), "")
         self.cycle(result=result)
         for name in ("status.json", "service.jsonl", "account.html"):
             self.assertNotIn(secret_url, (self.runtime / name).read_text())
+            self.assertNotIn(observation_url, (self.runtime / name).read_text())
+
+    def test_observation_and_history_use_separate_configured_endpoints(self):
+        history_url = "https://history.example/private-test-key"
+        observation_url = "https://observe.example/current-test-key"
+        (self.runtime / "rpc-url.txt").write_text(history_url)
+        (self.runtime / "observation-rpc-url.txt").write_text(observation_url)
+        calls = []
+
+        def child(command, **kwargs):
+            calls.append((Path(command[1]).name, kwargs["env"]["SNIPER_RPC_URL"]))
+            return subprocess.CompletedProcess(command, 0, '{}', '')
+
+        with patch.object(supervise, "ROOT", self.root), patch.object(supervise.subprocess, "run", side_effect=child):
+            result = supervise.run_cycle(self.runtime, "research", 1000, 180)
+        self.assertEqual(calls, [("run.py", observation_url), ("research.py", history_url)])
+        self.assertEqual(result["entry_status"], "BLOCKED")
 
     def test_os_lock_blocks_overlap_and_releases_after_exit(self):
         path = self.runtime / "service.lock"

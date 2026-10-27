@@ -44,6 +44,17 @@ for the frozen 30-day history's state reads on 2026-10-27. An archive-capable
 endpoint is therefore required for historical qualification. The research runner
 checks archive availability before spending further indexed-history requests.
 
+Optionally save a separate HTTPS endpoint in `runtime/observation-rpc-url.txt`
+(or set `SNIPER_OBSERVATION_RPC_URL`) for current-market collection and wallet
+discovery. Historical qualification still uses `rpc-url.txt`. This keeps a
+historical provider outage from stopping current observations. Each provider is
+checked for chain 4663 independently; wrong-chain history blocks qualification.
+Research reports list only provider hostnames and explicit pending errors.
+The local installation uses the public RPC for observations and Alchemy for
+history. If Alchemy returns “ROBINHOOD_MAINNET is not enabled for this app,”
+enable Robinhood Mainnet in that app's Networks settings. Verify actual current
+and historical requests after enabling it; saving a key alone is insufficient.
+
 Indexed histories use [Blockscout's unified API](https://docs.blockscout.com/devs/blockscout-api-responses-and-routes).
 Create a key in [the developer portal](https://dev.blockscout.com/) and save it
 on one line in `runtime/blockscout-api-key.txt`, or set `BLOCKSCOUT_API_KEY`.

@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import sys
 import time
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
@@ -87,7 +88,8 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
     key_file = runtime / "blockscout-api-key.txt"
     key = key_file.read_text(encoding="utf-8-sig").strip() if key_file.exists() else os.environ.get("BLOCKSCOUT_API_KEY", "")
     rpc = RpcClient(env.get("SNIPER_RPC_URL") or DEFAULT_RPC, timeout=10, max_retries=1)
-    cache = ResearchCache(folder / "cache", rpc, blockscout_key=key, max_calls=max_calls, seconds=seconds)
+    discovery_rpc = RpcClient(env.get("SNIPER_OBSERVATION_RPC_URL") or rpc.url, timeout=10, max_retries=1)
+    cache = ResearchCache(folder / "cache", discovery_rpc, blockscout_key=key, max_calls=max_calls, seconds=seconds)
     path = folder / "discovery.json"
     state = json.loads(path.read_text()) if path.exists() else {}
     pending = []
@@ -97,6 +99,11 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
         atomic_json(path, state)
     except ResearchPending as exc:
         pending.append(str(exc))
+    except RpcError as exc:
+        pending.append(f"DISCOVERY_RPC_UNAVAILABLE: {exc}")
+    # One shared request/time budget; immutable evidence is keyed by chain and
+    # block anchor. Verify the archive provider independently before using it.
+    cache.rpc = rpc
     candidates = state.get("candidates", {})
     snapshot_path = folder / "history-snapshot.json"
     snapshot = json.loads(snapshot_path.read_text()) if snapshot_path.exists() else None
@@ -109,6 +116,7 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
         pending.append("BLOCKSCOUT_API_KEY_REQUIRED")
     elif candidates:
         try:
+            rpc.verify_chain()
             if snapshot is None:
                 end = quantity(rpc.call("eth_blockNumber")) - 5
                 header = rpc.call("eth_getBlockByNumber", [hex(end), False])
@@ -145,6 +153,8 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
                 break
         except ResearchPending as exc:
             pending.append(str(exc))
+        except RpcError as exc:
+            pending.append(f"HISTORY_RPC_UNAVAILABLE: {exc}")
         except (ValueError, KeyError, RuntimeError) as exc:
             pending.append(f"{type(exc).__name__}: historical evidence failed validation")
     reports = [json.loads(p.read_text()) for p in sorted(cohort.glob("wallet-0x*.json"))] if cohort and cohort.exists() else []
@@ -160,6 +170,8 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
                     -Decimal(r["net_pnl_after_follower_stress_usd"]), r["wallet"]))
     shortlist = [{"rank": i + 1, **r} for i, r in enumerate(ranked) if r["performance_qualified"]]
     summary = {"mode": "RESEARCH_ONLY", "updated_at": int(time.time()),
+               "rpc_hosts": {"discovery": urlsplit(discovery_rpc.url).hostname,
+                             "history": urlsplit(rpc.url).hostname},
                "discovery": discovery, "candidate_count": len(candidates), "history_reports": len(reports),
                "performance_qualified_count": len(shortlist), "approved_wallet_count": len(selected),
                "pending": pending, "snapshot": snapshot, "shortlist": shortlist,

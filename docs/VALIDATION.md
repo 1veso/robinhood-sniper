@@ -2,7 +2,7 @@
 
 ## v0.1.1 Windows acceptance, 2026-10-27
 
-**142 tests passed on Python 3.12.10**, including the original Windows failure
+**144 tests passed on Python 3.12.10**, including the original Windows failure
 case. The demo, CSV/HTML exports, offline doctor and network doctor completed in
 the extracted release folder. Mainnet RPC returned chain ID 4663 with TLS
 verification enabled. A locally supplied Blockscout key returned HTTP 200 from
@@ -19,6 +19,8 @@ also exposed its distinct `transactionHash` field; that schema is covered by a
 regression test. CI now covers both Windows and Linux.
 An integration check also verifies that unavailable archive state stops history
 requests while preserving automatic discovery and blocking qualification.
+Separate observation/archive endpoint tests cover correct routing, credential
+redaction, and rejection of an archive provider on the wrong chain.
 
 Automatic discovery has produced real candidate addresses; no historical wallet
 has yet been declared qualified in this acceptance run. History processing is
