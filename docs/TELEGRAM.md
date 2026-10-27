@@ -58,7 +58,8 @@ used. Put a file at `runtime/telegram/STOP` to stop subsequent monitor cycles.
 
 - New pool means a canonical factory event observed within the last 24 hours;
   it does not prove the token itself is newly deployed. First startup begins
-  with a bounded recent 2,000-block window. Subsequent polls resume the cursor.
+  with a bounded recent 2,000-block window. Subsequent polls resume the cursor,
+  scanning up to 5,000 blocks in 500-block chunks within a 45-second RPC budget.
 - The automatic reviewed-wallet output is `runtime/research/qualified-wallets.json`.
   Its research summary must be no more than five minutes old. An absent research
   output falls back to `runtime/wallets.json`. No example wallet is promoted.

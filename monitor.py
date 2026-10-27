@@ -68,12 +68,16 @@ def cycle(runtime, *, send=False, rpc=None, collector_seconds=45):
             atomic_json(marker, identity)
         wallets = current_wallets(runtime)
         rpc = rpc or RpcClient(rpc_url(runtime), timeout=6, max_retries=1)
-        collector = EvmCollector(rpc, store=source, watchlist=wallets, max_blocks_per_request=100)
+        collector = EvmCollector(rpc, store=source, watchlist=wallets, max_blocks_per_request=500)
         status = {"mode": "ALERTS_ONLY", "orders_enabled": False, "started_at": int(time.time()),
                   "reviewed_wallets": len(wallets), "health": "OK", "alerts_queued": 0, "sent_this_cycle": 0}
         collected = None
         try:
-            collected = collector.poll(max_blocks=2000, max_seconds=collector_seconds)
+            # A small initial window, then larger catch-up polls. The RPC time
+            # budget still bounds work; larger chunks reduce repeated log and
+            # boundary-header requests when clearing a restart backlog.
+            maximum = 5000 if source.cursor(CHAIN_ID) else 2000
+            collected = collector.poll(max_blocks=maximum, max_seconds=collector_seconds)
             status["collector"] = {k: collected.get(k) for k in ("head", "cursor", "status", "errors")}
             cursor = collected.get("cursor") or {}
             status["collector_lag_blocks"] = max(0, collected["head"] - cursor["block_number"]) if cursor else None
