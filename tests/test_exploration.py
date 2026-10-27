@@ -127,6 +127,20 @@ class SourceTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'canonical'):
             self.source.prove(s)
 
+    def test_sampling_keeps_all_swap_legs_of_each_selected_transaction(self):
+        original = self.source.rpc.transport
+        def transport(payload):
+            result = original(payload)
+            if payload['method'] == 'eth_getLogs':
+                second = {**result['result'][0], 'logIndex': '0x3', 'address': OTHER}
+                result['result'].append(second)
+            return result
+        self.source.rpc.transport = transport
+        result = self.source.collect(sample_size=1)
+        self.assertEqual(result['sampled_transactions'], 1)
+        self.assertEqual(result['sampled'], 2)
+        self.assertEqual(len(self.source.pending()), 2)
+
     def test_routed_buy_keeps_recipient_payer_and_relayer_separate(self):
         swap = decode_swap(swap_log())
         rc = receipt()

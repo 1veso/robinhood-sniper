@@ -107,8 +107,9 @@ class ExploratorySource:
         swaps = [decode_swap(raw) for raw in logs]
         if any(not start <= s['block_number'] <= tip for s in swaps):
             raise RpcError('Swap outside requested interval')
-        # Hash ordering avoids cherry-picking by eventual P&L. At most one signal
-        # per transaction; multi-hop/direct-payment ambiguity is rejected below.
+        # Hash ordering avoids cherry-picking by eventual P&L. Select transactions,
+        # then retain ALL their swap legs: a base/base routing leg must not hide
+        # the actual token acquisition later in that same sampled transaction.
         selected, seen = [], set()
         for swap in sorted(swaps, key=signal_id):
             if swap['tx_hash'] not in seen:
@@ -116,6 +117,7 @@ class ExploratorySource:
                 seen.add(swap['tx_hash'])
             if len(selected) >= sample_size:
                 break
+        selected = [swap for swap in swaps if swap['tx_hash'] in seen]
         headers = {tip: anchor}
         for s in selected:
             if s['block_number'] not in headers:
@@ -127,7 +129,7 @@ class ExploratorySource:
         if self.collector.block(tip)['hash'] != anchor['hash']:
             raise ReorgError('Collection anchor changed')
         self.store.commit_chunk(CHAIN_ID, selected, list(headers.values()), anchor, expected_cursor=cursor)
-        return {'from_block': start, 'through_block': tip, 'logs_seen': len(logs), 'sampled': len(selected),
+        return {'from_block': start, 'through_block': tip, 'logs_seen': len(logs), 'sampled': len(selected), 'sampled_transactions': len(seen),
                 'coverage': 'bounded hash sample; not all chain activity', 'reorg': reorg,
                 'skipped_blocks': max(0, start - cursor['block_number'] - 1) if cursor else 0}
 
