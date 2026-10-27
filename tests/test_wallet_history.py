@@ -60,6 +60,15 @@ class FakeHistory:
 
 
 class WalletHistoryTests(unittest.TestCase):
+    def test_socket_timeout_is_retryable_and_does_not_cache_a_false_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = ResearchCache(Path(tmp), None, blockscout_key='fixture-key')
+            valid = {'status': '1', 'result': []}
+            with patch('urllib.request.urlopen', side_effect=[TimeoutError('read timed out'), io.BytesIO(json.dumps(valid).encode())]):
+                with self.assertRaises(ResearchPending):
+                    cache.get('https://api.blockscout.com/v2/api?action=txlist')
+                self.assertEqual(cache.get('https://api.blockscout.com/v2/api?action=txlist'), valid)
+
     def test_unsupported_history_can_reject_eligibility_without_inventing_partial_pnl(self):
         class Unsupported(FakeHistory):
             def call(self, method, params, *, anchor):

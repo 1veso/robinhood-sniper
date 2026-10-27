@@ -121,7 +121,7 @@ class ResearchCache:
                 return json.loads(raw)
             except urllib.error.HTTPError as exc:
                 raise ResearchPending(f"History provider HTTP {exc.code}; no eligibility inferred") from None
-            except urllib.error.URLError:
+            except (urllib.error.URLError, TimeoutError):
                 raise ResearchPending("History provider connection unavailable") from None
         # Keys remain in the Authorization header, never the URL or cache payload.
         return self.cached(["https", url], fetch, validate=validate)
