@@ -4,7 +4,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $AppRoot = (Resolve-Path -LiteralPath $AppRoot).Path
-if (!(Test-Path -LiteralPath (Join-Path $AppRoot 'runtime\exploration\trial.json'))) {
+if (!(Test-Path -LiteralPath (Join-Path $AppRoot 'runtime\exploration\trial.json')) -and !(Test-Path -LiteralPath (Join-Path $AppRoot 'runtime\exploration-v2\trial.json'))) {
     throw 'Initialize the separate trial with python explore.py --start first.'
 }
 if (!(Test-Path -LiteralPath $Pythonw)) { throw 'Python 3.11+ pythonw.exe is required.' }

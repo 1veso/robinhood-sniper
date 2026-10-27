@@ -88,7 +88,7 @@ class ExploratorySource:
     def finish(self, swap, result):
         self.store.db.execute('INSERT OR IGNORE INTO exploration_outcomes VALUES(?,?)', (signal_id(swap), json.dumps(result, sort_keys=True)))
 
-    def collect(self, sample_size=32):
+    def collect(self, sample_size=32, watch_pools=()):
         self.rpc.verify_chain()
         reorg = self.collector._recover_reorg()
         cursor = self.store.cursor(CHAIN_ID)
@@ -118,7 +118,28 @@ class ExploratorySource:
             if len(selected) >= sample_size:
                 break
         selected = [swap for swap in swaps if swap['tx_hash'] in seen]
+        # After finding one buyer, keep watching that candidate pool for the
+        # second buyer. This bounded follow-up does not depend on future P&L.
+        selected_keys = {signal_id(s) for s in selected}
+        focused = 0
+        for pool in list(dict.fromkeys(address(p) for p in watch_pools))[:8]:
+            for swap in sorted((s for s in swaps if s['address'] == pool), key=signal_id)[:16]:
+                key = signal_id(swap)
+                if key not in selected_keys:
+                    selected.append(swap)
+                    selected_keys.add(key)
+                    focused += 1
         headers = {tip: anchor}
+        if self.rpc.batch_enabled:
+            numbers = sorted({s['block_number'] for s in selected} - headers.keys())
+            for offset in range(0, len(numbers), 10):
+                group = numbers[offset:offset+10]
+                raw_headers = self.rpc.call_many([('eth_getBlockByNumber', [hex(n), False]) for n in group])
+                for number, raw in zip(group, raw_headers):
+                    if quantity(raw['number']) != number:
+                        raise RpcError('Mismatched batched block header')
+                    headers[number] = {'number': number, 'hash': hash32(raw['hash']),
+                        'parent_hash': hash32(raw['parentHash']), 'timestamp': quantity(raw['timestamp'])}
         for s in selected:
             if s['block_number'] not in headers:
                 headers[s['block_number']] = self.collector.block(s['block_number'])
@@ -129,8 +150,10 @@ class ExploratorySource:
         if self.collector.block(tip)['hash'] != anchor['hash']:
             raise ReorgError('Collection anchor changed')
         self.store.commit_chunk(CHAIN_ID, selected, list(headers.values()), anchor, expected_cursor=cursor)
-        return {'from_block': start, 'through_block': tip, 'logs_seen': len(logs), 'sampled': len(selected), 'sampled_transactions': len(seen),
-                'coverage': 'bounded hash sample; not all chain activity', 'reorg': reorg,
+        return {'from_block': start, 'through_block': tip, 'logs_seen': len(logs), 'sampled': len(selected),
+                'sampled_transactions': len({s['tx_hash'] for s in selected}), 'global_sampled_transactions': len(seen),
+                'focused_pool_signals': focused,
+                'coverage': 'bounded hash sample plus bounded candidate-pool follow-up; not all chain activity', 'reorg': reorg,
                 'skipped_blocks': max(0, start - cursor['block_number'] - 1) if cursor else 0}
 
     def prove(self, sampled):

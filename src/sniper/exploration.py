@@ -15,11 +15,10 @@ class ExploratoryEngine(PaperEngine):
     engine_mode = "exploratory_paper_v1"
     allow_unqualified_wallets = True
     allow_unknown_safety = True
+    require_known_safety_checks = frozenset({'rug_screen_available'})
     confirmation_label = "observed_wallets"
 
     def __init__(self, ledger, policy):
-        if policy.min_independent_wallets != 1:
-            raise ValueError("Exploration follows one observed wallet; independence is not asserted")
         super().__init__(ledger, policy)
 
     def decision_context(self, candidate):

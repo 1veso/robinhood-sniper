@@ -184,6 +184,24 @@ class SourceTests(unittest.TestCase):
             changed = {**rc, field: value}
             self.assertIsNone(verify_recipient_acquisition(swap, {'pool': POOL, 'token0': TOKEN, 'token1': USDG}, changed, {'hash': TX_SWAP, 'from': OTHER}))
 
+    def test_candidate_pool_followup_is_bounded_and_validates_batched_headers(self):
+        logs=[{**swap_log(),'transactionHash':'0x'+f'{i+1:064x}','logIndex':hex(i),'address':POOL if i<20 else OTHER} for i in range(40)]
+        decoded=[decode_swap(x) for x in logs]
+        global_pool=min(decoded,key=signal_id)['address']
+        watched=OTHER if global_pool==POOL else POOL
+        original=self.source.rpc.transport
+        def transport(payload):
+            if isinstance(payload,list):return [transport(p) for p in payload]
+            if payload['method']=='eth_getLogs':return {'jsonrpc':'2.0','id':payload['id'],'result':logs}
+            return original(payload)
+        self.source.rpc.transport=transport
+        self.source.rpc.batch_enabled=True
+        result=self.source.collect(sample_size=1,watch_pools=[watched])
+        self.assertEqual(result['global_sampled_transactions'],1)
+        self.assertEqual(result['focused_pool_signals'],16)
+        self.assertEqual(result['sampled_transactions'],17)
+        self.assertEqual(sum(s['address']==watched for s in self.source.pending()),16)
+
     def test_airdrop_unpaid_or_roundtrip_is_not_a_funded_acquisition(self):
         swap = decode_swap(swap_log())
         pool = {'pool': POOL, 'token0': TOKEN, 'token1': USDG}

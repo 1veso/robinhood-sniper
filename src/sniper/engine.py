@@ -33,6 +33,7 @@ class PaperEngine:
     engine_mode = "strict"
     allow_unqualified_wallets = False
     allow_unknown_safety = False
+    require_known_safety_checks = frozenset()
     confirmation_label = "independent_wallets"
 
     def __init__(self, ledger: Ledger, policy: RiskPolicy):
@@ -232,7 +233,7 @@ class PaperEngine:
                     return reject("safety_failed:" + name)
             for name in self.policy.required_safety_checks:
                 value = candidate.safety.checks.get(name)
-                if value is None and self.allow_unknown_safety:
+                if value is None and self.allow_unknown_safety and name not in self.require_known_safety_checks:
                     continue
                 if value is not True:
                     return reject(("safety_unknown:" if value is None else "safety_failed:") + name)
