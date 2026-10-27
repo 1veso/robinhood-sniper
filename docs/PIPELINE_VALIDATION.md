@@ -64,3 +64,30 @@ outbox retains duplicate and ambiguous-send protections.
 An acceptance round trip demonstrates software plumbing. It does not replace a
 natural strategy-triggered exit, a week of observations, wallet qualification,
 or proof of profitability. No component signs or submits a real transaction.
+
+## Market and paper-trade Telegram alerts
+
+The two-minute exploratory worker sends actual ledgered OPEN, PARTIAL and CLOSE
+events through `runtime/exploration/notifications.sqlite3`. Exit notices include
+the realized P&L of that fill after modeled costs. Each fill is acknowledged and
+deduplicated separately; a missing bound journal is an error, never a reset.
+
+Version 0.1.10 adds MARKET WATCH notices to the same paired Telegram destination
+through a separate `runtime/exploration/market-notifications.sqlite3` outbox.
+These are dated observations, not entry approvals. They require two observed
+buying recipients in different transactions within 900 seconds, a matching
+saved pool proof, at least $30,000 observed liquidity, a current GoPlus response,
+no known failed safety checks and an available executable quote. Unknown safety
+fields, unverified wallet performance/controller independence, the bounded
+sample and the actual paper decision are disclosed. Entry limits and all other
+strategy checks still decide whether a trade happens.
+
+Market notices expire after 15 minutes, are limited to one per pool in six hours
+and three delivered/uncertain messages per hour. Reorganization halts and newly
+recorded safety failures suppress queued signals. Fill alerts have an independent
+queue and are processed first. Neither queue retries ambiguous delivery without
+review. Telegram acknowledgement proves server acceptance, not that the user
+read the message ([Bot API](https://core.telegram.org/bots/api#sendmessage)).
+
+This notification change does not alter strategy settings, start a new account,
+reset the week, add synthetic fills, or unlock the separate paid Solana X gate.

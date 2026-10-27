@@ -22,6 +22,7 @@ from sniper.adapters.v3_route import V3RouteClient
 from sniper.exploration import ExploratoryEngine, exploratory_policy, pool_adjusted_screen, observed_pool_screen, observe_creator_balance
 from sniper.exploratory_source import ExploratorySource, signal_id
 from sniper.exploratory_alerts import notify_fills
+from sniper.market_alerts import record_market_signal, notify_market
 from sniper.confirmation_book import ConfirmationBook
 from sniper.rug_screen import enhance_rug_screen
 from sniper.ledger import Ledger
@@ -309,6 +310,10 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                         'spend_basis': proof.get('spend_basis'), 'proof_scope': proof.get('proof_scope'),
                         'profile': profile, 'quorum_transactions': [c.tx_hash for c in confirmations], 'strict_strategy_result': False})
                     result = engine.consider(candidate, quote, now)
+                    try:
+                        record_market_signal(ledger, candidate, quote, result, now)
+                    except Exception as exc:
+                        status['errors'].append('Market observation notification: ' + type(exc).__name__)
                     source.finish(swap, json_safe(result))
                     status['decisions'].append(json_safe(result))
                     if result['verdict'] == 'PAPER_BUY':
@@ -353,6 +358,10 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
             status['telegram'] = notify_fills(ledger, folder, runtime)
         except Exception as exc:
             status['errors'].append('Telegram notification: ' + type(exc).__name__)
+        try:
+            status['market_telegram'] = notify_market(ledger, folder, runtime)
+        except Exception as exc:
+            status['errors'].append('Market Telegram notification: ' + type(exc).__name__)
         status['health'] = 'DEGRADED' if status['errors'] else 'OK'
         ledger.export_csv(folder / 'trades.csv')
         atomic_json(folder / 'status.json', json_safe(status))

@@ -35,6 +35,7 @@ def notify_fills(ledger, folder, runtime, *, client_factory=TelegramClient):
                 f"Notional: ${Decimal(fill['gross_usd']):.4f}\n"
                 f"Quantity: {fill['quantity']}\nModeled price: ${fill['fill_price']}\n"
                 f"Modeled costs: ${Decimal(fill['friction_usd']) + Decimal(fill['gas_usd']):.4f}\n"
+                f"Realized P&L on this fill after modeled costs: ${Decimal(fill['pnl']):+.4f}\n"
                 f"Reason: {fill['reason']}\nTime: {moment}\nPaper fill: {fill['id']}\n\n"
                 "Simulated fill from live market data. No real-money order. Wallet skill, controller independence and some safety checks remain unestablished. Separate from the strict strategy.")
             outbox.enqueue(account + ':' + str(fill['id']), {'message': message, 'account_id': account,
