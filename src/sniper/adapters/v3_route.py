@@ -5,6 +5,7 @@ import time
 from .evm import (FACTORY, WETH, USDG, address, hash32, quantity, token_units,
                   _words, _address_word, RpcError)
 from sniper.models import MarketQuote
+from .solana import SourceError
 
 QUOTER = "0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7"
 D = Decimal
@@ -61,10 +62,24 @@ class V3RouteClient:
             raw_ratio = ratio if token == token0 else 1 / ratio
             base_per_token = raw_ratio * D(10) ** (decimals[token] - decimals[base])
             base_quote = self.market.quote(base, now=int(self.clock()))
-            indicative = self.market.quote(token, now=int(self.clock()), pool_id=pool)
             eth_quote = base_quote if base == WETH else self.market.quote(WETH, now=int(self.clock()))
             price = base_per_token * base_quote.price_usd
-            if min(price, indicative.liquidity_usd, base_quote.price_usd, eth_quote.price_usd) <= 0:
+            liquidity_source = 'dexscreener:pool-specific TVL'
+            try:
+                liquidity = self.market.quote(token, now=int(self.clock()), pool_id=pool).liquidity_usd
+            except SourceError as exc:
+                if str(exc) != 'no valid matching pool; no substitute quote':
+                    raise
+                # Some factory-verified pools are not indexed by the market
+                # feed. Value their actual same-block ERC20 balances instead.
+                # This is total pool value, not active V3 depth; the independent
+                # size-bounded quoter remains mandatory for executable depth.
+                selector = '0x70a08231' + pool[2:].zfill(64)
+                token_balance = token_units(uint(token, selector), decimals[token])
+                base_balance = token_units(uint(base, selector), decimals[base])
+                liquidity = token_balance * price + base_balance * base_quote.price_usd
+                liquidity_source = 'pinned ERC20 pool balances valued at on-chain spot and current base/USD; includes inactive liquidity'
+            if min(price, liquidity, base_quote.price_usd, eth_quote.price_usd) <= 0:
                 raise RpcError("Missing route valuation or liquidity")
             amount_in = int((max_notional / base_quote.price_usd * D(10) ** decimals[base]).to_integral_value(rounding=ROUND_DOWN))
             if amount_in <= 0:
@@ -101,9 +116,10 @@ class V3RouteClient:
                 "pool": pool, "token": token, "base": base, "quoter": QUOTER, "fee": fee,
                 "buy_input_raw": str(amount_in), "buy_output_raw": str(buy_raw),
                 "sell_input_raw": str(covered_sell_raw), "sell_output_raw": str(sell_raw),
+                "liquidity_usd": str(liquidity), "liquidity_source": liquidity_source,
                 "gas_assumption": "2x (quoter gas + 100000) at current gas price; not a signed transaction estimate",
                 "scope": "Two independent same-block quoter calls, not an executed round trip. No wallet, approvals or future sell guarantee."}
-            return MarketQuote(f"eip155:4663/erc20:{token}", pool, observed, price, indicative.liquidity_usd,
+            return MarketQuote(f"eip155:4663/erc20:{token}", pool, observed, price, liquidity,
                 buy_bps, sell_bps, gas_usd, True, f"paper:v3-quoter:{block}:{anchor}",
                 route_max_notional_usd=buy_qty * price, route_max_sell_quantity=covered_sell_qty,
                 route_impact_bps=price_impact * 10000)

@@ -31,6 +31,8 @@ def write_html(report: dict, path: str | Path, *, data_mode: str = "PAPER") -> P
         rows = '<tr><td colspan="5">No open positions.</td></tr>'
     details = escape(json.dumps(json_safe(report), indent=2, allow_nan=False))
     notice = "Synthetic fixture. No real trades, tokens, or performance." if data_mode == "SYNTHETIC_DEMO" else "Paper simulation. Modeled fills are not actual executions. Missing quotes remain unresolved."
+    if data_mode.startswith('EXPLORATORY_PAPER'):
+        notice = 'Live market observations, simulated fills. Wallet skill, controller independence and some safety evidence are unestablished. This experiment does not validate the strict strategy. Real money is disabled.'
     html = f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">

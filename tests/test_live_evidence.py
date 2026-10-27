@@ -5,6 +5,7 @@ from sniper.adapters.evm import RpcClient, RpcError, FACTORY, WETH, USDG
 from sniper.adapters.goplus import normalize, CONTROL_FLAGS, TRADE_FLAGS, combine_review
 from sniper.adapters.v3_route import V3RouteClient, QUOTER
 from sniper.models import MarketQuote, SafetyEvidence
+from sniper.adapters.solana import SourceError
 
 NOW = 1800000000
 POOL = '0x' + 'aa' * 20
@@ -120,3 +121,26 @@ class RouteTests(unittest.TestCase):
     def test_partial_route_bounds_are_invalid(self):
         with self.assertRaises(ValueError):
             MarketQuote(TOKEN, POOL, NOW, 1, 10000, route_max_notional_usd=25)
+
+    def test_unindexed_pool_uses_pinned_balances_and_still_requires_sell_quote(self):
+        original_transport = self.client.rpc.transport
+        def transport(request):
+            if request['method'] == 'eth_call' and request['params'][0]['data'].startswith('0x70a08231'):
+                self.assertEqual(request['params'][1], hex(1000))
+                self.assertEqual(request['params'][0]['data'][10:], POOL[2:].zfill(64))
+                amount = 100 * 10**18 if request['params'][0]['to'] == WETH else 200000 * 10**6
+                return {'jsonrpc':'2.0','id':request['id'],'result':'0x'+word(amount)}
+            return original_transport(request)
+        self.client.rpc.transport = transport
+        original_quote = self.client.market.quote
+        def market(token, *, now, pool_id=None):
+            if pool_id:
+                raise SourceError('no valid matching pool; no substitute quote')
+            return original_quote(token, now=now)
+        self.client.market.quote = market
+        quote = self.client.quote(WETH, POOL, max_notional='25')
+        self.assertAlmostEqual(quote.liquidity_usd, D(400000), places=10)
+        self.assertIn('pinned ERC20', self.client.last_evidence['liquidity_source'])
+        self.fail_sell = True
+        with self.assertRaises(RpcError):
+            self.client.quote(WETH, POOL, max_notional='25')

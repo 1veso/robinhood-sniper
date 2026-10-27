@@ -29,6 +29,12 @@ def normalize_wallet(wallet: str) -> str:
 
 
 class PaperEngine:
+    strategy_name = "wallet_follow_v1"
+    engine_mode = "strict"
+    allow_unqualified_wallets = False
+    allow_unknown_safety = False
+    confirmation_label = "independent_wallets"
+
     def __init__(self, ledger: Ledger, policy: RiskPolicy):
         if not isinstance(policy, RiskPolicy) or policy.paper_only is not True:
             raise ValueError("PaperEngine requires an immutable PAPER-only policy")
@@ -38,6 +44,10 @@ class PaperEngine:
         self.policy = policy
         with ledger.transaction():
             stored_version = ledger._get("policy_version")
+            stored_mode = ledger._get("engine_mode") or ("strict" if stored_version is not None else self.engine_mode)
+            if stored_mode != self.engine_mode:
+                raise ValueError("Account belongs to another evaluation mode; use a separate ledger")
+            ledger._set("engine_mode", self.engine_mode)
             encoded_policy = json_text(policy.as_dict())
             if stored_version is not None:
                 if stored_version != policy.version or ledger._get("policy") != encoded_policy:
@@ -84,7 +94,7 @@ class PaperEngine:
 
     def _finish_decision(self, candidate: Candidate, now: int, result: dict[str, Any], quote: MarketQuote | None = None) -> dict[str, Any]:
         result = {"mode": "PAPER", "event_id": candidate.event_id, "asset_id": candidate.asset_id,
-                  "policy_version": self.policy.version, **result}
+                  "policy_version": self.policy.version, **self.decision_context(candidate), **result}
         payload = {"candidate": candidate.as_dict(), "quote": quote.as_dict() if isinstance(quote, MarketQuote) else None,
                    "policy": self.policy.as_dict(), "observed_at": now, "result": result}
         self.ledger.conn.execute(
@@ -99,7 +109,7 @@ class PaperEngine:
         wallets: set[str] = set()
         transactions: set[str] = set()
         for confirmation in candidate.confirmations:
-            if not confirmation.verified_swap or not confirmation.qualified:
+            if not confirmation.verified_swap or (not confirmation.qualified and not self.allow_unqualified_wallets):
                 continue
             if confirmation.observed_at > now:
                 return 0, "future_confirmation"
@@ -198,7 +208,7 @@ class PaperEngine:
             self._expire_marks(now)
             def reject(reason: str, **extra: Any) -> dict[str, Any]:
                 return self._finish_decision(candidate, now, {"verdict": "SKIP", "reason": reason, **extra}, quote)
-            if candidate.strategy != "wallet_follow_v1":
+            if candidate.strategy != self.strategy_name:
                 return reject("unsupported_strategy")
             if self.ledger._get("entry_halt"):
                 return reject("manual_entry_halt")
@@ -222,13 +232,15 @@ class PaperEngine:
                     return reject("safety_failed:" + name)
             for name in self.policy.required_safety_checks:
                 value = candidate.safety.checks.get(name)
+                if value is None and self.allow_unknown_safety:
+                    continue
                 if value is not True:
                     return reject(("safety_unknown:" if value is None else "safety_failed:") + name)
             confirmations, error = self._confirmations(candidate, now)
             if error:
                 return reject(error)
             if confirmations < self.policy.min_independent_wallets:
-                return reject("insufficient_independent_wallets", independent_wallets=confirmations)
+                return reject("insufficient_" + self.confirmation_label, **{self.confirmation_label: confirmations})
             problem = self._quote_problem(quote, candidate.asset_id, now, decision_at)
             if problem:
                 return reject(problem)
@@ -281,9 +293,12 @@ class PaperEngine:
                 "quantity": amounts["quantity"], "notional_usd": amounts["notional"],
                 "cash_spent_usd": amounts["entry_cost"], "full_loss_risk_usd": amounts["risk"],
                 "fill_price": amounts["fill_price"], "reference_price": quote.price_usd,
-                "estimated_impact_bps": amounts["impact_bps"], "independent_wallets": confirmations,
+                "estimated_impact_bps": amounts["impact_bps"], self.confirmation_label: confirmations,
                 "execution_model": "indicative_price_plus_bps_gas_and_constant_product_proxy",
             }, quote)
+
+    def decision_context(self, candidate: Candidate) -> dict[str, Any]:
+        return {}
 
     def _fill(self, position_id: str, event_id: str, asset_id: str, symbol: str, strategy: str,
               action: str, now: int, qty: Decimal, reference: Decimal, price: Decimal,
