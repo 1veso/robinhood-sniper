@@ -40,7 +40,8 @@ python monitor.py --send
 .\install_monitor.ps1
 ```
 
-The task `SNIPER Telegram Monitor` uses hidden execution and ignores overlapping
+The task `SNIPER Telegram Monitor` calls `pythonw.exe` directly for hidden
+execution without waiting for a PowerShell launcher. It ignores overlapping
 invocations. An OS lock also blocks concurrent writers. A slower run finishes
 before another can acquire the lock. Task Scheduler runs only while Windows is
 awake and this user is signed in; the schedule is not a latency guarantee.

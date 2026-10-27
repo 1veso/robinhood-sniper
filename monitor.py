@@ -197,4 +197,10 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    # pythonw.exe avoids a console window and a slow PowerShell startup in the
+    # scheduled task. Cycle results remain durable in telegram/status.json.
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
     raise SystemExit(main())
