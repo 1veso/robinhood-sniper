@@ -6,6 +6,7 @@ from decimal import Decimal
 import json
 import os
 import time
+import urllib.error
 from urllib.parse import urlsplit
 
 from .adapters.solana import request_json, validate_address
@@ -92,6 +93,42 @@ class XResearch:
         if self.reservation < Decimal("0.50"):
             raise AdvisoryError("X research reserves at least USD 0.50; this is not a provider-side price cap")
         self.transport = transport or request_json
+
+    def check_access(self):
+        """Read-only model metadata check: no inference, search or reservation."""
+        key = os.environ.get("XAI_API_KEY")
+        if not key:
+            raise AdvisoryError("XAI_API_KEY is not set")
+        try:
+            response = self.transport("GET", "https://api.x.ai/v1/models", None,
+                                      {"Authorization": f"Bearer {key}", "Accept": "application/json"}, 15)
+        except urllib.error.HTTPError as exc:
+            # Classify this observed account restriction without retaining the
+            # provider body, which can contain a private team/account identifier.
+            try:
+                failure = json.loads(exc.read(4000))
+            except (ValueError, OSError):
+                failure = {}
+            if (exc.code == 403 and isinstance(failure, dict) and failure.get("code") == "permission-denied"
+                    and isinstance(failure.get("error"), str) and "credits or licenses" in failure["error"]):
+                return {"mode": "READ_ONLY", "access_status": "CREDITS_REQUIRED", "http_status": 403,
+                        "authentication_verified": False, "model": "grok-4.7", "model_available": None,
+                        "inference_requested": False, "x_search_verified": False,
+                        "funding_verified": False, "paid_ai_enabled": False}
+            raise
+        if not isinstance(response, dict) or not isinstance(response.get("data"), list):
+            raise AdvisoryError("Invalid model-list response; authentication not established")
+        available = set()
+        for item in response["data"]:
+            if isinstance(item, dict):
+                if isinstance(item.get("id"), str):
+                    available.add(item["id"])
+                if isinstance(item.get("aliases"), list):
+                    available.update(a for a in item["aliases"] if isinstance(a, str))
+        return {"mode": "READ_ONLY", "access_status": "AVAILABLE", "authentication_verified": True,
+                "model": "grok-4.7", "model_available": "grok-4.7" in available,
+                "inference_requested": False, "x_search_verified": False,
+                "funding_verified": False, "paid_ai_enabled": False}
 
     def assess(self, *, request_id, token, chain="solana", now=None):
         if not self.enabled:

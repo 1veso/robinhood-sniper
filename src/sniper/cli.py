@@ -383,6 +383,33 @@ def command_research_x(args):
             os.environ["XAI_API_KEY"] = previous
 
 
+def command_doctor_ai(args):
+    from .x_research import XResearch
+    previous = os.environ.get("XAI_API_KEY")
+    try:
+        if args.key_file:
+            key = Path(args.key_file).read_text(encoding="utf-8-sig").strip()
+            if not key or any(c.isspace() for c in key):
+                raise ValueError("Key file must contain one key on one line")
+            os.environ["XAI_API_KEY"] = key
+        result = XResearch().check_access()
+        if args.output:
+            path = Path(args.output)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(path.suffix + ".tmp")
+            temporary.write_text(json.dumps(result, indent=2), encoding="utf-8")
+            temporary.replace(path)
+        output(result)
+    except Exception as exc:
+        detail = f"HTTP {exc.code}" if isinstance(exc, urllib.error.HTTPError) else type(exc).__name__
+        raise ValueError(f"Read-only xAI access check failed ({detail}); no inference requested") from None
+    finally:
+        if previous is None:
+            os.environ.pop("XAI_API_KEY", None)
+        else:
+            os.environ["XAI_API_KEY"] = previous
+
+
 def command_doctor(args):
     from .adapters.evm import RpcClient, EvmRegistry
     policy = policy_for(args)
@@ -471,6 +498,10 @@ def parser() -> argparse.ArgumentParser:
     research_x.add_argument("--budget-db", default="runtime/advisory.sqlite3")
     research_x.add_argument("--output", help="Save the validated research result")
     research_x.set_defaults(func=command_research_x)
+    doctor_ai = sub.add_parser("doctor-ai", help="Read-only xAI authentication/model check; no paid inference or search")
+    doctor_ai.add_argument("--key-file", help="Local one-line xAI key file")
+    doctor_ai.add_argument("--output", help="Save credential-free access status")
+    doctor_ai.set_defaults(func=command_doctor_ai)
     doctor = sub.add_parser("doctor", help="Validate configuration; optionally check the read-only RPC")
     doctor.add_argument("--network", action="store_true")
     doctor.add_argument("--rpc", default=os.environ.get("SNIPER_RPC_URL") or "https://rpc.mainnet.chain.robinhood.com")

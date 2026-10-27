@@ -1,8 +1,10 @@
 import json
+import io
 import os
 from pathlib import Path
 import tempfile
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 from sniper.advisor import AdvisoryError, DailyBudget, response_usage
@@ -25,6 +27,31 @@ def response():
 
 
 class XResearchTests(unittest.TestCase):
+    def test_unfunded_account_is_reported_without_spending_or_leaking_team_details(self):
+        def transport(*args):
+            data = {"code": "permission-denied", "error": "Your team doesn't have credits or licenses. private-team-id"}
+            raise urllib.error.HTTPError("https://api.x.ai/v1/models", 403, "Forbidden", {}, io.BytesIO(json.dumps(data).encode()))
+        with patch.dict(os.environ, {"XAI_API_KEY": "secret-test-key"}):
+            result = XResearch(transport=transport).check_access()
+        self.assertEqual(result["access_status"], "CREDITS_REQUIRED")
+        self.assertFalse(result["inference_requested"])
+        self.assertNotIn("private-team-id", json.dumps(result))
+
+    def test_auth_check_only_reads_models_and_never_reserves_or_runs_inference(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {"XAI_API_KEY": "secret-test-key"}):
+            path = Path(temporary)/"budget.db"
+            calls = []
+            def transport(method, url, body, headers, timeout):
+                calls.append((method, url, body))
+                return {"data": [{"id": "grok-release", "aliases": ["grok-4.7"]}]}
+            result = XResearch(budget_path=path, transport=transport).check_access()
+            self.assertEqual(calls, [("GET", "https://api.x.ai/v1/models", None)])
+            self.assertFalse(path.exists())
+            self.assertTrue(result["authentication_verified"])
+            self.assertTrue(result["model_available"])
+            self.assertFalse(result["x_search_verified"])
+            self.assertFalse(result["inference_requested"])
+
     def test_disabled_never_reads_key_or_calls_provider(self):
         with patch.dict(os.environ, {}, clear=True):
             result = XResearch(transport=lambda *args: self.fail("Network called")).assess(request_id="one", token="invalid")

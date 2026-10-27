@@ -69,6 +69,19 @@ python run.py research-x SOLANA_MINT --request-id unique-research-id --enable-pa
 Create a key in https://console.x.ai/ and save only the key on one line in
 `runtime/xai-api-key.txt`. Never put it in chat or a command argument. This
 installation has not made a paid xAI validation request during this update.
+The operator supplied a key but reported no funds for topping up. Paid
+inference remains disabled. Authentication/model access can be checked without
+an inference request:
+
+```powershell
+python run.py doctor-ai --key-file runtime/xai-api-key.txt --output runtime/xai-doctor.json
+```
+
+This only calls `GET /v1/models`. It does not establish credit balance, ability
+to run paid inference, or successful X Search execution.
+The actual model-list request returned HTTP 403: xAI reported the team has no
+credits or licenses. `runtime/xai-doctor.json` records `CREDITS_REQUIRED` without
+the private team identifier. No inference or search request was made.
 
 The request uses `grok-4.7`, the Responses API, strict output schema, at most two
 search rounds and 1,200 output tokens. The date filter uses UTC calendar dates;
