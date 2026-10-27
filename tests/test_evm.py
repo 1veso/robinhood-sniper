@@ -277,6 +277,30 @@ class StoreIdentityTests(unittest.TestCase):
 
 
 class CollectionTests(unittest.TestCase):
+    def test_first_chunk_timeout_pins_initial_window_before_head_moves(self):
+        chain, tick, expire = FakeChain(), [0.0], [True]
+        chain.head = 115
+        def transport(payload):
+            result = chain(payload)
+            if (expire[0] and payload["method"] == "eth_getBlockByNumber"
+                    and payload["params"][0] == hex(105)):
+                tick[0], expire[0] = 61.0, False
+            return result
+        c = collector(chain)
+        self.addCleanup(c.store.close)
+        c.rpc.transport = transport
+        c.max_blocks_per_request = 5
+        with patch("sniper.adapters.evm.time.monotonic", side_effect=lambda: tick[0]):
+            partial = c.poll(max_blocks=10, max_seconds=60)
+            self.assertEqual(partial["status"], "budget_exhausted")
+            self.assertEqual(partial["cursor"]["block_number"], 100)
+            self.assertEqual(c.store.events(CHAIN_ID), [])
+            chain.head = 140
+            resumed = c.poll(max_blocks=10, max_seconds=60)
+            self.assertEqual(resumed["from_block"], 101)
+            self.assertEqual(resumed["cursor"]["block_number"], 110)
+            self.assertEqual(len(resumed["verified_buys"]), 1)
+
     def test_budget_preserves_completed_chunk_and_retries_uncommitted_range(self):
         chain, tick, expire = FakeChain(), [0.0], [True]
         chain.head = 115

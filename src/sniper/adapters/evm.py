@@ -652,6 +652,12 @@ class EvmCollector:
             return {"chain_id": self.registry.chain_id, "head": head, "cursor": cursor, "reorg": reorg,
                     "new_pools": [], "swaps": [], "verified_buys": [], "errors": [],
                     "inserted_events": 0, "tracked_wallets": len(self.watchlist), "status": "caught_up"}
+        if cursor is None and start > 0:
+            # Pin the initial window before requesting any events. Otherwise a
+            # first-chunk timeout could move the next poll's default start ahead
+            # with the live head, silently dropping its unfinished interval.
+            anchor = self.block(start - 1)
+            self.store.commit_chunk(self.registry.chain_id, [], [anchor], anchor, expected_cursor=None)
         result = self.scan(start, min(end, start + max_blocks - 1))
         result["reorg"] = reorg or result["reorg"]
         return result
