@@ -90,6 +90,15 @@ class Ledger:
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self.conn = sqlite3.connect(self.path, timeout=15, isolation_level=None, check_same_thread=False)
+        try:
+            self._initialize(starting_cash)
+        except BaseException:
+            # A failed constructor has no caller-owned instance to close.
+            # Windows keeps the database locked until this connection closes.
+            self.conn.close()
+            raise
+
+    def _initialize(self, starting_cash: Decimal) -> None:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA busy_timeout=15000")
         self.conn.execute("PRAGMA foreign_keys=ON")

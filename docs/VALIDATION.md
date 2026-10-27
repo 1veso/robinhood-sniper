@@ -1,5 +1,27 @@
 # Validation and scope
 
+## v0.1.1 Windows acceptance, 2026-10-27
+
+**140 tests passed on Python 3.12.10**, including the original Windows failure
+case. The demo, CSV/HTML exports, offline doctor and network doctor completed in
+the extracted release folder. Mainnet RPC returned chain ID 4663 with TLS
+verification enabled. A locally supplied Blockscout key returned HTTP 200 from
+the mainnet historical API. An integrated observation/research cycle completed
+with healthy paper-source status and blocked entries pending required evidence.
+
+Added checks cover SQLite cleanup on constructor failure, provider chain-name
+mapping, RPC credential redaction, overlapping service prevention, source timeout
+handling, FIFO partial exits, gas accounting, airdrop exclusions, open-inventory
+stress, untouched old holdings, historical-price timing, receipt/balance
+reconciliation, factory identity, failed pagination, funding clusters, and dated
+controller-review conflicts. CI now covers both Windows and Linux.
+
+Automatic discovery has produced real candidate addresses; no historical wallet
+has yet been declared qualified in this acceptance run. History processing is
+bounded and resumes from cached evidence. This validates plumbing and selected
+failure cases, not strategy profitability or live order execution. Operational
+details and limitations are in [AUTONOMY.md](AUTONOMY.md).
+
 ## What was verified
 
 Local acceptance on **2026-10-26**: **119 tests passed on Python 3.12.14**. The

@@ -107,10 +107,15 @@ class SolanaTests(unittest.TestCase):
 
     def test_robinhood_quote_namespace(self):
         address = "0x" + "ab" * 20
-        raw = [{"chainId": "robinhoodchain", "baseToken": {"address": address}, "pairAddress": "0x" + "cd" * 20,
+        raw = [{"chainId": "robinhood", "baseToken": {"address": address}, "pairAddress": "0x" + "cd" * 20,
                 "priceUsd": "1.25", "liquidity": {"usd": 200000}}]
-        client = DexScreenerClient(transport=lambda *args: raw, chain_id="robinhoodchain")
+        calls = []
+        def transport(*args):
+            calls.append(args)
+            return raw
+        client = DexScreenerClient(transport=transport, chain_id="robinhoodchain")
         self.assertEqual(client.quote(address, now=NOW).asset_id, f"robinhood:{address}")
+        self.assertIn("/tokens/v1/robinhood/", calls[0][1])
 
     def test_mint_rejects_path_injection(self):
         for addr in (MINT + "/../../", "0" * 44, "1" * 33):

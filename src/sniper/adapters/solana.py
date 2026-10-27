@@ -230,7 +230,9 @@ class DexScreenerClient:
         if not re.fullmatch(r"[a-z0-9_-]{1,40}", chain_id):
             raise SourceError("invalid chain identifier")
         self.transport, self.timeout = transport or request_json, timeout
-        self.chain_id, self.asset_prefix = chain_id, asset_prefix
+        # Preserve the historical CLI alias while using the provider's name.
+        self.chain_id = "robinhood" if chain_id == "robinhoodchain" else chain_id
+        self.asset_prefix = asset_prefix
 
     def quote(self, mint: str, *, now: int, pool_id: str | None = None) -> MarketQuote:
         mint = validate_address(mint, self.chain_id)

@@ -10,6 +10,7 @@ from pathlib import Path
 import sys
 import time
 import urllib.error
+from urllib.parse import urlsplit
 
 from . import __version__
 from .models import Candidate, MarketQuote, SafetyEvidence, json_safe, loads_strict
@@ -357,7 +358,7 @@ def command_doctor(args):
         chain_id = int(chain, 16)
         if chain_id != 4663:
             raise ValueError(f"Wrong chain: {chain_id}, expected 4663")
-        result["network"] = {"chain_id": chain_id, "rpc": args.rpc, "verified": True}
+        result["network"] = {"chain_id": chain_id, "rpc_host": urlsplit(args.rpc).hostname, "verified": True}
     output(result)
 
 
@@ -397,7 +398,7 @@ def parser() -> argparse.ArgumentParser:
         ("run", "Run collection, verified signal checks, and PAPER position monitoring", command_run),
     ):
         collect = sub.add_parser(command, help=help_text)
-        collect.add_argument("--rpc", default="https://rpc.mainnet.chain.robinhood.com")
+        collect.add_argument("--rpc", default=os.environ.get("SNIPER_RPC_URL") or "https://rpc.mainnet.chain.robinhood.com")
         collect.add_argument("--events-db", default="runtime/events.sqlite3")
         collect.add_argument("--wallets", help="Verified wallet/controller provenance JSON")
         collect.add_argument("--base-prices", help="Explicit current base-token/USD valuation mapping")
@@ -422,7 +423,7 @@ def parser() -> argparse.ArgumentParser:
     advise.set_defaults(func=command_advise)
     doctor = sub.add_parser("doctor", help="Validate configuration; optionally check the read-only RPC")
     doctor.add_argument("--network", action="store_true")
-    doctor.add_argument("--rpc", default="https://rpc.mainnet.chain.robinhood.com")
+    doctor.add_argument("--rpc", default=os.environ.get("SNIPER_RPC_URL") or "https://rpc.mainnet.chain.robinhood.com")
     doctor.set_defaults(func=command_doctor)
     return p
 

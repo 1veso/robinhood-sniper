@@ -1,7 +1,9 @@
 import csv
+import sqlite3
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from decimal import Decimal as D
 from pathlib import Path
 
@@ -30,8 +32,12 @@ class LedgerTests(unittest.TestCase):
             other.close()
 
     def test_cannot_reset_existing_starting_cash(self):
-        with self.assertRaises(ValueError):
-            Ledger(self.path, D("10000"))
+        failed_connection = sqlite3.connect(self.path, isolation_level=None)
+        with patch("sniper.ledger.sqlite3.connect", return_value=failed_connection):
+            with self.assertRaisesRegex(ValueError, "starting cash differs"):
+                Ledger(self.path, D("10000"))
+        with self.assertRaises(sqlite3.ProgrammingError):
+            failed_connection.execute("SELECT 1")
         self.assertEqual(self.ledger.snapshot()["starting_cash"], D("1000"))
 
     def test_events_are_unique_and_durable(self):

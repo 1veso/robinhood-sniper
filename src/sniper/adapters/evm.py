@@ -111,6 +111,7 @@ class RpcClient:
     READ_METHODS = frozenset({
         "eth_chainId", "eth_blockNumber", "eth_getBlockByNumber", "eth_getLogs",
         "eth_getTransactionByHash", "eth_getTransactionReceipt", "eth_getCode", "eth_call",
+        "eth_getTransactionCount",
     })
 
     def __init__(self, url: str = DEFAULT_RPC, *, timeout: float = 15,

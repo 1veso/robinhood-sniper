@@ -5,9 +5,14 @@ Robinhood Chain events, checks supplied wallet and token evidence, models entrie
 and exits, and keeps a durable account ledger. Solana screening and optional Grok
 research annotation are included as separate adapters.
 
-This is version **0.1.0**: runnable software for testing the proposed strategy.
+This is version **0.1.1**: runnable software for testing the proposed strategy.
 No profitable edge or live execution performance has been established. The
 demonstration uses fabricated prices and wallets and is labeled accordingly.
+
+The Windows service, automatic wallet discovery, receipt-checked historical
+accounting and controller-link screening are documented in
+[Autonomous research operations](docs/AUTONOMY.md). This update also fixes the
+Windows SQLite constructor leak and the Robinhood DEX Screener chain identifier.
 
 ## Run it now
 

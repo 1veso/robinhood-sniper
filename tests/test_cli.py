@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from sniper.cli import main, validate_envelope
 from sniper.demo import demo_candidate, demo_quote, DEMO_TIME
@@ -36,6 +37,17 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertFalse(result["live_order_capability"])
         self.assertEqual(result["policy"]["min_independent_wallets"], 5)
+
+    def test_rpc_environment_is_used_without_printing_api_key(self):
+        secret_url = "https://rpc.example/v2/private-test-key"
+        with patch.dict("os.environ", {"SNIPER_RPC_URL": secret_url}), patch(
+                "sniper.adapters.evm.RpcClient") as client:
+            client.return_value.call.return_value = "0x1237"
+            code, result = self.invoke(["doctor", "--network"])
+            client.assert_called_once_with(secret_url)
+        self.assertEqual(code, 0)
+        self.assertEqual(result["network"]["rpc_host"], "rpc.example")
+        self.assertNotIn("private-test-key", json.dumps(result))
 
     def test_live_configuration_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
