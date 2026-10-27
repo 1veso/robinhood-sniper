@@ -1,11 +1,14 @@
 """Observation accuracy, isolation and HTTP boundary tests; entirely offline."""
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal as D
 import http.client
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -128,6 +131,85 @@ class ConsoleTests(unittest.TestCase):
 
     def test_public_bind_is_refused(self):
         with self.assertRaises(ValueError):make_server(self.root,host='0.0.0.0')
+
+    def test_slow_task_inspection_is_single_flight_and_does_not_block_account_or_chart(self):
+        entered, release = threading.Event(), threading.Event()
+        def inspect():
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError('Fixture was not released')
+            return {'available': True, 'checked_at': NOW, 'items': [{'name': 'fixture-task'}], 'error': None}
+        with patch.object(self.data, '_inspect_jobs', side_effect=inspect) as lookup:
+            try:
+                initial = self.data.jobs()
+                self.assertFalse(initial['available'])
+                self.assertTrue(initial['refreshing'])
+                self.assertIsNone(initial['checked_at'])
+                self.assertTrue(entered.wait(2))
+                # Multiple HTTP handlers can ask for different caches while the
+                # same task inspection is still blocked in its provider.
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    state = pool.submit(self.data.state, 'robinhood')
+                    chart = pool.submit(self.data.chart, 'robinhood', 'eip155:4663:token1', 'pool1')
+                    repeated = [pool.submit(self.data.jobs) for _ in range(12)]
+                    self.assertTrue(state.result(timeout=2)['jobs']['refreshing'])
+                    self.assertEqual(len(chart.result(timeout=2)['fills']), 1)
+                    self.assertTrue(all(item.result(timeout=2)['refreshing'] for item in repeated))
+                lookup.assert_called_once()
+            finally:
+                release.set()
+                self.data._jobs_thread.join(3)
+            completed = self.data.jobs()
+            self.assertTrue(completed['available'])
+            self.assertFalse(completed['refreshing'])
+            self.assertEqual(completed['checked_at'], NOW)
+            self.assertIsNone(completed['error'])
+
+    def test_failed_task_refresh_retains_last_success_and_backs_off(self):
+        saved = {'available': True, 'checked_at': NOW, 'items': [{'name': 'last-confirmed-task'}], 'error': None}
+        self.data._cache['jobs'] = (time.monotonic() - 31, saved)
+        entered, release = threading.Event(), threading.Event()
+        def inspect():
+            entered.set()
+            if not release.wait(5):
+                raise RuntimeError('Fixture was not released')
+            raise subprocess.TimeoutExpired('PRIVATE_COMMAND_SENTINEL', 12)
+        with patch.object(self.data, '_inspect_jobs', side_effect=inspect) as lookup:
+            try:
+                refreshing = self.data.jobs()
+                self.assertTrue(entered.wait(2))
+                self.assertTrue(refreshing['refreshing'])
+                self.assertEqual(refreshing['checked_at'], NOW)
+                self.assertEqual(refreshing['items'], saved['items'])
+            finally:
+                release.set()
+                self.data._jobs_thread.join(3)
+            failed = self.data.jobs()
+            self.assertTrue(failed['available'])
+            self.assertFalse(failed['refreshing'])
+            self.assertEqual(failed['checked_at'], NOW)
+            self.assertEqual(failed['items'], saved['items'])
+            self.assertEqual(failed['error'], 'task_inspection_timeout')
+            self.assertIsInstance(failed['last_attempt_at'], int)
+            self.assertNotIn('PRIVATE_', json.dumps(failed))
+            for _ in range(12):
+                self.data.jobs()
+            lookup.assert_called_once()
+
+    def test_task_refresh_recovery_replaces_old_results_and_clears_error(self):
+        self.data._cache['jobs'] = (time.monotonic() - 31, {
+            'available': True, 'checked_at': NOW, 'items': [{'name': 'old'}],
+            'error': 'task_inspection_timeout', 'last_attempt_at': NOW + 1})
+        fresh = {'available': True, 'checked_at': NOW + 30, 'items': [{'name': 'new'}], 'error': None}
+        with patch.object(self.data, '_inspect_jobs', return_value=fresh) as lookup:
+            self.data.jobs()
+            self.data._jobs_thread.join(3)
+            recovered = self.data.jobs()
+        lookup.assert_called_once()
+        self.assertFalse(recovered['refreshing'])
+        self.assertIsNone(recovered['error'])
+        self.assertEqual(recovered['checked_at'], NOW + 30)
+        self.assertEqual(recovered['items'], [{'name': 'new'}])
 
     def wallet_exports(self):
         folder = self.root / 'runtime/research'

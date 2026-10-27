@@ -84,6 +84,8 @@ class ConsoleData:
         self.root = Path(root)
         self._cache = {}
         self._lock = threading.RLock()
+        self._jobs_refreshing = False
+        self._jobs_thread = None
 
     def cached(self, key, lifetime, load):
         with self._lock:
@@ -94,20 +96,57 @@ class ConsoleData:
             self._cache[key] = (time.monotonic(), value)
             return value
 
+    def _inspect_jobs(self):
+        if os.name != 'nt':
+            return {'available': False, 'items': [], 'checked_at': None, 'error': 'unsupported_platform'}
+        command = "$ErrorActionPreference='Stop'; Get-ScheduledTask -TaskName 'SNIPER*','RUG DESK*' | Where-Object { $_.TaskName -in @('SNIPER Exploratory Paper','SNIPER Paper Research','SNIPER Telegram Monitor','SNIPER Automatic Executor Shadow','RUG DESK Watch','RUG DESK Scan','RUG DESK Report','RUG DESK Console') } | ForEach-Object { $i=$_ | Get-ScheduledTaskInfo; [pscustomobject]@{name=$_.TaskName;state=[string]$_.State;last_result=$i.LastTaskResult;last_run=$i.LastRunTime.ToUniversalTime().ToString('o');next_run=$i.NextRunTime.ToUniversalTime().ToString('o')} } | ConvertTo-Json -Compress"
+        result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', command], capture_output=True, timeout=25, creationflags=subprocess.CREATE_NO_WINDOW)
+        if result.returncode:
+            raise ValueError('Task inspection unavailable')
+        items = json.loads(result.stdout.decode('utf-8-sig'))
+        if isinstance(items, dict):
+            items = [items]
+        if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+            raise ValueError('Task inspection response is malformed')
+        return {'available': True, 'checked_at': int(time.time()), 'items': items, 'error': None}
+
+    def _refresh_jobs(self):
+        # PowerShell must never run under the shared account/chart cache lock.
+        try:
+            value = self._inspect_jobs()
+            error = None
+        except subprocess.TimeoutExpired:
+            value, error = None, 'task_inspection_timeout'
+        except Exception:
+            value, error = None, 'task_inspection_unavailable'
+        with self._lock:
+            old = self._cache.get('jobs')
+            result = dict(value if value is not None else old[1] if old else
+                          {'available': False, 'items': [], 'checked_at': None})
+            if error:
+                result['error'] = error
+            result['last_attempt_at'] = int(time.time())
+            self._cache['jobs'] = (time.monotonic(), result)
+            self._jobs_refreshing = False
+
     def jobs(self):
-        def load():
-            if os.name != 'nt':
-                return {'available': False, 'items': []}
-            command = "$ErrorActionPreference='Stop'; Get-ScheduledTask | Where-Object { $_.TaskName -in @('SNIPER Exploratory Paper','SNIPER Paper Research','SNIPER Telegram Monitor','SNIPER Automatic Executor Shadow','RUG DESK Watch','RUG DESK Scan','RUG DESK Report','RUG DESK Console') } | ForEach-Object { $i=$_ | Get-ScheduledTaskInfo; [pscustomobject]@{name=$_.TaskName;state=[string]$_.State;last_result=$i.LastTaskResult;last_run=$i.LastRunTime.ToUniversalTime().ToString('o');next_run=$i.NextRunTime.ToUniversalTime().ToString('o')} } | ConvertTo-Json -Compress"
-            try:
-                result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', command], capture_output=True, timeout=12, creationflags=subprocess.CREATE_NO_WINDOW)
-                if result.returncode:
-                    raise ValueError('Task inspection unavailable')
-                items = json.loads(result.stdout.decode('utf-8-sig'))
-                return {'available': True, 'checked_at': int(time.time()), 'items': items if isinstance(items, list) else [items]}
-            except (OSError, ValueError, subprocess.TimeoutExpired):
-                return {'available': False, 'items': []}
-        return self.cached('jobs', 30, load)
+        """Return saved task observations immediately; at most one refresh runs."""
+        with self._lock:
+            cached = self._cache.get('jobs')
+            if not self._jobs_refreshing and (not cached or time.monotonic() - cached[0] >= 30):
+                self._jobs_refreshing = True
+                self._jobs_thread = threading.Thread(target=self._refresh_jobs, name='console-task-inspection', daemon=True)
+                try:
+                    self._jobs_thread.start()
+                except RuntimeError:
+                    self._jobs_refreshing = False
+                    value = dict(cached[1] if cached else {'available': False, 'items': [], 'checked_at': None})
+                    value.update(error='task_inspection_unavailable', last_attempt_at=int(time.time()))
+                    self._cache['jobs'] = (time.monotonic(), value)
+            saved = self._cache.get('jobs')
+            value = dict(saved[1] if saved else {'available': False, 'items': [], 'checked_at': None, 'error': None})
+            value['refreshing'] = self._jobs_refreshing
+            return value
 
     def state(self, bot='robinhood'):
         if bot not in ('robinhood', 'solana'):
