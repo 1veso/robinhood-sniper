@@ -18,7 +18,7 @@ from sniper.adapters.evm_store import EvmStore
 from sniper.adapters.goplus import GoPlusClient
 from sniper.adapters.solana import DexScreenerClient, SourceError
 from sniper.adapters.v3_route import V3RouteClient
-from sniper.exploration import ExploratoryEngine, exploratory_policy, pool_adjusted_screen
+from sniper.exploration import ExploratoryEngine, exploratory_policy, pool_adjusted_screen, observed_pool_screen, observe_creator_balance
 from sniper.exploratory_source import ExploratorySource, signal_id
 from sniper.exploratory_alerts import notify_fills
 from sniper.ledger import Ledger
@@ -145,13 +145,19 @@ def run_cycle(folder, runtime, *, start=False):
                     remembered = ledger._get('safety_rejection:' + token)
                     if remembered:
                         safety = SafetyEvidence.from_dict(json.loads(remembered))
-                        source.finish(swap, {'reason': 'previously_failed_safety', 'checks': safety.checks})
-                        continue
+                        reconciled = observed_pool_screen(safety, proof)
+                        if any(v is False for v in reconciled.checks.values()):
+                            source.finish(swap, {'reason': 'previously_failed_safety', 'checks': safety.checks})
+                            continue
                     try:
                         safety = pool_adjusted_screen(GoPlusClient().screen(token), pool)
+                        safety = observed_pool_screen(safety, proof)
                     except Exception as exc:
                         safety = SafetyEvidence(asset, int(time.time()), {k: None for k in policy.required_safety_checks},
                                                 'unavailable:exploratory_only', {'error': error(exc), 'report_pool_id': pool})
+                    # A current creator concentration failure is meaningful even
+                    # when the provider omits its complete holder list.
+                    safety = observe_creator_balance(safety, rpc)
                     if any(v is False for v in safety.checks.values()):
                         with ledger.transaction():
                             ledger._set('safety_rejection:' + token, json.dumps(safety.as_dict()))

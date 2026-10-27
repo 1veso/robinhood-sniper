@@ -1,9 +1,13 @@
 """Explicitly unqualified, live-data PAPER experiment. Never a strict-strategy result."""
 from dataclasses import replace
 from decimal import Decimal
+import time
 
 from .engine import PaperEngine
 from .models import SafetyEvidence
+from .adapters.goplus import all_known, flag, TRADE_FLAGS
+from .adapters.solana import decimal_value
+from .adapters.evm import address, quantity, hash32, _words, RpcError
 
 
 class ExploratoryEngine(PaperEngine):
@@ -30,6 +34,54 @@ class ExploratoryEngine(PaperEngine):
 def exploratory_policy(strict_policy):
     """Retain all monetary, position, loss, freshness and exit limits."""
     return replace(strict_policy, min_independent_wallets=1)
+
+
+def observed_pool_screen(screen, proof):
+    """Resolve ONLY a contradicted DEX-listing flag with canonical swap proof.
+
+    GoPlus documents is_in_dex as a coverage-dependent field. Missing taxes and
+    sell-all tests stay unknown; actual honeypot, tax or permission flags remain.
+    """
+    raw = screen.details.get('raw_report', {})
+    if (raw.get('is_in_dex') != '0' or proof.get('factory_verified') is not True or
+            proof.get('verified_swap') is not True or screen.asset_id != 'eip155:4663/erc20:' + proof.get('token_address', '')):
+        return screen
+    taxes = [None if raw.get(k) in (None, '') else decimal_value(raw[k], k, maximum=Decimal(1)) == 0
+             for k in ('buy_tax', 'sell_tax', 'transfer_tax')]
+    verdict = all_known([flag(raw, k) for k in TRADE_FLAGS] + taxes)
+    return SafetyEvidence(screen.asset_id, screen.observed_at, {**screen.checks, 'sellability': verdict}, screen.source,
+        {**screen.details, 'dex_listing_conflict': 'Provider says no DEX; canonical funded swap proves this registered pool exists. Taxes and general sellability are not inferred.',
+         'verified_pool': proof['pool'], 'verified_swap_tx': proof['tx_hash']})
+
+
+def observe_creator_balance(screen, rpc):
+    """Refresh the provider-named creator balance; never infer all top holders."""
+    raw = screen.details.get('raw_report', {})
+    creator = raw.get('creator_address')
+    if not creator:
+        return screen
+    creator = address(creator)
+    token = address(screen.asset_id.split(':')[-1])
+    with rpc.budget(15):
+        block = quantity(rpc.call('eth_blockNumber')) - 5
+        tag = hex(block)
+        before = rpc.call('eth_getBlockByNumber', [tag, False])
+        if quantity(before['number']) != block or not 0 <= int(time.time()) - quantity(before['timestamp']) <= 30:
+            raise RpcError('Creator balance block is stale or mismatched')
+        values = rpc.call_many([('eth_call', [{'to': token, 'data': '0x18160ddd'}, tag]),
+            ('eth_call', [{'to': token, 'data': '0x70a08231' + creator[2:].zfill(64)}, tag])])
+        total, balance = [int(_words(v, 1)[0], 16) for v in values]
+        after = rpc.call('eth_getBlockByNumber', [tag, False])
+        if hash32(before['hash']) != hash32(after['hash']) or not 0 <= balance <= total or total == 0 or int(time.time()) - quantity(before['timestamp']) > 30:
+            raise RpcError('Creator balance observation inconsistent')
+    share = Decimal(balance) / Decimal(total)
+    checks = {**screen.checks}
+    if share > Decimal('.05'):
+        checks['holder_distribution'] = False
+    return SafetyEvidence(screen.asset_id, screen.observed_at, checks, screen.source,
+        {**screen.details, 'creator_balance_observation': {'address': creator, 'block': block, 'block_hash': before['hash'],
+         'balance_raw': str(balance), 'total_supply_raw': str(total), 'share': str(share),
+         'scope': 'Provider-named creator only; not proof of controller identity or top-holder coverage'}})
 
 
 def pool_adjusted_screen(screen: SafetyEvidence, verified_pool: str) -> SafetyEvidence:

@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from sniper.engine import PaperEngine
-from sniper.exploration import ExploratoryEngine, exploratory_policy, pool_adjusted_screen
+from sniper.exploration import ExploratoryEngine, exploratory_policy, pool_adjusted_screen, observed_pool_screen, observe_creator_balance
 from sniper.exploratory_source import ExploratorySource, signal_id, verify_recipient_acquisition
 from sniper.exploratory_alerts import notify_fills
 from sniper.adapters.evm import RpcClient, decode_swap, USDG
@@ -87,6 +87,35 @@ class ExplorationEngineTests(unittest.TestCase):
         self.assertIs(pool_adjusted_screen(s, TOKEN), s)
         raw['creator_percent'] = '.1'
         self.assertFalse(pool_adjusted_screen(s, POOL).checks['holder_distribution'])
+
+    def test_canonical_buy_resolves_listing_conflict_without_inventing_tax_or_sell_pass(self):
+        raw = {'is_in_dex': '0', 'is_honeypot': '0', 'cannot_buy': '0', 'trading_cooldown': '0', 'buy_tax': ''}
+        screen = SafetyEvidence('eip155:4663/erc20:'+TOKEN, NOW, {'sellability':False, 'contract_controls':False}, 'test', {'raw_report': raw})
+        proof = {'factory_verified':True, 'verified_swap':True, 'token_address':TOKEN, 'pool':POOL, 'tx_hash':TX_SWAP}
+        fixed = observed_pool_screen(screen, proof)
+        self.assertIsNone(fixed.checks['sellability'])
+        self.assertFalse(fixed.checks['contract_controls'])
+        self.assertIs(observed_pool_screen(screen, {**proof, 'factory_verified':False}), screen)
+        raw['is_honeypot'] = '1'
+        self.assertFalse(observed_pool_screen(screen, proof).checks['sellability'])
+        raw['is_honeypot']='0'; raw['sell_tax']='.1'
+        self.assertFalse(observed_pool_screen(screen, proof).checks['sellability'])
+
+    def test_creator_concentration_is_checked_even_without_holder_list(self):
+        screen = SafetyEvidence('eip155:4663/erc20:'+TOKEN, NOW, {'holder_distribution':None}, 'test', {'raw_report':{'creator_address':WALLET}})
+        def transport(p):
+            method = p['method']
+            if method=='eth_blockNumber': value=hex(105)
+            elif method=='eth_getBlockByNumber': value={'number':hex(100),'timestamp':hex(NOW),'hash':'0x'+'aa'*32}
+            else:
+                self.assertEqual(p['params'][1], hex(100))
+                value='0x'+word(1000 if p['params'][0]['data']=='0x18160ddd' else 100)
+            return {'jsonrpc':'2.0','id':p['id'],'result':value}
+        rpc = RpcClient(transport=lambda p: [transport(x) for x in p] if isinstance(p,list) else transport(p))
+        with patch('sniper.exploration.time.time', return_value=NOW):
+            observed=observe_creator_balance(screen,rpc)
+        self.assertFalse(observed.checks['holder_distribution'])
+        self.assertEqual(observed.details['creator_balance_observation']['share'], '0.1')
 
 
 class SourceTests(unittest.TestCase):
