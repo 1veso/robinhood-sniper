@@ -1,7 +1,11 @@
 import copy
+import hashlib
+import io
+import json
 import tempfile
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 from sniper.adapters.wallet_history import ResearchCache, ResearchPending, reconstruct_wallet
 from sniper.adapters.evm import USDG, WETH, FACTORY
@@ -123,3 +127,33 @@ class WalletHistoryTests(unittest.TestCase):
             cache.get = lambda *args, **kwargs: {"status": "0", "message": "rate limited", "result": []}
             with self.assertRaises(ResearchPending):
                 cache.account_history(WALLET, "txlist", 90, 110)
+
+    def test_empty_history_messages_match_the_requested_endpoint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = ResearchCache(Path(tmp), None, blockscout_key="test")
+            for action, message in (("txlist", "No transactions found"),
+                                    ("txlistinternal", "No internal transactions found"),
+                                    ("tokentx", "No token transfers found")):
+                with self.subTest(action=action):
+                    cache.get = lambda *args, **kwargs: {"status": "0", "message": message, "result": []}
+                    self.assertEqual(cache.account_history(WALLET, action, 90, 110), [])
+            with self.assertRaises(ResearchPending):
+                cache.account_history(WALLET, "txlistinternal", 90, 110)
+
+    def test_provider_error_is_retried_after_recovery_instead_of_cached_forever(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = ResearchCache(Path(tmp), None, blockscout_key="test")
+            url = "https://api.blockscout.com/v2/api?action=txlist"
+            error = {"status": "0", "message": "rate limited", "result": []}
+            valid = {"status": "1", "message": "OK", "result": [{"blockNumber": "100"}]}
+            response = lambda data: io.BytesIO(json.dumps(data).encode())
+            key = ["https", url]
+            path = Path(tmp) / (hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest() + ".json")
+            path.write_text(json.dumps(error))  # Legacy cached provider failure.
+            with patch("urllib.request.urlopen", side_effect=[response(error), response(valid)]) as http:
+                with self.assertRaises(ResearchPending):
+                    cache.get(url)
+                self.assertFalse(path.exists())
+                self.assertEqual(cache.get(url), valid)
+                self.assertEqual(cache.get(url), valid)
+            self.assertEqual(http.call_count, 2)

@@ -2,7 +2,7 @@
 
 ## v0.1.1 Windows acceptance, 2026-10-27
 
-**144 tests passed on Python 3.12.10**, including the original Windows failure
+**146 tests passed on Python 3.12.10**, including the original Windows failure
 case. The demo, CSV/HTML exports, offline doctor and network doctor completed in
 the extracted release folder. Mainnet RPC returned chain ID 4663 with TLS
 verification enabled. A locally supplied Blockscout key returned HTTP 200 from
@@ -21,6 +21,9 @@ An integration check also verifies that unavailable archive state stops history
 requests while preserving automatic discovery and blocking qualification.
 Separate observation/archive endpoint tests cover correct routing, credential
 redaction, and rejection of an archive provider on the wrong chain.
+Live empty internal-history responses are handled using Blockscout's documented
+endpoint-specific messages. Tests also verify recovery from HTTP-200 API errors
+without retaining those errors as permanent cached histories.
 
 Automatic discovery has produced real candidate addresses; no historical wallet
 has yet been declared qualified in this acceptance run. History processing is

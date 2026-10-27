@@ -21,6 +21,20 @@ class ResearchPending(RuntimeError):
     pass
 
 
+def account_rows(raw, action):
+    rows = raw.get("result") if isinstance(raw, dict) else None
+    if not isinstance(rows, list):
+        raise ResearchPending("History provider did not return a transaction list")
+    empty_message = {"txlist": "No transactions found",
+                     "txlistinternal": "No internal transactions found",
+                     "tokentx": "No token transfers found"}.get(action)
+    empty_confirmed = (raw.get("status") in ("0", 0) and not rows
+                       and empty_message is not None and raw.get("message") == empty_message)
+    if raw.get("status") not in ("1", 1) and not empty_confirmed:
+        raise ResearchPending("History provider did not confirm a successful response")
+    return rows
+
+
 class ResearchCache:
     def __init__(self, root: Path, rpc: RpcClient, *, blockscout_key="", max_calls=60, seconds=45):
         self.root, self.rpc, self.key = root, rpc, blockscout_key
@@ -38,12 +52,22 @@ class ResearchCache:
             time.sleep(wait)
         self.last_request = time.monotonic()
 
-    def cached(self, key, fetch):
+    def cached(self, key, fetch, *, validate=None):
         path = self.root / (hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest() + ".json")
         if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
+            result = json.loads(path.read_text(encoding="utf-8"))
+            try:
+                if validate:
+                    validate(result)
+                return result
+            except ResearchPending:
+                # Earlier versions cached HTTP-200 API errors. Discard only
+                # this invalid cache entry so a recovered provider can be read.
+                path.unlink()
         self.reserve()
         result = fetch()
+        if validate:
+            validate(result)
         temp = path.with_suffix(".tmp")
         temp.write_text(json.dumps(result, allow_nan=False), encoding="utf-8")
         temp.replace(path)
@@ -53,6 +77,10 @@ class ResearchCache:
         return self.cached(["rpc", CHAIN_ID, anchor, method, params], lambda: self.rpc.call(method, params))
 
     def get(self, url, *, headers=None):
+        parts = urllib.parse.urlsplit(url)
+        action = urllib.parse.parse_qs(parts.query).get("action", [None])[0]
+        validate = (lambda raw: account_rows(raw, action)) if (
+            parts.hostname == "api.blockscout.com" and action in {"txlist", "txlistinternal", "tokentx"}) else None
         def fetch():
             if urllib.parse.urlsplit(url).hostname == "api.blockscout.com":
                 budget_path = self.root / "blockscout-usage.json"
@@ -78,7 +106,7 @@ class ResearchCache:
             except urllib.error.URLError:
                 raise ResearchPending("History provider connection unavailable") from None
         # Keys remain in the Authorization header, never the URL or cache payload.
-        return self.cached(["https", url], fetch)
+        return self.cached(["https", url], fetch, validate=validate)
 
     def account_history(self, wallet, action, start, end):
         if not self.key:
@@ -90,11 +118,7 @@ class ResearchCache:
                       "sort": "asc", "page": page, "offset": 100}
             raw = self.get("https://api.blockscout.com/v2/api?" + urllib.parse.urlencode(params),
                            headers={"Authorization": "Bearer " + self.key})
-            rows = raw.get("result") if isinstance(raw, dict) else None
-            if not isinstance(rows, list):
-                raise ResearchPending("History provider did not return a transaction list")
-            if raw.get("status") not in ("1", 1) and not (not rows and raw.get("message") == "No transactions found"):
-                raise ResearchPending("History provider did not confirm a successful response")
+            rows = account_rows(raw, action)
             fingerprint = json.dumps(rows, sort_keys=True)
             if rows and fingerprint in seen:
                 raise ValueError("Repeated history page; completeness cannot be established")
