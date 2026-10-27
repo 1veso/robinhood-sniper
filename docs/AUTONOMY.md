@@ -9,6 +9,15 @@ It resumes persisted cursors after restarts. It does not run while this computer
 is asleep, powered off, or the user is signed out.
 Each paper cycle processes up to 3,000 blocks, in smaller RPC chunks, to catch
 up after outages even when a research cycle overlaps the next scheduled minute.
+Position exits are checked before collection and entry-source requests. This
+prioritizes existing exposure within each cycle; it is not a separate real-time
+exit service or an exchange stop order.
+
+The service pins `runtime/ACCOUNT.identity.json` to the account's UUID and uses
+`--existing-account` for child runs. A missing, empty or replaced established
+database stops the cycle instead of recreating starting cash. Restore the
+matching SQLite account, its journal and identity record after a state loss.
+Do not delete the identity record to bypass recovery.
 
 ```powershell
 python supervise.py --once
@@ -31,6 +40,16 @@ Reports:
 - `runtime/research/qualified-wallets.json`: performance-qualified wallets with valid external controller reviews.
 - `runtime/research/cohort-BLOCK/history-ADDRESS.json`: normalized, receipt-checked history.
 - `runtime/research/cache/`: retained provider/RPC evidence, hashed filenames without credentials.
+- `runtime/solana/latest.json`: latest free Solana screening batch.
+- `runtime/solana/screens.sqlite3`: seen-once Solana research journal; no positions or trading account.
+
+The Solana profile screen becomes due every 30 minutes and runs at the next
+available service cycle. It attempts at most five unseen mints, with a 35-second
+soft time budget and 8-second individual API timeouts (55-second child limit).
+It never invokes paid AI. A skipped or interrupted mint remains seen; provider
+outages are recorded and profile fetching retries at the next due interval.
+This is an additional research feed, not the article's separate Solana trading
+strategy, 10-minute watcher, or daily message-delivery schedule.
 
 ## Providers
 

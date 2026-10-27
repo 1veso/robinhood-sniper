@@ -5,7 +5,7 @@ Robinhood Chain events, checks supplied wallet and token evidence, models entrie
 and exits, and keeps a durable account ledger. Solana screening and optional Grok
 research annotation are included as separate adapters.
 
-This is version **0.1.1**: runnable software for testing the proposed strategy.
+This is version **0.1.2**: runnable software for testing the proposed strategy.
 No profitable edge or live execution performance has been established. The
 demonstration uses fabricated prices and wallets and is labeled accordingly.
 
@@ -13,6 +13,11 @@ The Windows service, automatic wallet discovery, receipt-checked historical
 accounting and controller-link screening are documented in
 [Autonomous research operations](docs/AUTONOMY.md). This update also fixes the
 Windows SQLite constructor leak and the Robinhood DEX Screener chain identifier.
+
+The [article review and integration](docs/ARTICLE_REVIEW.md) records the next
+improvements: existing-account protection, exit checks before collection, a
+separate Solana research screen, and explicitly enabled X research with source
+citations and provider-reported cost accounting.
 
 ## Run it now
 
@@ -107,8 +112,8 @@ python run.py --db runtime/experiment-001.sqlite3 run --follow --wallets example
 dated qualification and controller-independence evidence. Use
 [`docs/OPERATIONS.md`](docs/OPERATIONS.md) for the input formats and evidence
 workflow. A different working HTTPS RPC can be supplied with `--rpc`; its chain
-ID must be 4663. The initial public RPC check from the build environment returned
-HTTP 403, so live connectivity has **not** been verified here.
+ID must be 4663. Current and archive reads were verified on the operator's
+Windows installation on 2026-10-27; check connectivity on each new host.
 
 **Default collection is not sufficient to open a position.** DexScreener prices
 are indicative, and simple contract reads do not establish all required safety

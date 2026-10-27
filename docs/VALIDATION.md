@@ -1,5 +1,21 @@
 # Validation and scope
 
+## v0.1.2 article integration, 2026-10-27
+
+**166 offline tests passed on Python 3.12.10.** New coverage verifies missing or
+replaced account protection, exit processing before collection, same-pool
+Solana screening, strict age/activity data, persistent seen-once scans,
+explicit AI completion, actual billed-cost accounting, X tool activity,
+returned citation matching, and disabled paid requests.
+
+X API behavior is covered with schema fixtures derived from current official
+documentation. This is not a claim that the operator's xAI account has passed a
+live authentication/search test. Paid calls remain explicit opt-in.
+An actual Rugcheck request for wrapped SOL returned a screen rejection at
+unknown LP-lock evidence; the disabled X command made no paid request.
+See [ARTICLE_REVIEW.md](ARTICLE_REVIEW.md) for adoption decisions and remaining
+scope; the existing Robinhood risk policy has not changed.
+
 ## v0.1.1 Windows acceptance, 2026-10-27
 
 **147 tests passed on Python 3.12.10**, including the original Windows failure

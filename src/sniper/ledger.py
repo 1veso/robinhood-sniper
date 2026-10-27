@@ -81,7 +81,7 @@ class Ledger:
     opening the same database serialize their writes through SQLite.
     """
 
-    def __init__(self, path: str | Path, starting_cash: Decimal):
+    def __init__(self, path: str | Path, starting_cash: Decimal, *, require_existing: bool = False):
         starting_cash = decimal(starting_cash, nonnegative=True)
         if starting_cash <= ZERO:
             raise ValueError("Starting paper cash must be positive")
@@ -89,8 +89,17 @@ class Ledger:
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        self.conn = sqlite3.connect(self.path, timeout=15, isolation_level=None, check_same_thread=False)
+        if require_existing and self.path == ":memory:":
+            raise ValueError("Existing account requires a persistent database")
+        target = Path(self.path).resolve().as_uri() + "?mode=rw" if require_existing else self.path
+        self.conn = sqlite3.connect(target, uri=require_existing, timeout=15, isolation_level=None, check_same_thread=False)
         try:
+            if require_existing:
+                # Check before CREATE TABLE or any initialization can repair an
+                # empty/replaced file into an apparently fresh trading account.
+                row = self.conn.execute("SELECT value FROM metadata WHERE key='starting_cash'").fetchone()
+                if row is None:
+                    raise ValueError("Existing account metadata is missing; restore the account")
             self._initialize(starting_cash)
         except BaseException:
             # A failed constructor has no caller-owned instance to close.
@@ -165,6 +174,8 @@ class Ledger:
                     self._set(key, value)
             if self._get("execution_mode") != "paper":
                 raise ValueError("Ledger is not a paper account")
+            if self._get("account_id") is None:
+                self._set("account_id", str(uuid.uuid4()))
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:

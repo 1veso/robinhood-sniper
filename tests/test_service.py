@@ -70,7 +70,7 @@ class ServiceTests(unittest.TestCase):
 
         with patch.object(supervise, "ROOT", self.root), patch.object(supervise.subprocess, "run", side_effect=child):
             result = supervise.run_cycle(self.runtime, "research", 1000, 180)
-        self.assertEqual(calls, [("run.py", observation_url), ("research.py", history_url)])
+        self.assertEqual(calls, [("run.py", observation_url), ("research.py", history_url), ("solana_research.py", history_url)])
         self.assertEqual(result["entry_status"], "BLOCKED")
 
     def test_os_lock_blocks_overlap_and_releases_after_exit(self):
@@ -81,3 +81,21 @@ class ServiceTests(unittest.TestCase):
                     self.fail("A second writer acquired the same lock")
         with supervise.instance_lock(path):
             pass
+
+    def test_missing_established_account_cannot_be_recreated(self):
+        self.cycle()
+        (self.runtime / "research.sqlite3").unlink()
+        with patch.object(supervise, "ROOT", self.root), patch.object(supervise.subprocess, "run") as child:
+            with self.assertRaisesRegex(ValueError, "database is missing"):
+                supervise.run_cycle(self.runtime, "research", 1000, 180)
+        child.assert_not_called()
+        self.assertFalse((self.runtime / "research.sqlite3").exists())
+
+    def test_replaced_database_does_not_get_new_trading_capacity(self):
+        self.cycle()
+        db = self.runtime / "research.sqlite3"
+        db.unlink()
+        ledger = supervise.Ledger(db, supervise.RiskPolicy().starting_cash_usd)
+        ledger.close()
+        with self.assertRaisesRegex(ValueError, "identity changed"):
+            self.cycle()

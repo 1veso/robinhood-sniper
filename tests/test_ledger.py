@@ -31,6 +31,16 @@ class LedgerTests(unittest.TestCase):
         finally:
             other.close()
 
+    def test_existing_mode_refuses_missing_or_empty_databases(self):
+        missing = self.path.parent / "missing.sqlite"
+        with self.assertRaises(sqlite3.Error):
+            Ledger(missing, D("1000"), require_existing=True)
+        self.assertFalse(missing.exists())
+        missing.touch()
+        with self.assertRaises(sqlite3.Error):
+            Ledger(missing, D("1000"), require_existing=True)
+        self.assertEqual(missing.stat().st_size, 0)
+
     def test_cannot_reset_existing_starting_cash(self):
         failed_connection = sqlite3.connect(self.path, isolation_level=None)
         with patch("sniper.ledger.sqlite3.connect", return_value=failed_connection):

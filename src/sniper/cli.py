@@ -6,6 +6,7 @@ from contextlib import ExitStack
 from dataclasses import replace
 import json
 import os
+import sqlite3
 from pathlib import Path
 import sys
 import time
@@ -36,7 +37,7 @@ def open_engine(args):
     from .ledger import Ledger
     from .engine import PaperEngine
     policy = policy_for(args)
-    ledger = Ledger(args.db, policy.starting_cash_usd)
+    ledger = Ledger(args.db, policy.starting_cash_usd, require_existing=getattr(args, "existing_account", False))
     try:
         engine = PaperEngine(ledger, policy)
     except Exception:
@@ -153,13 +154,14 @@ def command_halt(args):
 
 
 def command_screen(args):
-    from .adapters.solana import RugcheckClient, DexScreenerClient
+    from .adapters.solana import DexScreenerClient
     now = int(time.time())
     result = {"mode": "READ_ONLY", "chain": args.chain, "token": args.token}
-    evidence = None
     if args.chain == "solana":
-        evidence = RugcheckClient().report(args.token, now=now)
-        result["safety"] = evidence.as_dict()
+        from .screening import ScreenRules, screen_solana
+        rules = ScreenRules.from_file(args.screen_config) if args.screen_config else ScreenRules()
+        output(screen_solana(args.token, rules=rules, pool_id=args.pool))
+        return
     quote = DexScreenerClient(chain_id=args.chain).quote(args.token, now=int(time.time()), pool_id=args.pool)
     result["quote"] = quote.as_dict()
     result["entry_eligible"] = False
@@ -255,6 +257,16 @@ def command_run(args):
         iterations = 0
         while True:
             cycle = {"mode": "PAPER", "observed_at": int(time.time()), "source_errors": []}
+            # Existing exposure has priority over discovery and entry inputs.
+            # Collection can be slow or time out; exits have already run.
+            marks = {}
+            for position in ledger.positions():
+                try:
+                    quote = quote_provider(position["asset_id"], position["pool_id"], int(time.time()))
+                    marks[position["asset_id"]] = quote
+                except (ValueError, OSError, RuntimeError) as exc:
+                    cycle["source_errors"].append({"stage": "exit_quote", "asset_id": position["asset_id"], "reason": str(exc)[:200]})
+            cycle["exits"] = engine.watch(marks, now=int(time.time()))
             entry_inputs_ok = True
             if args.wallets:
                 try:
@@ -301,15 +313,6 @@ def command_run(args):
                         ledger.record_event(reorg_id, "collector_reorg", reorg, int(time.time()))
                     elif json.loads(previous["payload"]) != reorg:
                         raise ValueError("Collector journal changed; use a separate experiment database")
-            # Exit processing remains active on an entry-source failure.
-            marks = {}
-            for position in ledger.positions():
-                try:
-                    quote = quote_provider(position["asset_id"], position["pool_id"], int(time.time()))
-                    marks[position["asset_id"]] = quote
-                except (ValueError, OSError, RuntimeError) as exc:
-                    cycle["source_errors"].append({"stage": "exit_quote", "asset_id": position["asset_id"], "reason": str(exc)[:200]})
-            cycle["exits"] = engine.watch(marks, now=int(time.time()))
             cycle["decisions"] = []
             if collected is not None and entry_inputs_ok:
                 # Recover a source commit that preceded an interrupted ingest.
@@ -344,6 +347,42 @@ def command_advise(args):
     output(advisor.assess(**request, now=int(time.time())))
 
 
+def command_research_x(args):
+    from .x_research import XResearch
+    from .advisor import AdvisoryError
+    client = XResearch(enabled=args.enable_paid_ai, budget_path=args.budget_db,
+                       daily_limit_usd=policy_for(args).max_api_cost_usd_day)
+    previous = os.environ.get("XAI_API_KEY")
+    try:
+        if args.enable_paid_ai and args.key_file:
+            key = Path(args.key_file).read_text(encoding="utf-8-sig").strip()
+            if not key or any(c.isspace() for c in key):
+                raise ValueError("xAI key file must contain one key on one line")
+            os.environ["XAI_API_KEY"] = key
+        result = client.assess(request_id=args.request_id, token=args.token, chain=args.chain)
+        if args.output:
+            path = Path(args.output)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(path.suffix + ".tmp")
+            temporary.write_text(json.dumps(json_safe(result), indent=2, allow_nan=False), encoding="utf-8")
+            temporary.replace(path)
+        output(result)
+    except AdvisoryError as exc:
+        message = str(exc)
+        if os.environ.get("XAI_API_KEY"):
+            message = message.replace(os.environ["XAI_API_KEY"], "[REDACTED]")
+        raise ValueError(message) from None
+    except Exception as exc:
+        # The transient file-loaded credential is cleared before main handles
+        # errors, so never propagate arbitrary provider exception text here.
+        raise ValueError(f"X research failed ({type(exc).__name__}); no trading action; inspect local configuration and provider access") from None
+    finally:
+        if previous is None:
+            os.environ.pop("XAI_API_KEY", None)
+        else:
+            os.environ["XAI_API_KEY"] = previous
+
+
 def command_doctor(args):
     from .adapters.evm import RpcClient, EvmRegistry
     policy = policy_for(args)
@@ -367,6 +406,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=__version__)
     p.add_argument("--config", help="Risk policy TOML; defaults match config/paper.toml")
     p.add_argument("--db", default="runtime/paper.sqlite3", help="Persistent PAPER ledger")
+    p.add_argument("--existing-account", action="store_true", help="Refuse to create or reinitialize an account")
     sub = p.add_subparsers(dest="command", required=True)
     demo = sub.add_parser("demo", help="Run isolated synthetic end-to-end example, no keys/network")
     demo.add_argument("--html", help="Write standalone HTML report")
@@ -392,6 +432,7 @@ def parser() -> argparse.ArgumentParser:
     screen.add_argument("token")
     screen.add_argument("--chain", choices=["solana", "robinhoodchain"], default="solana")
     screen.add_argument("--pool", help="Pin the exact pool; never silently switch")
+    screen.add_argument("--screen-config", help="Separate Solana research filter TOML; does not change account risk policy")
     screen.set_defaults(func=command_screen)
     for command, help_text, handler in (
         ("collect", "Collect canonical Robinhood events; no order execution", command_collect),
@@ -421,6 +462,15 @@ def parser() -> argparse.ArgumentParser:
     advise.add_argument("--budget-db", default="runtime/advisory.sqlite3")
     advise.add_argument("--model", default="grok-4.7")
     advise.set_defaults(func=command_advise)
+    research_x = sub.add_parser("research-x", help="Opt-in X evidence research; never connected to orders")
+    research_x.add_argument("token")
+    research_x.add_argument("--chain", choices=["solana", "robinhoodchain"], default="solana")
+    research_x.add_argument("--request-id", required=True)
+    research_x.add_argument("--enable-paid-ai", action="store_true")
+    research_x.add_argument("--key-file", help="Local one-line xAI key file; never put the key on the command line")
+    research_x.add_argument("--budget-db", default="runtime/advisory.sqlite3")
+    research_x.add_argument("--output", help="Save the validated research result")
+    research_x.set_defaults(func=command_research_x)
     doctor = sub.add_parser("doctor", help="Validate configuration; optionally check the read-only RPC")
     doctor.add_argument("--network", action="store_true")
     doctor.add_argument("--rpc", default=os.environ.get("SNIPER_RPC_URL") or "https://rpc.mainnet.chain.robinhood.com")
@@ -440,7 +490,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("Stopped. Persistent state is retained.", file=sys.stderr)
         return 130
-    except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc:
+    except (ValueError, KeyError, TypeError, OSError, RuntimeError, sqlite3.Error) as exc:
         message = str(exc)
         key = os.environ.get("XAI_API_KEY")
         if key:

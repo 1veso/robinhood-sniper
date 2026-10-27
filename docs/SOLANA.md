@@ -2,6 +2,10 @@
 
 This module provides read-only screening from the systems supplied in the project brief. It does not connect Copyfomo, open positions, submit swaps, or turn an AI opinion into an order.
 
+Version 0.1.2 adds the ordered `screen` command and bounded `solana_research.py`
+scanner described in [ARTICLE_REVIEW.md](ARTICLE_REVIEW.md). Research thresholds
+live in `config/solana-screen.toml`; the Robinhood account policy is unchanged.
+
 ## Public interfaces
 
 ```python
@@ -69,7 +73,7 @@ Each input record requires:
 
 Defaults require twenty closed trades, 55% win rate, at most 50% profit concentration in one token, nonnegative last-week P&L, positive thirty-day P&L, and at least thirty minutes average holding time. These are experimental filters from the brief, not validated alpha. Eligible records sort explicitly by lower concentration, longer holding period (capped at a day for ranking), lower follower count, and sample size. At most three leaders are returned.
 
-`verified_history=true` is an assertion supplied by the data producer. The ranking function does not independently establish it. A future wallet-history importer must reconcile transactions, exclude airdrops/allocations from copied-entry performance, account for open losses, and preserve source records. Freeze selections before measuring subsequent follower performance.
+`verified_history=true` is an assertion supplied by the data producer. This legacy ranking function does not independently establish it. The separate Robinhood historical pipeline in `research.py` corroborates indexed history against receipts/balances and retains unresolved coverage gaps. Freeze selections before measuring subsequent follower performance.
 
 ## Optional Grok annotation
 
@@ -100,7 +104,12 @@ The response must be one complete JSON object. Extra prose, duplicated keys, inv
 
 The default daily reservation budget is USD 1.00, with USD 0.10 reserved before each bounded request. Reservations are persisted transactionally, retained on failure and retained on successful calls, so restarting or concurrent processes cannot reset the budget. Reusing an already reserved request ID is rejected. Output is limited to 1,000 tokens and source input to 20KB.
 
-This is **reservation accounting**, not a verified vendor billing ledger. Vendor prices and reasoning-token treatment can change; reconcile actual invoices before relying on cost estimates. No X search or other server-side paid tools are enabled because `max_turns` does not bound fetched post/profile counts. Timestamped X evidence can be supplied through the same source interface after separate collection. The first version keeps research collection and paid annotation separate.
+Usage now also records provider-reported billed cost from `cost_in_usd_ticks`.
+Future requests count the greater of the reservation and billed cost; missing
+billed cost blocks additional paid calls that UTC day. Reservations are still
+not provider-enforced caps. The `advise` command does not enable tools. The
+separate explicitly enabled `research-x` command can collect X evidence; see
+ARTICLE_REVIEW.md for its cost controls, key setup and limitations.
 
 Official references:
 

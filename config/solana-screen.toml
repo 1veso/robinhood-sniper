@@ -1,0 +1,13 @@
+# Research screening only. These article thresholds do not alter paper.toml,
+# allocate capital, or authorize any order. X research remains a separate stage.
+[screen]
+max_risk_score = "40"
+min_lp_locked_pct = "90"
+max_top10_pct = "30"
+max_creator_pct = "5"
+min_liquidity_usd = "30000"
+reference_ticket_usd = "25"
+max_ticket_share = "0.01"
+min_age_seconds = 1800
+max_age_seconds = 259200
+buys_without_sells_threshold = 20

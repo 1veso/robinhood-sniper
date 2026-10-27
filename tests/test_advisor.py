@@ -6,7 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
-from sniper.advisor import AdvisoryError, DailyBudget, GrokAdvisor, validate_advice
+from sniper.advisor import AdvisoryError, DailyBudget, GrokAdvisor, validate_advice, response_text
 
 NOW = 1793026000
 
@@ -20,6 +20,32 @@ def evidence():
 
 
 class AdvisorTests(unittest.TestCase):
+    def test_missing_completion_status_is_not_success(self):
+        for status in (None, "incomplete", "failed", "in_progress"):
+            with self.subTest(status=status), self.assertRaises(AdvisoryError):
+                response_text({"status": status, "output_text": json.dumps(advice())})
+
+    def test_billed_cost_above_reservation_blocks_further_calls(self):
+        with tempfile.TemporaryDirectory() as d:
+            budget = DailyBudget(Path(d)/"budget.db", Decimal("1"))
+            try:
+                budget.reserve("one", Decimal("0.10"), NOW)
+                budget.record_usage("one", {"usage": {"cost_in_usd_ticks": 9500000000}})
+                with self.assertRaisesRegex(AdvisoryError, "budget exhausted"):
+                    budget.reserve("two", Decimal("0.10"), NOW)
+            finally:
+                budget.close()
+
+    def test_missing_billed_cost_blocks_more_requests_pending_reconciliation(self):
+        with tempfile.TemporaryDirectory() as d:
+            budget = DailyBudget(Path(d)/"budget.db")
+            try:
+                budget.reserve("one", Decimal("0.10"), NOW)
+                budget.record_usage("one", {"usage": {"cost_in_usd_ticks": True}})
+                with self.assertRaisesRegex(AdvisoryError, "Unverified prior API cost"):
+                    budget.reserve("two", Decimal("0.10"), NOW)
+            finally:
+                budget.close()
     def test_strict_json_blocks_prose_and_nonfinite(self):
         for text in ("Here's JSON: " + json.dumps(advice()), json.dumps(advice()).replace("0.8", "NaN"),
                      json.dumps(advice()).replace('"confidence": 0.8', '"confidence": true'),

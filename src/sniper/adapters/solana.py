@@ -182,6 +182,11 @@ class RugcheckClient:
                                  {"Accept": "application/json", "User-Agent": "sniper-paper/0.1"}, self.timeout)
         return normalize_report(mint, payload, now=now)
 
+    def raw_report(self, mint: str) -> dict:
+        mint = validate_address(mint)
+        return self.transport("GET", f"https://api.rugcheck.xyz/v1/tokens/{mint}/report", None,
+                              {"Accept": "application/json", "User-Agent": "sniper-paper/0.1"}, self.timeout)
+
 
 def normalize_quote(token: str, payload: Any, *, now: int, pool_id: str | None = None,
                     chain_id: str = "solana", asset_prefix: str | None = None,
@@ -236,9 +241,13 @@ class DexScreenerClient:
 
     def quote(self, mint: str, *, now: int, pool_id: str | None = None) -> MarketQuote:
         mint = validate_address(mint, self.chain_id)
-        payload = self.transport("GET", f"https://api.dexscreener.com/tokens/v1/{self.chain_id}/{mint}", None,
-                                 {"Accept": "application/json", "User-Agent": "sniper-paper/0.1"}, self.timeout)
+        payload = self.pairs(mint)
         return normalize_quote(mint, payload, now=now, pool_id=pool_id, chain_id=self.chain_id, asset_prefix=self.asset_prefix)
+
+    def pairs(self, mint: str):
+        mint = validate_address(mint, self.chain_id)
+        return self.transport("GET", f"https://api.dexscreener.com/tokens/v1/{self.chain_id}/{mint}", None,
+                              {"Accept": "application/json", "User-Agent": "sniper-paper/0.1"}, self.timeout)
 
     def profiles(self, *, limit: int = 5) -> list[str]:
         if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 25:

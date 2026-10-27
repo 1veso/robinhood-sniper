@@ -17,6 +17,8 @@ sys.path.insert(0, str(ROOT / "src"))
 from sniper.cli import read_json
 from sniper.policy import RiskPolicy
 from sniper.reporting import write_html
+from sniper.ledger import Ledger
+from sniper.engine import PaperEngine
 
 
 def atomic_json(path: Path, value) -> None:
@@ -73,9 +75,31 @@ def redact(value: str, env: dict) -> str:
     return value
 
 
+def guard_account(runtime: Path, account: str, policy: RiskPolicy) -> None:
+    """An established service must never interpret lost state as fresh capital."""
+    database = runtime / f"{account}.sqlite3"
+    marker = runtime / f"{account}.identity.json"
+    identity = read_json(marker) if marker.exists() else None
+    previous = read_json(runtime / "status.json") if (runtime / "status.json").exists() else {}
+    established = identity is not None or previous.get("account") == account
+    if established and not database.is_file():
+        raise ValueError("Established account database is missing; restore it before restarting")
+    ledger = Ledger(database, policy.starting_cash_usd, require_existing=database.exists() or established)
+    try:
+        PaperEngine(ledger, policy)
+        account_id = ledger._get("account_id")
+        if identity is not None and identity != {"account": account, "account_id": account_id}:
+            raise ValueError("Account identity changed; restore the original database and identity record")
+        if identity is None:
+            atomic_json(marker, {"account": account, "account_id": account_id})
+    finally:
+        ledger.close()
+
+
 def run_cycle(runtime: Path, account: str, max_blocks: int, timeout: int) -> dict:
     policy_path = ROOT / "config" / "paper.toml"
     policy = RiskPolicy.from_file(policy_path)
+    guard_account(runtime, account, policy)
     paths = {name: runtime / f"{name}.json" for name in ("wallets", "safety", "quotes")}
     # Empty manifests preserve unknown evidence. Never manufacture passes.
     for path in paths.values():
@@ -86,7 +110,7 @@ def run_cycle(runtime: Path, account: str, max_blocks: int, timeout: int) -> dic
     if env.get("SNIPER_OBSERVATION_RPC_URL"):
         observation_env["SNIPER_RPC_URL"] = env["SNIPER_OBSERVATION_RPC_URL"]
     command = [sys.executable, str(ROOT / "run.py"), "--config", str(policy_path),
-               "--db", str(runtime / f"{account}.sqlite3"), "run",
+               "--db", str(runtime / f"{account}.sqlite3"), "--existing-account", "run",
                "--events-db", str(runtime / f"{account}-events.sqlite3"),
                "--max-blocks", str(max_blocks)]
     for name, path in paths.items():
@@ -150,6 +174,13 @@ def run_cycle(runtime: Path, account: str, max_blocks: int, timeout: int) -> dic
             status["wallet_research"] = json.loads(redact(research.stdout, env))
         except (subprocess.TimeoutExpired, ValueError):
             status["wallet_research"] = {"status": "PENDING", "reason": "Research will retry next cycle"}
+        try:
+            solana = subprocess.run([sys.executable, str(ROOT / "solana_research.py")],
+                                    cwd=ROOT, env=env, capture_output=True,
+                                    text=True, encoding="utf-8", timeout=55)
+            status["solana_research"] = json.loads(redact(solana.stdout, env))
+        except (subprocess.TimeoutExpired, ValueError):
+            status["solana_research"] = {"status": "PENDING", "reason": "Screening status unavailable; see runtime/solana evidence journal"}
     status["finished_at"] = int(time.time())
     status["updated_at_utc"] = datetime.now(timezone.utc).isoformat()
     atomic_json(runtime / "status.json", status)
@@ -192,6 +223,7 @@ def main(argv=None) -> int:
             except Exception as exc:
                 # No arbitrary exception text: provider URLs can carry secrets.
                 status = {"mode": "PAPER_ONLY", "health": "ERROR", "entry_status": "BLOCKED",
+                          "account": args.account,
                           "updated_at_utc": datetime.now(timezone.utc).isoformat(),
                           "error": f"{type(exc).__name__}: check manifests and local configuration"}
                 atomic_json(runtime / "status.json", status)

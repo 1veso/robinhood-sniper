@@ -165,7 +165,16 @@ class RunnerIntegrationTests(unittest.TestCase):
             self.assertEqual(engine.consider(c, fresh_quote(now=NOW-1), now=NOW-1)["verdict"], "PAPER_BUY")
         finally:
             ledger.close()
-        cycle, _ = self.run_once(poll_error=RuntimeError("RPC source unavailable"))
+        def blocked_collector(**kwargs):
+            # Inspect committed account state at the moment collection starts.
+            # A slow/hung RPC must not precede this stop exit.
+            account = self.ledger()
+            try:
+                self.assertEqual(account.snapshot()["open_positions"], 0)
+            finally:
+                account.close()
+            raise RuntimeError("RPC source unavailable")
+        cycle, _ = self.run_once(poll_error=blocked_collector)
         self.assertTrue(any(e["stage"] == "collector" for e in cycle["source_errors"]))
         self.assertTrue(any(e["verdict"] == "PAPER_SELL" for e in cycle["exits"]))
         self.assertEqual(cycle["account"]["open_positions"], 0)
