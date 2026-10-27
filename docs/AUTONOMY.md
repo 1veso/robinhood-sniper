@@ -1,5 +1,7 @@
 # Local autonomous research service
 
+The required future live workflow is [fully automatic execution](AUTOMATED_EXECUTION.md), including order submission, exits and receipt reconciliation. The current paper worker is automatic; a live signing/submission service is still missing. The old manual wallet workflow is not the deployment target.
+
 The separate [Telegram monitor](TELEGRAM.md) runs every two minutes under its own
 Windows task and journal. Its progress is in `runtime/telegram/status.json`.
 It does not wait for the longer paper/history cycle or alter its frozen rules.

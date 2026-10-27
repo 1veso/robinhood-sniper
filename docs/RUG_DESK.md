@@ -1,5 +1,7 @@
 # Solana RUG DESK
 
+**0.1.12 requirement update:** live trading must be automatic, as specified in [AUTOMATED_EXECUTION.md](AUTOMATED_EXECUTION.md). The article’s manual-signing workflow is superseded. The existing manual-record commands below remain legacy bookkeeping/testing utilities, not the intended live product. Automatic live execution is not implemented or enabled.
+
 **0.1.9 update:** the user subsequently authorized execution-cost accounting. The installed empty paper account now uses the versioned [cost-aware model and live-preparation tools](LIVE_PREPARATION.md). References below to the article's no-cost model describe the original 0.1.8 reproduction; current report labels come from the ledger's active policy. Trading thresholds and `config.py` remain unchanged.
 
 This optional desk implements the supplied Solana article in `rug_desk/`, with exactly its ten Python modules. It is separate from the Robinhood wallet-following accounts: different chain, signals, sizing, exits and cost assumptions. Combining their P&L would not measure either strategy.
@@ -75,11 +77,11 @@ The model remains `grok-4.7`, endpoint `https://api.x.ai/v1/responses`, X Search
 
 Only after both tests pass and the user approves recurring paid usage, create `rug_desk/runtime/paid-ai.json` with `{"enabled":true,"operator_authorized":true}`. Without both successful test artifacts this flag does not enable requests. This is an operational switch, not permission to modify `config.py` or bypass any filter.
 
-## Alerts, manual fills and the seven-day clock
+## Alerts, legacy fill records and the seven-day clock
 
 Telegram uses the existing paired bot and chat; token and destination are never copied into source. An account-specific durable outbox deduplicates ledger events. Only Telegram's acknowledged message ID counts as server delivery evidence; it does not prove the user read the message. Ambiguous network delivery is retained as uncertain and is not automatically resent. Missing/replaced notification journals block delivery until reconciled.
 
-Future manual holdings must use a separate account root and `--manual-records`. Paper mode is not switched to real trading. For example initialize `rug_desk/runtime/manual-account` with `book.py --root PATH --initialize --manual-records`. Record a real fill using `book.py --root PATH --manual-records --confirm-fill PATH_TO_JSON`:
+For legacy bookkeeping or reconciliation tests, external holdings use a separate account root and `--manual-records`. These commands are not a substitute for the required automatic live executor. Paper mode is not switched to real trading. For example initialize `rug_desk/runtime/manual-account` with `book.py --root PATH --initialize --manual-records`. Record a real fill using `book.py --root PATH --manual-records --confirm-fill PATH_TO_JSON`:
 
 ```json
 {"fill_id":"actual-unique-fill-id","side":"sell","now":1793100001,"quantity":"6.25","price":"4","fee":"0.01","position_id":"recorded-position-id"}

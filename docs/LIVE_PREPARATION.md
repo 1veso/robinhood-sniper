@@ -1,6 +1,8 @@
-# Execution costs and live preparation — 0.1.9
+# Execution costs and automatic live preparation — 0.1.12
 
-The user's 2026-10-27 request authorizes adding execution costs and preparing a later live handoff. Existing trading thresholds, exits, wallet rules and `rug_desk/config.py` remain unchanged. The Solana account gets an explicitly versioned cost model before its first strategy fill. The existing Robinhood paper engine already includes same-block V3 pool fees/impact, 100 bps adverse execution stress, and conservative gas: twice the larger quoter estimate plus 100,000 gas units, valued at the current gas/ETH price. That is still a paper estimate, not a wallet-specific executed transaction.
+The user's 2026-10-27 request authorizes adding execution costs and preparing later live execution. Existing trading thresholds, exits, wallet rules and `rug_desk/config.py` remain unchanged. The Solana account gets an explicitly versioned cost model before its first strategy fill. The existing Robinhood paper engine already includes same-block V3 pool fees/impact, 100 bps adverse execution stress, and conservative gas: twice the larger quoter estimate plus 100,000 gas units, valued at the current gas/ETH price. That is still a paper estimate, not a wallet-specific executed transaction.
+
+**Latest execution requirement:** the user requires automatic trading, with no routine per-trade approval or manual signing. [Automatic execution requirements](AUTOMATED_EXECUTION.md) supersede the article’s manual workflow. The current preparation reader is not a live executor; signing, submission and unattended recovery remain unimplemented.
 
 ## Solana paper accounting
 
@@ -33,7 +35,7 @@ Activation command, used only for the authorized empty Solana account:
 
 The report's draft review criteria require seven days of the cost-aware trial, at least 30 completed positions, reconciled API costs, current open-position marks, positive net results after costs and open losses, positive results after the extra cost shock, profitable chronological halves, positive closed-trade results after removing the best trade, and review of operational errors. These are practical review gates, not statistically proven evidence of an edge. They can identify insufficient evidence; they cannot guarantee future profit.
 
-Passing them sets **performance ready for human review**, never `real_money_enabled`. No profitable balance, deadline or configuration flag causes a wallet to sign. The user still reviews fresh safety/route evidence, approves capital and loss limits, approves the transaction, and signs in their wallet. The first live step should be a deliberately bounded, separately authorized execution validation; paper and real holdings remain separate.
+Passing them sets **performance ready for human review**, never `real_money_enabled`. No profitable balance, deadline or configuration flag causes a wallet to sign. The user controls initial live deployment and approves its wallet, capital and risk limits. The required future executor must then validate, sign, submit and reconcile ordinary trades automatically under that authority, with no per-trade human approval. It is not implemented yet. Any eventual real-money validation must use a separately authorized, bounded deployment; paper and real holdings remain separate.
 
 The existing Robinhood trial keeps its account/deadline and its own results. The Solana trial still waits for funded xAI inference/X Search validation. Do not combine their P&L or count synthetic acceptance fills as performance.
 
@@ -54,23 +56,23 @@ From the installed application folder:
 
 `doctor` independently checks the complete Solana mainnet genesis hash and one public Jupiter WSOL/USDC quote. It does not request an assembled transaction, sign or submit anything. A successful public quote does not establish network/rent fees for the user's wallet.
 
-## Prepare a specific transaction for review
+## Prepare transaction evidence for the future executor
 
 Once the public wallet and free key are saved, the preparation command checks fresh Rugcheck evidence, pins its pool, fetches current market data, requests an ExactIn Jupiter V2 order, validates token amounts, minimum output, target pool, intermediate assets and fee fields, and optionally simulates the unsigned transaction. It restricts the target token's route to the screened pool and intermediate assets to WSOL/USDC. Unsupported gasless/sponsored fees or unresolved schemas are rejected. A quote can fail because the wallet has no balance; do not fund it merely to make setup look complete.
 
-New entries must pass the unchanged safety and market filters. An exit preparation records safety deterioration or provider failure without applying entry-only filters that could strand an existing holding; its route still must match the specified holding pool and quantity, and manual review remains required.
+New entries must pass the unchanged safety and market filters. An exit preparation records safety deterioration or provider failure without applying entry-only filters that could strand an existing holding; its route still must match the specified holding pool and quantity, and independently reviewed automatic instruction validation remains a prerequisite for the future executor. This command only prepares evidence.
 
 ```powershell
 & .\rug_desk\.venv\Scripts\python.exe prepare_live.py quote --mint ACTUAL_MINT --pool SCREENED_POOL --side buy --amount-raw 25000000 --simulate
 ```
 
-The example input is **25 USDC in raw units**, not a guarantee that USDC equals $1. Amounts and capital allocation need review before any real order. Sell preparation uses `--side sell` and the actual token's raw quantity. Both buy and exit routes must be checked for the exact intended size before authorizing a live entry.
+The example input is **25 USDC in raw units**, not a guarantee that USDC equals $1. Amounts and capital allocation need review before any real order. Sell preparation uses `--side sell` and the actual token's raw quantity. Both buy and exit routes must be checked for the exact intended size before the future executor can accept a live entry under its approved policy.
 
-The result is a review artifact in `runtime/live-preparation/intents/`. It records transaction and message hashes, short quote expiry, expected outputs, fee estimates, safety observations and simulation results. Simulation replaces the recent blockhash and does not verify signatures. It does not reserve liquidity or guarantee landing. Independent instruction/program/recipient review is explicitly unverified and must be completed before a signing handoff. There is no signer, `/execute`, `/submit` or `sendTransaction` method in this application.
+The result is a review artifact in `runtime/live-preparation/intents/`. It records transaction and message hashes, short quote expiry, expected outputs, fee estimates, safety observations and simulation results. Simulation replaces the recent blockhash and does not verify signatures. It does not reserve liquidity or guarantee landing. Independent instruction/program/recipient review is explicitly unverified and must be implemented and validated before an automatic signer can use the intent. There is no signer, `/execute`, `/submit` or `sendTransaction` method in this application.
 
 ## Actual fills and costs
 
-After a user-authorized transaction really occurs, reconciliation requires finalized RPC status, matching parsed/binary receipts and matching message bytes from the prepared intent. The first signature must match. Actual wallet token deltas establish quantities and USDC spent/received. Output below the intended minimum, a different input amount or unclassified native outflows require manual reconciliation and remain visible in the receipt journal.
+After a transaction submitted under an approved live policy really occurs, reconciliation requires finalized RPC status, matching parsed/binary receipts and matching message bytes from the prepared intent. The first signature must match. Actual wallet token deltas establish quantities and USDC spent/received. Output below the intended minimum, a different input amount or unclassified native outflows block automatic bookkeeping pending resolution and remain visible in the receipt journal. The current CLI is a reconciliation utility; it is not an unattended execution loop.
 
 - Actual swap fees, transfer fees, price impact and slippage are already reflected in token amounts. They are not charged again as guessed percentages.
 - `meta.fee` includes network priority fees. It is charged once.
@@ -84,10 +86,10 @@ After a user-authorized transaction really occurs, reconciliation requires final
 & .\rug_desk\.venv\Scripts\python.exe prepare_live.py reconcile --intent PATH_TO_SAVED_INTENT --signature ACTUAL_SIGNATURE --valuation-json PATH_TO_VALUATION --record
 ```
 
-The first command only journals the finalized evidence. `--record` books it into `runtime/live-preparation/confirmed-account`, an independent manual account. It cannot mutate the paper ledger. Valuation JSON contains positive `sol_usd`, `usdc_usd`, integer `observed_at` within 120 seconds of the fill's block time, and a descriptive `source`. This is evidence supplied for bookkeeping; naming a source does not independently verify its price. Unresolved account movements must be reconciled before further live activity.
+The first command only journals the finalized evidence. `--record` books it into `runtime/live-preparation/confirmed-account`, an independent account currently named `manual` in the legacy ledger schema. That schema name is not the target trading workflow. It cannot mutate the paper ledger. Valuation JSON contains positive `sol_usd`, `usdc_usd`, integer `observed_at` within 120 seconds of the fill's block time, and a descriptive `source`. This is evidence supplied for bookkeeping; naming a source does not independently verify its price. Unresolved account movements must be reconciled before further live activity.
 
 ## Remaining live prerequisites
 
-The current setup does not claim profitability, a completed Solana week, verified wallet-specific execution, independently reviewed transaction instructions, a funded xAI gate, or authorization to move money. The public wallet/key, actual two-sided routes/simulation, reviewed capital/kill-switch limits, independent instruction review and explicit signing approval are still required. The prepared code and tests are reusable when those inputs arrive; no strategy filters are lowered to manufacture a passing trade.
+The current setup does not claim profitability, a completed Solana week, verified wallet-specific execution, independently reviewed transaction instructions, a funded xAI gate, or authorization to move money. The public wallet/key, actual two-sided routes/simulation, reviewed capital/kill-switch limits, independently reviewed automated instruction validation, a restricted signer, durable submission/recovery, automated receipt reconciliation and user-controlled live deployment are still required. Routine trades must not require manual approval or wallet signing. The prepared code and tests are reusable when those inputs arrive; no strategy filters are lowered to manufacture a passing trade.
 
 Primary sources checked 2026-10-27: [Jupiter order API](https://developers.jup.ag/docs/api-reference/swap/order), [Jupiter plans and keyless/free access](https://developers.jup.ag/pricing), [Solana fee structure](https://solana.com/docs/core/fees/fee-structure), [Solana simulation](https://solana.com/docs/rpc/http/simulatetransaction), [Solana finalized transaction retrieval](https://solana.com/docs/rpc/http/gettransaction), [full mainnet genesis hash versus abbreviated network identifier](https://solana.com/docs/payments/agentic-payments/x402).

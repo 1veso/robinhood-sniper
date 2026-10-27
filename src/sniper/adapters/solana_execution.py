@@ -129,7 +129,7 @@ def order_evidence(raw, *, mint, pool, side, amount_raw, wallet, now, max_slippa
         'message_sha256': message_hash,
         'transaction_instruction_reviewed': False, 'request_id': raw.get('requestId'),
         'real_money_enabled': False, 'status': 'PREPARATION_ONLY',
-        'limitations': 'Provider quote is not a fill. Independent instruction review, simulation, current balance checks and explicit signing approval remain required.'}
+        'limitations': 'Provider quote is not a fill. Independently reviewed automatic instruction validation, simulation, current balance checks and an authorized restricted executor remain required. This reader cannot sign or broadcast.'}
 
 
 class SolanaExecutionReader:

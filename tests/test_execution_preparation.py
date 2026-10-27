@@ -116,6 +116,11 @@ class CostTests(unittest.TestCase):
         apply_quote(self.book, p['id'], cost_quote(price='4'), NOW)
         result = evaluate(self.book, NOW)
         self.assertFalse(result['real_money_enabled'])
+        self.assertEqual(result['execution_target'], 'automatic')
+        self.assertFalse(result['per_trade_user_approval_required'])
+        self.assertFalse(result['automatic_live_executor_available'])
+        self.assertFalse(result['live_execution_ready'])
+        self.assertTrue(result['execution_blockers'])
         self.assertFalse(result['performance_ready_for_human_review'])
         self.assertFalse(result['checks']['seven_days_of_cost_aware_trial'])
 

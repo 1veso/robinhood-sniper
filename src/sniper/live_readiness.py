@@ -44,6 +44,10 @@ def evaluate(book, now, api_usage=()):
         'operational_errors_need_review': gaps == 0,
     }
     return {'real_money_enabled': False, 'automatic_promotion': False,
+        'execution_target': 'automatic', 'per_trade_user_approval_required': False,
+        'automatic_live_executor_available': False, 'live_execution_ready': False,
+        'execution_blockers': ['Restricted signing and transaction submission are not implemented',
+            'Unattended order recovery and receipt-to-ledger integration are not implemented or validated'],
         'performance_ready_for_human_review': all(checks.values()), 'checks': checks,
         'closed_cost_aware_positions': len(closed), 'realized_after_execution_costs_usd': str(pnl),
         'api_costs_usd': str(api_cost), 'net_including_open_positions_usd': str(net) if net is not None else None,
@@ -52,8 +56,9 @@ def evaluate(book, now, api_usage=()):
         'rent_capital_reserved_usd': str(reserve), 'additional_stress_cost_usd': str(shock),
         'policy_status': 'Draft review criteria, not a statistically established edge or live authorization',
         'execution_prerequisites': ['Fresh screened-pool buy and sell routes for exact quantities',
-            'Independent transaction instruction review and successful simulation',
+            'Independently reviewed automatic instruction validation and successful wallet-specific simulation',
             'Approved wallet, capital allocation, position limits and loss/kill-switch policy',
             'Reconciled finalized fills, fees, rent and any failed attempts',
-            'Explicit operator approval and wallet signature for the live handoff'],
+            'Validated restricted signer, durable submission/recovery and automatic receipt reconciliation',
+            'User-controlled live deployment under approved capital and risk limits; no routine per-trade approval'],
         'stress_definition': 'Additional 100 bps adverse execution per fill plus two extra network-fee equivalents; fixed observed trade path, not a full strategy replay'}

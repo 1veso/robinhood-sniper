@@ -129,6 +129,7 @@ def write_report(book, now):
     readiness = out['live_readiness']
     document += '<h2>Net performance and live preparation</h2><p>Net including open positions and API costs: $' + html.escape(str(readiness['net_including_open_positions_usd'])) + ' · After extra execution stress: $' + html.escape(str(readiness['net_after_extra_execution_stress_usd'])) + '</p>'
     document += '<p>Live trading: disabled. Performance ready for human review: ' + str(readiness['performance_ready_for_human_review']) + '. Rent is tracked as reserved capital, not a trading fee.</p>'
+    document += '<p>Required live workflow: automatic entries, exits and receipt reconciliation, without routine per-trade approval. The automatic live executor is not implemented; signing and submission remain disabled.</p>'
     document += '<p>' + html.escape(out['limitations']) + '</p><details><summary>Account, checks, runs and evidence</summary><pre>' + html.escape(json.dumps(out, indent=2)) + '</pre></details></html>'
     atomic(book.root / 'report.html', document)
     atomic(book.runtime / 'report.json', encode(out))
