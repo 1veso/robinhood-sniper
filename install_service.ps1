@@ -2,7 +2,7 @@
 param([string]$TaskName = 'SNIPER Paper Research')
 $ErrorActionPreference = 'Stop'
 $scriptPath = Join-Path $PSScriptRoot 'run_service.ps1'
-$pythonPath = (Get-Command python -CommandType Application).Source
+$pythonPath = (Get-Command python -CommandType Application | Select-Object -First 1).Source
 $runtimePath = Join-Path $PSScriptRoot 'runtime'
 New-Item -ItemType Directory -Path $runtimePath -Force | Out-Null
 Set-Content -LiteralPath (Join-Path $runtimePath 'python-path.txt') -Value $pythonPath
