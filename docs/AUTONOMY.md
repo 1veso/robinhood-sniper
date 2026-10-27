@@ -1,5 +1,9 @@
 # Local autonomous research service
 
+The separate [Telegram monitor](TELEGRAM.md) runs every two minutes under its own
+Windows task and journal. Its progress is in `runtime/telegram/status.json`.
+It does not wait for the longer paper/history cycle or alter its frozen rules.
+
 The corrected application is PAPER ONLY. `supervise.py` runs one paper cycle,
 then a bounded wallet-discovery/history cycle, and writes status and an HTML
 account report. `install_service.ps1` registers **SNIPER Paper Research** to run

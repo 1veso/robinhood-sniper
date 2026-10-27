@@ -1,5 +1,22 @@
 # Validation and scope
 
+## v0.1.3 Telegram monitor, 2026-10-27
+
+**194 offline tests passed on Python 3.12.10.** The installed Telegram token
+authenticated as the operator's expected bot, pairing selected the explicit
+private setup message, and Telegram acknowledged one labelled connection test.
+The local runtime stores its message ID; credentials and recipient identifiers
+are excluded from the repository. This confirms API acceptance, not human read
+receipt, and is not a real market signal.
+
+The offline suite covers complete discovery/receipt/safety/queue integration,
+RPC recovery, per-token deduplication across restarts, journal-loss protection,
+fresh controller evidence, bot/recipient pairing, confirmed Telegram backoff,
+ambiguous delivery and interrupted sends. Network clients are simulated in
+these tests; Telegram acceptance is separately recorded by the local pairing
+helper. No real market alert or profitable trade is implied by an offline pass.
+See [TELEGRAM.md](TELEGRAM.md) for configuration and limitations.
+
 ## v0.1.2 article integration, 2026-10-27
 
 **173 offline tests passed on Python 3.12.10.** New coverage verifies missing or

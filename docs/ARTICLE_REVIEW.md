@@ -1,5 +1,10 @@
 # Article review and integration — 2026-10-27
 
+Update: v0.1.3 subsequently added the separate two-minute
+[Telegram monitor and pairing helper](TELEGRAM.md). The v0.1.2 scope decisions
+below remain historical; Telegram delivery is now implemented and independently
+validated through a labelled connection test, with market evidence gates retained.
+
 The operator supplied the complete “Grok Bot from zero in one night” article
 and a linked ChatGPT adaptation review. The chat reader truncated each long
 message at 20,000 characters; the subsequently supplied 38 KB article supplied

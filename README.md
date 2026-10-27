@@ -5,7 +5,12 @@ Robinhood Chain events, checks supplied wallet and token evidence, models entrie
 and exits, and keeps a durable account ledger. Solana screening and optional Grok
 research annotation are included as separate adapters.
 
-This is version **0.1.2**: runnable software for testing the proposed strategy.
+This is version **0.1.3**: runnable software for testing the proposed strategy.
+
+The separate [two-minute Telegram monitor](docs/TELEGRAM.md) sends conditional
+research alerts after current safety checks and a corroborated reviewed-wallet
+purchase. It does not place orders or change the paper-entry rules. Telegram
+pairing, live-delivery status and required evidence remain explicit.
 No profitable edge or live execution performance has been established. The
 demonstration uses fabricated prices and wallets and is labeled accordingly.
 
