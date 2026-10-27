@@ -10,6 +10,21 @@ from sniper.adapters.evm import RpcError
 
 
 class ResearchIntegrationTests(unittest.TestCase):
+    def test_dense_discovery_interval_retries_without_skipping_blocks(self):
+        block_hash = "0x" + "ab" * 32
+        rpc = Mock()
+        rpc.call.side_effect = lambda method, params=None: (
+            hex(5000) if method == "eth_blockNumber" else {"number": params[0], "hash": block_hash})
+        cache = Mock(rpc=rpc)
+        cache.call.side_effect = [RpcError("RPC eth_getLogs returned error -32000"), []]
+        state, result = research.discover(cache, {"cursor": 100, "cursor_hash": block_hash})
+        intervals = [(int(c.args[1][0]["fromBlock"], 16), int(c.args[1][0]["toBlock"], 16))
+                     for c in cache.call.call_args_list]
+        self.assertEqual(intervals, [(101, 2100), (101, 1100)])
+        self.assertEqual(state["cursor"], 1100)
+        self.assertEqual(result["to_block"], 1100)
+        self.assertEqual(result["lag_blocks"], 4995 - 1100)
+
     def test_missing_archive_state_stops_before_spending_history_requests(self):
         with tempfile.TemporaryDirectory() as temporary:
             runtime = Path(temporary)

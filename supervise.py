@@ -169,7 +169,7 @@ def main(argv=None) -> int:
     parser.add_argument("--once", action="store_true")
     parser.add_argument("--account", default="observation-001")
     parser.add_argument("--interval", type=int, default=60)
-    parser.add_argument("--max-blocks", type=int, default=1000)
+    parser.add_argument("--max-blocks", type=int, default=3000)
     parser.add_argument("--timeout", type=int, default=180)
     args = parser.parse_args(argv)
     if not re.fullmatch(r"[a-zA-Z0-9_-]{1,60}", args.account):

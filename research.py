@@ -19,7 +19,7 @@ from sniper.wallet_analysis import analyse_wallet, cluster_controllers, apply_co
 from supervise import atomic_json, child_environment, instance_lock
 
 
-def discover(cache, state, *, blocks=1000, sample=12):
+def discover(cache, state, *, blocks=2000, sample=12):
     rpc = cache.rpc
     rpc.verify_chain()
     head = quantity(rpc.call("eth_blockNumber")) - 5
@@ -34,8 +34,18 @@ def discover(cache, state, *, blocks=1000, sample=12):
     if start > head:
         return state, {"new_candidates": 0, "sampled_transactions": 0}
     end = min(head, start + blocks - 1)
-    anchor = rpc.call("eth_getBlockByNumber", [hex(end), False])
-    logs = cache.call("eth_getLogs", [{"topics": [SWAP_TOPIC], "fromBlock": hex(start), "toBlock": hex(end)}], anchor=anchor["hash"])
+    while True:
+        anchor = rpc.call("eth_getBlockByNumber", [hex(end), False])
+        try:
+            logs = cache.call("eth_getLogs", [{"topics": [SWAP_TOPIC], "fromBlock": hex(start), "toBlock": hex(end)}], anchor=anchor["hash"])
+            break
+        except RpcError:
+            # Dense intervals can exceed the provider's event/response limit.
+            # Retry a smaller prefix; never advance over the unqueried suffix.
+            width = end - start + 1
+            if width <= 250:
+                raise
+            end = start + max(250, width // 2) - 1
     if not isinstance(logs, list):
         raise ValueError("Invalid discovery logs")
     swaps = [decode_swap(log) for log in logs]

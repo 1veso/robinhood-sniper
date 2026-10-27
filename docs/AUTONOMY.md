@@ -7,6 +7,8 @@ every minute under your signed-in Windows user. It uses a hidden process,
 ignores overlapping scheduler invocations, and also takes an OS file lock.
 It resumes persisted cursors after restarts. It does not run while this computer
 is asleep, powered off, or the user is signed out.
+Each paper cycle processes up to 3,000 blocks, in smaller RPC chunks, to catch
+up after outages even when a research cycle overlaps the next scheduled minute.
 
 ```powershell
 python supervise.py --once
@@ -82,7 +84,9 @@ disabled. If it recurs, inspect Windows certificate trust and endpoint access.
 
 Discovery reads the V3 Swap topic across the chain, rather than requiring a
 preexisting wallet list or only recently created pools. It samples up to 12
-successful transaction senders evenly across each contiguous 1,000-block interval.
+successful transaction senders evenly across each contiguous interval of up to
+2,000 blocks. Dense queries retry progressively smaller prefixes down to 250
+blocks; the cursor never skips the unprocessed suffix.
 Receipts corroborate the sampled events. The sample is a candidate-discovery
 mechanism, not a comprehensive market census or profitability ranking. The
 bounded discovery universe is saved and its lag is reported.
