@@ -63,12 +63,37 @@ def check_limits(quote, now):
 
 
 class Market:
-    def __init__(self, client=None, clock=time.time):
+    def __init__(self, client=None, clock=time.time, costs=False):
         self.client, self.clock = client or DexScreenerClient(timeout=15), clock
+        self.costs, self.native_cache = costs, None
+
+    def native_price(self):
+        now = int(self.clock())
+        if self.native_cache and 0 <= now - self.native_cache['sol_observed_at'] <= 20:
+            return dict(self.native_cache)
+        mint = 'So11111111111111111111111111111111111111112'
+        stable = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+        pairs = self.client.pairs(mint)
+        choices = []
+        for pair in pairs if isinstance(pairs, list) else []:
+            if (isinstance(pair, dict) and pair.get('chainId') == 'solana'
+                    and (pair.get('baseToken') or {}).get('address') == mint
+                    and (pair.get('quoteToken') or {}).get('address') == stable):
+                try:
+                    choices.append((number(pair['liquidity']['usd'], positive=True), number(pair['priceUsd'], positive=True)))
+                except (ValueError, KeyError, TypeError):
+                    continue
+        if not choices:
+            raise ValueError('SOL/USD valuation feed unavailable')
+        self.native_cache = {'sol_usd': str(max(choices)[1]), 'sol_observed_at': int(self.clock()), 'sol_price_source': 'DexScreener WSOL/USDC indicative USD'}
+        return dict(self.native_cache)
 
     def quote(self, mint, pool):
         payload = self.client.pairs(mint)
-        return parse(mint, pool, payload, int(self.clock()))
+        out = parse(mint, pool, payload, int(self.clock()))
+        if self.costs:
+            out.update(self.native_price())
+        return out
 
     def profiles(self):
         return self.client.profiles(limit=25)

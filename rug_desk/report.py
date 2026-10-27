@@ -17,6 +17,11 @@ from rug_desk.book import Book, atomic, day, encode, process_lock
 from sniper.telegram import AlertStore, TelegramClient
 
 
+def report_event_id(now):
+    local = datetime.fromtimestamp(now, ZoneInfo(config.TIMEZONE))
+    return ('daily:' + day(now) + ':21:30') if (local.hour, local.minute) >= (21, 30) else ('preview:' + day(now))
+
+
 def notify(book, *, runtime=None, client_factory=TelegramClient):
     runtime = Path(runtime) if runtime else config.PROJECT / 'runtime'
     token, recipient = runtime / 'telegram-bot-token.txt', runtime / 'telegram-recipient.json'
@@ -90,6 +95,7 @@ def summary(book, now):
             db.close()
     from rug_desk.grok import Judge
     paid = Judge(book.root).recurring_enabled()
+    from sniper.live_readiness import evaluate
     return {'identity': book.identity, 'generated_at': now, 'day': today, 'timezone': config.TIMEZONE,
         'trial_status': 'NOT_STARTED: preflight/X evidence required' if not (book.runtime / 'trial.json').exists() else json.loads((book.runtime / 'trial.json').read_text()),
         'paid_ai_enabled': paid, 'checks_today': len(daily_checks),
@@ -102,7 +108,8 @@ def summary(book, now):
         'closed_positions_today': len(closed), 'profitable_closed_positions_today': sum(Decimal(p['realized_pnl']) > 0 for p in closed),
         'profitable_exit_events_today': sum(f['kind'] == 'sell' and Decimal(f['pnl']) > 0 for f in daily),
         'schedules': schedules, 'api_usage': usage, 'recent_checks': checks[:50],
-        'execution_model': config.PAPER_FILL_MODEL,
+        'execution_model': book.model_label(), 'cost_policy': book.cost_policy(),
+        'live_readiness': evaluate(book, now, usage),
         'configuration_question': 'Does the 30% trailing distance retain gains after fees and delayed polls? Review recorded paths; no setting changed.',
         'limits_note': '$50 halt uses net realized Berlin-day P&L only; unrealized losses are excluded. Ten-minute stop checks are not exchange stop orders.',
         'limitations': 'Provider screens and X citations do not guarantee safety, independent controllers, executable orders or profit. This Solana account is separate from Robinhood results.'}
@@ -119,6 +126,9 @@ def write_report(book, now):
     document += '<style>body{font:16px system-ui;background:#101821;color:#ecf2f5;max-width:1100px;margin:40px auto;padding:24px}h1{font-size:32px}section{display:flex;gap:16px;flex-wrap:wrap}article{background:#20303f;padding:20px;min-width:180px;border-radius:12px}strong{display:block;font-size:28px;margin-top:8px}small{color:#bacbd8}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#172430;padding:20px}p{line-height:1.6}.status{color:#ffd394}</style>'
     document += f'<h1>{html.escape(title)}</h1><p class="status">{html.escape(status)}</p><section>{body}</section>'
     document += '<p>' + html.escape(out['execution_model'] + '. ' + out['limits_note']) + '</p>'
+    readiness = out['live_readiness']
+    document += '<h2>Net performance and live preparation</h2><p>Net including open positions and API costs: $' + html.escape(str(readiness['net_including_open_positions_usd'])) + ' · After extra execution stress: $' + html.escape(str(readiness['net_after_extra_execution_stress_usd'])) + '</p>'
+    document += '<p>Live trading: disabled. Performance ready for human review: ' + str(readiness['performance_ready_for_human_review']) + '. Rent is tracked as reserved capital, not a trading fee.</p>'
     document += '<p>' + html.escape(out['limitations']) + '</p><details><summary>Account, checks, runs and evidence</summary><pre>' + html.escape(json.dumps(out, indent=2)) + '</pre></details></html>'
     atomic(book.root / 'report.html', document)
     atomic(book.runtime / 'report.json', encode(out))
@@ -180,10 +190,10 @@ def main():
                 if args.setup_notice:
                     book.event('setup', now, 'RUG DESK — SOLANA PAPER SETUP\nSeparate ledger initialized. Watch: 10 minutes; scan: 30 minutes; daily report: 21:30 Europe/Berlin.\nPaid Grok/X calls remain disabled. Solana entries and its seven-day trial await funded X validation. Robinhood paper trial continues separately. No real-money trading.')
                 elif args.send:
-                    book.event('daily:' + out['day'], now,
+                    book.event(report_event_id(now), now,
                         f"RUG DESK {book.identity['mode'].upper()} — {out['day']} ({config.TIMEZONE})\nChecks: {out['checks_today']} | BUY signals: {out['buy_signals_today']} | Entries: {out['paper_entries_today']}\n"
                         f"Open: {len(out['open_positions'])} | Realized P&L: ${out['realized_pnl_today']}\nClosed positions: {out['closed_positions_today']} | Profitable closed: {out['profitable_closed_positions_today']}\n"
-                        f"Paid X enabled: {out['paid_ai_enabled']}\n{config.PAPER_FILL_MODEL}\n{out['configuration_question']}")
+                        f"Paid X enabled: {out['paid_ai_enabled']}\n{book.model_label()}\n{out['configuration_question']}")
                 if args.send:
                     run['notifications'] = notify(book)
                 run.update(day=out['day'], entries=out['paper_entries_today'], realized_pnl=out['realized_pnl_today'])

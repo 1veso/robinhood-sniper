@@ -47,6 +47,18 @@ def apply_quote(book, position_id, quote, now):
         p['peak'] = str(max(number(p['peak']), number(quote['price'])))
         p['last_observed_at'] = now
         p['feed_error'] = False
+        def mark_remaining():
+            if book.cost_policy() and number(p['remaining']) > 0:
+                from sniper.execution_costs import simulate
+                mark = simulate(book.cost_policy(), 'sell', quote, p['remaining'], now)
+                net = number(p['remaining']) * Decimal(mark['fill_price']) - Decimal(mark['explicit_fee_usd'])
+                p['net_liquidation_usd'] = str(net)
+                basis = number(p.get('remaining_cost_basis_usd', str(number(p['remaining']) * number(p['cost_per_unit']))))
+                p['unrealized_pnl'] = str(net - basis)
+                p['liquidation_cost_estimate'] = mark
+            elif number(p['remaining']) == 0:
+                p['net_liquidation_usd'], p['unrealized_pnl'] = '0', '0'
+        mark_remaining()
         decision = exit_decision(p, quote, now)
         if not decision:
             book._save(p)
@@ -66,12 +78,20 @@ def apply_quote(book, position_id, quote, now):
             return 'pending_manual_exit'
         if reason.startswith('take_profit_'):
             p['steps'] += 1  # Exactly one ladder step in this poll.
-        book._sell(p, quantity, number(quote['price'], positive=True), Decimal(0), now, reason, 'paper:' + uuid.uuid4().hex)
+        execution = None
+        price, fee = number(quote['price'], positive=True), Decimal(0)
+        if book.cost_policy():
+            from sniper.execution_costs import simulate
+            execution = simulate(book.cost_policy(), 'sell', quote, quantity, now)
+            price, fee = Decimal(execution['fill_price']), Decimal(execution['explicit_fee_usd'])
+        book._sell(p, quantity, price, fee, now, reason, 'paper:' + uuid.uuid4().hex, execution=execution)
+        mark_remaining()
+        book._save(p)
         return reason
 
 
 def watch(book, *, market=None, clock=time.time):
-    market = market or Market()
+    market = market or Market(costs=bool(book.cost_policy()))
     results = []
     for p in book.positions():
         try:

@@ -1,5 +1,7 @@
 # Solana RUG DESK
 
+**0.1.9 update:** the user subsequently authorized execution-cost accounting. The installed empty paper account now uses the versioned [cost-aware model and live-preparation tools](LIVE_PREPARATION.md). References below to the article's no-cost model describe the original 0.1.8 reproduction; current report labels come from the ledger's active policy. Trading thresholds and `config.py` remain unchanged.
+
 This optional desk implements the supplied Solana article in `rug_desk/`, with exactly its ten Python modules. It is separate from the Robinhood wallet-following accounts: different chain, signals, sizing, exits and cost assumptions. Combining their P&L would not measure either strategy.
 
 ## What changed from the previous integration

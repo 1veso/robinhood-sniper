@@ -152,6 +152,31 @@ class Book:
     def fills(self):
         return [json.loads(r[0]) for r in self.db.execute('SELECT payload FROM fills ORDER BY rowid')]
 
+    def cost_policy(self):
+        row = self.db.execute("SELECT value FROM metadata WHERE key='execution_cost_policy'").fetchone()
+        return json.loads(row[0]) if row else None
+
+    def enable_costs(self, now):
+        from sniper.execution_costs import DEFAULT_POLICY
+        with self.transaction():
+            existing = self.cost_policy()
+            if existing:
+                return existing
+            if self.identity['mode'] != 'paper' or self.fills() or (self.runtime / 'trial.json').exists():
+                raise ValueError('Cost model activation requires an empty paper account before its trial')
+            self.db.execute("INSERT INTO metadata VALUES ('execution_cost_policy',?)", (encode(DEFAULT_POLICY),))
+            self.db.execute("INSERT INTO metadata VALUES ('execution_costs_started_at',?)", (str(now),))
+            self._event('cost-model:' + DEFAULT_POLICY['model'], now,
+                'RUG DESK — COST-AWARE PAPER MODEL ENABLED\nPaper fills now include assumed DEX/platform fees, liquidity impact, adverse slippage and current-SOL-valued network costs. Rent is reserved separately.\nReports include open losses, API spending and additional execution-cost stress. These remain estimates, not real fills. Live signing/broadcasting stays disabled; the unfunded xAI gate is unchanged.')
+        atomic(self.runtime / 'execution-cost-policy.json', encode(DEFAULT_POLICY))
+        return dict(DEFAULT_POLICY)
+
+    def model_label(self):
+        if self.cost_policy():
+            from sniper.execution_costs import LABEL
+            return LABEL
+        return config.PAPER_FILL_MODEL
+
     def limits(self, mint, now):
         opened = self.positions()
         if any(p['mint'] == mint for p in opened):
@@ -198,7 +223,7 @@ class Book:
             f"RUG DESK {self.identity['mode'].upper()} {fill['kind'].upper()}\n"
             f"Mint: {fill['mint']}\nPool: {fill['pool']}\nQuantity: {fill['quantity']}\n"
             f"Price: ${fill['price']} | Realized P&L: ${fill['pnl']}\n{fill['reason']}\n"
-            + (config.PAPER_FILL_MODEL if self.identity['mode'] == 'paper' else 'User-confirmed fill; not independently verified on chain.'))
+            + (self.model_label() if self.identity['mode'] == 'paper' else 'User-confirmed fill; consult receipt evidence for chain verification.'))
 
     def open_paper(self, quote, judgment, now):
         if self.identity['mode'] != 'paper':
@@ -212,41 +237,64 @@ class Book:
                 or not Decimal(str(config.MIN_CONFIDENCE)) <= number(judgment.get('confidence')) <= 1
                 or judgment.get('validated') is not True):
             raise ValueError('Validated BUY required')
+        execution = None
+        if self.cost_policy():
+            from sniper.execution_costs import simulate
+            execution = simulate(self.cost_policy(), 'buy', quote, config.TICKET_USD, now)
         with self.transaction():
             failure = self.limits(quote['mint'], now)
             if failure:
                 raise ValueError(failure)
+            if execution:
+                return self._open({**quote, 'price': execution['fill_price']}, Decimal(execution['quantity']),
+                    Decimal(execution['explicit_fee_usd']), now, 'paper:' + uuid.uuid4().hex, judgment, execution=execution)
             return self._open(quote, config.TICKET_USD / number(quote['price'], positive=True),
                               Decimal(0), now, 'paper:' + uuid.uuid4().hex, judgment)
 
-    def _open(self, quote, quantity, fee, now, fill_id, judgment):
+    def _open(self, quote, quantity, fee, now, fill_id, judgment, execution=None):
         price = number(quote['price'], positive=True)
+        basis = (Decimal(execution.get('settlement_cash_usd', execution.get('reference_notional_usd')))
+                 if execution else price * quantity + fee)
         p = {'id': uuid.uuid4().hex, 'mint': quote['mint'], 'pool': quote['pool'],
              'opened_at': now, 'original': str(quantity), 'remaining': str(quantity),
              'entry_price': str(price), 'entry_liquidity': str(number(quote['liquidity'], positive=True)),
-             'cost_per_unit': str(price + fee / quantity), 'peak': str(price), 'steps': 0,
-             'realized_pnl': '0', 'pending': None, 'judgment': judgment}
+             'cost_per_unit': str(price if execution else price + fee / quantity), 'peak': str(price), 'steps': 0,
+             'remaining_cost_basis_usd': str(basis),
+             'realized_pnl': str(-fee) if execution else '0', 'pending': None, 'judgment': judgment,
+             'execution_model': execution['model'] if execution else 'legacy_or_manual',
+             'rent_balance_lamports': execution.get('rent_capital_change_lamports', 0) if execution else 0,
+             'rent_capital_reserved_usd': execution['rent_capital_reserved_usd'] if execution else '0'}
         self._save(p)
         self._fill({'id': fill_id, 'position_id': p['id'], 'mint': p['mint'], 'pool': p['pool'],
                     'kind': 'buy', 'at': now, 'quantity': str(quantity), 'price': str(price),
-                    'fee': str(fee), 'pnl': '0', 'reason': 'entry'})
+                    'fee': str(fee), 'pnl': str(-fee) if execution else '0', 'reason': 'entry', 'execution_costs': execution})
         return p
 
-    def _sell(self, p, qty, price, fee, now, reason, fill_id):
+    def _sell(self, p, qty, price, fee, now, reason, fill_id, execution=None):
         remaining = Decimal(p['remaining'])
         if qty > remaining or qty <= 0:
             raise ValueError('Sale exceeds holdings or is nonpositive')
-        pnl = qty * (price - Decimal(p['cost_per_unit'])) - fee
+        remaining_basis = Decimal(p.get('remaining_cost_basis_usd', str(remaining * Decimal(p['cost_per_unit']))))
+        allocated_basis = remaining_basis if qty == remaining else remaining_basis * qty / remaining
+        proceeds = Decimal(execution['settlement_cash_usd']) if execution and 'settlement_cash_usd' in execution else qty * price
+        pnl = proceeds - allocated_basis - fee
         p['remaining'] = str(remaining - qty)
+        p['remaining_cost_basis_usd'] = str(remaining_basis - allocated_basis)
         p['realized_pnl'] = str(Decimal(p['realized_pnl']) + pnl)
+        if execution and execution.get('model') == 'finalized_solana_receipt_v1':
+            rent_balance = p.get('rent_balance_lamports', 0) + execution['rent_capital_change_lamports']
+            if rent_balance < 0:
+                raise ValueError('Rent refund exceeds the position reserve; reconcile the other token accounts')
+            p['rent_balance_lamports'] = rent_balance
+            p['rent_capital_reserved_usd'] = str(Decimal(rent_balance) / 10**9 * Decimal(execution['valuation']['sol_usd']))
         if remaining == qty:
             p['closed_at'] = now
         self._save(p)
         self._fill({'id': fill_id, 'position_id': p['id'], 'mint': p['mint'], 'pool': p['pool'],
                     'kind': 'sell', 'at': now, 'quantity': str(qty), 'price': str(price),
-                    'fee': str(fee), 'pnl': str(pnl), 'reason': reason})
+                    'fee': str(fee), 'pnl': str(pnl), 'reason': reason, 'execution_costs': execution})
 
-    def confirmed_fill(self, fill_id, side, *, now, quantity, price, fee=0, position_id=None, quote=None):
+    def confirmed_fill(self, fill_id, side, *, now, quantity, price, fee=0, position_id=None, quote=None, execution=None):
         """Records facts supplied by the operator. Contains no signing/execution code."""
         if self.identity['mode'] != 'manual' or side not in ('buy', 'sell'):
             raise ValueError('Confirmed fills require a separate manual-record account')
@@ -261,11 +309,13 @@ class Book:
                     raise ValueError('Conflicting reuse of fill ID')
                 if (side == 'sell' and f['position_id'] != position_id) or (side == 'buy' and (not quote or (f['mint'], f['pool']) != (quote['mint'], quote['pool']))):
                     raise ValueError('Fill ID belongs to another position')
+                if f.get('execution_costs') != execution:
+                    raise ValueError('Conflicting execution-cost evidence for fill ID')
                 return f
             if side == 'buy':
                 if any(p['mint'] == quote['mint'] for p in self.positions()):
                     raise ValueError('Duplicate manual open; reconcile actual fills first')
-                return self._open({**quote, 'price': str(price)}, qty, fee, now, fill_id, {'manual_confirmation': True})
+                return self._open({**quote, 'price': str(price)}, qty, fee, now, fill_id, {'manual_confirmation': True}, execution=execution)
             row = self.db.execute('SELECT payload FROM positions WHERE id=?', (position_id,)).fetchone()
             if not row:
                 raise ValueError('Unknown position')
@@ -279,14 +329,29 @@ class Book:
                     if pending['reason'].startswith('take_profit_'):
                         p['steps'] = max(p['steps'], pending['step'] + 1)
                     p['pending'] = None
-            self._sell(p, qty, price, fee, now, pending['reason'] if pending else 'manual sale', fill_id)
+            self._sell(p, qty, price, fee, now, pending['reason'] if pending else 'manual sale', fill_id, execution=execution)
+
+    def confirmed_expense(self, expense_id, amount_usd, now, evidence):
+        if self.identity['mode'] != 'manual':
+            raise ValueError('Actual expenses require a separate manual account')
+        amount = number(amount_usd)
+        fill = {'id': expense_id, 'position_id': None, 'mint': 'native-network-fee', 'pool': '',
+            'kind': 'expense', 'at': now, 'quantity': '0', 'price': '0', 'fee': str(amount),
+            'pnl': str(-amount), 'reason': 'Finalized failed transaction fee; no swap fill', 'execution_costs': evidence}
+        with self.transaction():
+            old = self.db.execute('SELECT payload FROM fills WHERE id=?', (expense_id,)).fetchone()
+            if old:
+                if json.loads(old[0]) != fill:
+                    raise ValueError('Conflicting expense ID')
+                return
+            self._fill(fill)
 
     def export(self):
         # Serializes exporters, preventing a late stale snapshot replacing a newer view.
         with self.transaction():
             atomic(self.root / config.POSITIONS, encode({'identity': self.identity, 'positions': self.positions()}))
             for name, rows, fields in (
-                (config.TRADES, self.fills(), ['id', 'position_id', 'mint', 'pool', 'kind', 'at', 'quantity', 'price', 'fee', 'pnl', 'reason']),
+                (config.TRADES, [{**f, 'execution_costs': encode(f.get('execution_costs'))} for f in self.fills()], ['id', 'position_id', 'mint', 'pool', 'kind', 'at', 'quantity', 'price', 'fee', 'pnl', 'reason', 'execution_costs']),
                 (config.LOG, [dict(r) for r in self.db.execute('SELECT * FROM checks ORDER BY at,mint')], ['mint', 'at', 'stage', 'verdict', 'reason', 'payload'])):
                 buffer = io.StringIO(newline='')
                 writer = csv.DictWriter(buffer, fieldnames=fields, extrasaction='ignore')
@@ -318,6 +383,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=config.ROOT)
     parser.add_argument('--initialize', action='store_true')
+    parser.add_argument('--enable-costs', action='store_true', help='Activate the cost scenario on an empty paper account')
     parser.add_argument('--manual-records', action='store_true')
     parser.add_argument('--confirm-fill', type=Path, help='JSON of an actual fill; bookkeeping only')
     args = parser.parse_args()
@@ -325,6 +391,8 @@ def main():
         parser.error('Manual records require a different --root; never reuse the paper account')
     book = Book(args.root, initialize=args.initialize, mode='manual' if args.manual_records else 'paper')
     try:
+        if args.enable_costs:
+            book.enable_costs(int(time.time()))
         if args.confirm_fill:
             book.confirmed_fill(**json.loads(args.confirm_fill.read_text(encoding='utf-8')))
         book.export()

@@ -10,7 +10,7 @@ from rug_desk.market import Market
 
 
 def scan(book, *, market=None, **dependencies):
-    market = market or Market()
+    market = market or Market(costs=bool(book.cost_policy()))
     results = []
     for mint in market.profiles():
         if book.checked(mint):

@@ -18,7 +18,7 @@ def check(book, mint, *, market=None, rugcheck=None, judge=None, clock=time.time
     now = int(clock())
     if not book.claim(mint, now):
         return {'mint': mint, 'stage': 'seen_once', 'verdict': 'SKIP', 'reason': 'Mint was already checked', 'entry': False}
-    market, rugcheck, judge = market or Market(), rugcheck or Rugcheck(), judge or Judge(book.root)
+    market, rugcheck, judge = market or Market(costs=bool(book.cost_policy())), rugcheck or Rugcheck(), judge or Judge(book.root)
     result = {'mint': mint, 'stage': 'limits', 'verdict': 'SKIP', 'entry': False}
     try:
         reason = book.limits(mint, now)
