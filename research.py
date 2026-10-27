@@ -215,7 +215,7 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
                 atomic_json(progress_path, {"active_wallet": wallet, "last_attempt_at": int(time.time()),
                                             "consecutive_batches": batches})
                 try:
-                    history = reconstruct_wallet(cache, wallet, snapshot)
+                    history = reconstruct_wallet(cache, wallet, snapshot, eligibility_only=True)
                 except CoverageExceeded:
                     # This is a recorded rejection, never a truncated profitable
                     # history. Move on instead of retrying this candidate forever.
@@ -250,6 +250,8 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
                              "history": urlsplit(rpc.url).hostname},
                "discovery": discovery, "candidate_count": len(candidates), "history_reports": len(reports),
                "imported_observed_buyers": imported,
+               "complete_history_count": sum(r.get('history_complete') is True for r in reports),
+               "unsupported_history_rejections": sum(r.get('assessment') == 'REJECTED_UNSUPPORTED_HISTORY' for r in reports),
                "performance_qualified_count": len(shortlist), "approved_wallet_count": len(selected),
                "pending": pending, "snapshot": snapshot, "shortlist": shortlist,
                "history_progress": {"requests_this_cycle": cache.max_calls - cache.remaining,

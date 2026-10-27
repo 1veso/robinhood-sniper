@@ -60,6 +60,20 @@ class FakeHistory:
 
 
 class WalletHistoryTests(unittest.TestCase):
+    def test_unsupported_history_can_reject_eligibility_without_inventing_partial_pnl(self):
+        class Unsupported(FakeHistory):
+            def call(self, method, params, *, anchor):
+                if method == 'eth_call' and params[0]['data'].startswith('0x1698ee82'):
+                    return '0x' + word(0)
+                return super().call(method, params, anchor=anchor)
+        snapshot = {'block': 105, 'timestamp': NOW, 'hash': bh(105), 'start_block': 100}
+        history = reconstruct_wallet(Unsupported(), WALLET, snapshot, eligibility_only=True)
+        self.assertEqual(history['assessment'], 'REJECTED_UNSUPPORTED_HISTORY')
+        self.assertFalse(history['complete'])
+        self.assertEqual(history['records'], [])
+        self.assertEqual(history['transactions_reconciled_before_rejection'], 1)
+        self.assertFalse(analyse_wallet(history)['performance_qualified'])
+
     def test_checkpoint_resumes_without_replaying_completed_receipts(self):
         snapshot = {"block": 105, "timestamp": NOW, "hash": bh(105), "start_block": 100}
         first_hash = min(TX_SWAP, TX_SELL)

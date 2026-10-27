@@ -31,6 +31,46 @@ def exploratory_candidate(**kwargs):
                    safety=replace(c.safety, checks={k: None for k in c.safety.checks}))
 
 
+class CollectorCadenceTests(unittest.TestCase):
+    def collect_interval(self, tip):
+        from unittest.mock import Mock
+        from sniper.adapters.evm import CHAIN_ID
+        from test_evm import bh
+        store = EvmStore(':memory:')
+        try:
+            store.commit_chunk(CHAIN_ID, [], [], {'number': 100, 'hash': bh(100)}, expected_cursor=None)
+            rpc = Mock(batch_enabled=False)
+            requests = []
+            def call(method, params=None):
+                if method == 'eth_blockNumber':
+                    return hex(tip+5)
+                if method == 'eth_getLogs':
+                    requests.append(params[0])
+                    return []
+                raise AssertionError(method)
+            rpc.call.side_effect = call
+            source = ExploratorySource(rpc, store, Mock())
+            source.collector._recover_reorg = lambda: None
+            source.collector.block = lambda n: {'number': n, 'hash': bh(n), 'parent_hash': bh(n-1), 'timestamp': NOW}
+            return source.collect(), requests
+        finally:
+            store.close()
+
+    def test_normal_two_minute_interval_has_no_artificial_gap(self):
+        result, requests = self.collect_interval(1300)
+        self.assertEqual(result['from_block'], 101)
+        self.assertEqual(result['blocks_scanned'], 1200)
+        self.assertEqual(result['skipped_blocks'], 0)
+        self.assertEqual(len(requests), 3)
+        self.assertTrue(all(int(q['toBlock'],16)-int(q['fromBlock'],16)<500 for q in requests))
+
+    def test_extended_downtime_remains_bounded_and_disclosed(self):
+        result, requests = self.collect_interval(4100)
+        self.assertEqual(result['blocks_scanned'], 3000)
+        self.assertEqual(result['skipped_blocks'], 1000)
+        self.assertEqual(len(requests), 6)
+
+
 class ExplorationEngineTests(unittest.TestCase):
     def setUp(self):
         self.ledger = Ledger(':memory:', D(1000))

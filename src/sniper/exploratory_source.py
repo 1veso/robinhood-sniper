@@ -95,8 +95,11 @@ class ExploratorySource:
         tip = quantity(self.rpc.call('eth_blockNumber')) - 5
         if cursor and tip <= cursor['block_number']:
             return {'sampled': 0, 'reorg': reorg}
-        # On recovery from downtime, record the skipped interval explicitly.
-        start = max(0, tip - 999, cursor['block_number'] + 1 if cursor else 0)
+        # At ~10 blocks/second a two-minute worker advances ~1200 blocks.
+        # A 1000-block window dropped observations even during normal operation.
+        # Cover up to five minutes of cadence/startup delay; retain the same
+        # bounded transaction sample and disclose longer downtime gaps.
+        start = max(0, tip - 2999, cursor['block_number'] + 1 if cursor else 0)
         anchor = self.collector.block(tip)
         logs = []
         for first in range(start, tip + 1, 500):
@@ -153,6 +156,7 @@ class ExploratorySource:
         return {'from_block': start, 'through_block': tip, 'logs_seen': len(logs), 'sampled': len(selected),
                 'sampled_transactions': len({s['tx_hash'] for s in selected}), 'global_sampled_transactions': len(seen),
                 'focused_pool_signals': focused,
+                'blocks_scanned': tip - start + 1, 'max_scan_blocks': 3000,
                 'coverage': 'bounded hash sample plus bounded candidate-pool follow-up; not all chain activity', 'reorg': reorg,
                 'skipped_blocks': max(0, start - cursor['block_number'] - 1) if cursor else 0}
 

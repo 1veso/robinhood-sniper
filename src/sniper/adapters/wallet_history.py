@@ -191,15 +191,15 @@ def verified_pool(cache: ResearchCache, pool: str, block: int, anchor: str) -> d
     return {"pool": pool, "token0": t0, "token1": t1, "fee": fee}
 
 
-def reconstruct_wallet(cache: ResearchCache, wallet: str, snapshot: dict) -> dict:
+def reconstruct_wallet(cache: ResearchCache, wallet: str, snapshot: dict, *, eligibility_only=False) -> dict:
     progress = HistoryProgress(getattr(cache, "root", None), address(wallet), snapshot)
     try:
-        return _reconstruct_wallet(cache, wallet, snapshot, progress)
+        return _reconstruct_wallet(cache, wallet, snapshot, progress, eligibility_only=eligibility_only)
     finally:
         progress.close()
 
 
-def _reconstruct_wallet(cache, wallet, snapshot, progress):
+def _reconstruct_wallet(cache, wallet, snapshot, progress, *, eligibility_only=False):
     """Reconcile every indexed tx/transfer in a frozen 30-day window against RPC.
 
     Unsupported routes, unknown opening basis, missing historical prices, and
@@ -265,6 +265,19 @@ def _reconstruct_wallet(cache, wallet, snapshot, progress):
         funders.update(part["funders"])
         counterparties.update(part["counterparties"])
         outgoing += part["mine"]
+        unsupported = [g for g in part['gaps'] if g.startswith(('unsupported_swap_route:',
+                       'unsupported_token_transaction:', 'native_value_transaction_needs_trace_review:'))]
+        if eligibility_only and unsupported:
+            # One proven unsupported transaction already prevents qualification.
+            # Do not spend hours producing partial P&L for a rejected candidate.
+            # Preserve raw/derived evidence for later full-scope research.
+            return {'wallet': wallet, 'cutoff': cutoff, 'from_block': start, 'to_block': end,
+                    'complete': False, 'gaps': unsupported, 'records': [], 'is_eoa': code == '0x',
+                    'controller_coverage_complete': False, 'assessment': 'REJECTED_UNSUPPORTED_HISTORY',
+                    'transactions_reconciled_before_rejection': index + 1,
+                    'indexed_transactions': len(hashes),
+                    'source': 'Early eligibility rejection from corroborated receipt; no performance estimate',
+                    'coverage': 'Partial receipt assessment; cached evidence retained; no P&L conclusion'}
     cache.checkpoint_progress = {"stage": "balances", "completed": len(hashes), "total": len(hashes)}
     # Reconcile the index's token rows with actual receipt logs, then reconcile
     # net flows against boundary balanceOf values to expose omitted transfers.

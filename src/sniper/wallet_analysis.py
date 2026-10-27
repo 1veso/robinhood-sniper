@@ -133,6 +133,8 @@ def analyse_wallet(history: dict, *, follower_cost_bps: str = "100") -> dict:
     if recent_net - open_basis < 0:
         blockers.append("negative_last_week_after_open_inventory_stress")
     return {"wallet": wallet, "cutoff": cutoff, "performance_qualified": not blockers,
+            "assessment": history.get('assessment', 'COMPLETE_HISTORY' if history.get('complete') is True else 'INCOMPLETE_HISTORY'),
+            "performance_estimate_available": history.get('complete') is True,
             "qualified": False, "qualification_blockers": sorted(set(blockers)),
             "history_complete": history.get("complete") is True,
             "closed_positions": len(closed), "win_rate": str(win_rate),
