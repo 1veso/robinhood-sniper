@@ -26,3 +26,5 @@ rug_desk/trades.csv
 rug_desk/checks.csv
 rug_desk/report.html
 BUILD_CONTRACT.md
+.playwright-cli/
+output/playwright/

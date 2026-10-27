@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>RUG DESK · Observation console</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#workspace">Skip to account</a>
+<header class="topbar">
+  <a class="brand" href="/" aria-label="RUG DESK home"><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M3 21V7h9l4 7-4 7H3m13-14h9v14h-9M7 11v6m13-6v6"/></svg><b>RUG<span>DESK</span></b></a>
+  <span class="top-divider"></span><span class="top-label">Observation console</span>
+  <div class="top-spacer"></div><span class="mode">PAPER</span><span id="connection" class="connection">Connecting…</span><time id="clock">—</time>
+</header>
+<div class="shell">
+<aside class="rail" aria-label="Bot navigation">
+  <div class="rail-title">Your bots <span>02</span></div>
+  <button class="bot-button selected" data-bot="robinhood" aria-pressed="true"><span class="bot-icon">R</span><span><strong>Wallet follower</strong><small>Robinhood Chain</small></span><i class="dot" aria-hidden="true"></i></button>
+  <button class="bot-button" data-bot="solana" aria-pressed="false"><span class="bot-icon sol">S</span><span><strong>RUG DESK</strong><small>Solana · setup</small></span><i class="dot amber" aria-hidden="true"></i></button>
+  <div class="rail-rule"></div><p class="rail-caption">One account per bot.<br>Performance stays separate.</p>
+  <div class="rail-bottom"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6l-8-3Zm-4 9 3 3 5-6"/></svg><strong>Observation only</strong><p>Automatic paper trading.<br>Real money is disabled.</p><span id="version">LOCAL CONSOLE</span></div>
+</aside>
+<main id="workspace" tabindex="-1">
+  <div id="offline" class="alert error" role="alert" hidden></div>
+  <div class="workspace-title"><div><h1 id="account-title">Wallet follower</h1><div class="subtitle"><span id="chain">Robinhood Chain · 4663</span><span class="separator">/</span><span id="account-id">Reading account…</span></div></div><div class="trial"><strong id="trial-state">Loading trial</strong><span id="trial-deadline">Original account · original deadline</span></div></div>
+  <div class="context-line"><span id="strategy-note">Reading the active strategy…</span><span class="context-status" id="worker-freshness">—</span></div>
+  <section class="account-strip" aria-label="Account summary" id="metrics"><div class="metric"><span>Equity</span><strong>—</strong><small>Reading persistent ledger</small></div></section>
+  <div id="notice" class="notice">Live market observations · simulated fills · no wallet transactions</div>
+  <div class="market-grid">
+    <section class="panel chart-panel" aria-label="Market observations">
+      <div class="panel-heading chart-heading"><div class="instrument"><label class="sr-only" for="asset-select">Traded coin</label><select id="asset-select"><option>Loading coins…</option></select><span id="instrument-state" class="tag">—</span></div><div class="chart-modes" aria-label="Chart time range"><button data-range="3600" aria-pressed="false">1H</button><button data-range="21600" aria-pressed="true" class="active">6H</button><button data-range="86400" aria-pressed="false">24H</button><button data-range="0" aria-pressed="false">ALL</button></div></div>
+      <div class="quote-row"><strong id="quote-price">—</strong><span id="quote-change">Select a recorded asset</span><span class="quote-age" id="quote-age">—</span></div>
+      <div class="chart-toolbar"><span id="chart-source">Recorded pool observations</span><label><input id="ema-toggle" type="checkbox" checked> EMA 9 / 21</label><label><input id="levels-toggle" type="checkbox"> Exit levels</label></div>
+      <div class="canvas-wrap"><canvas id="price-chart" aria-label="Observed price chart. Exact quote and indicators are available in the adjacent text." role="img"></canvas><div id="chart-empty" class="chart-empty">Loading recorded market history…</div><div id="chart-tip" class="chart-tip" hidden></div></div>
+      <div class="ta-strip" id="ta"><span>RSI 14 <b>—</b></span><span>EMA 9 <b>—</b></span><span>EMA 21 <b>—</b></span><span>Samples <b>—</b></span></div>
+      <div class="chart-foot"><span>TA uses 5-minute sampled closes; it does not change entry rules. Gaps are unfilled.</span><span class="legend"><i class="entry"></i>Entry <i class="partial"></i>Partial <i class="exit"></i>Close</span></div>
+    </section>
+    <aside class="panel strategy-panel" aria-label="Strategy and trial health">
+      <div class="panel-heading"><h2>Strategy guardrails</h2><span class="tag">ACTIVE POLICY</span></div><div id="guardrails" class="guardrails"></div>
+      <div class="section-divider"></div><h3>Trial performance</h3><div class="equity-label"><span>Equity · recorded valuations</span><b id="trial-return">—</b></div><canvas id="equity-chart" role="img" aria-label="Recorded trial equity history"></canvas><div id="trial-detail" class="muted compact">Waiting for account history</div>
+      <div class="section-divider"></div><div class="health-mini" id="health-mini"></div>
+    </aside>
+  </div>
+  <section class="panel ledger-panel" aria-label="Trading activity">
+    <div class="ledger-toolbar"><div class="tabs" role="tablist" aria-label="Account views"><button role="tab" id="tab-positions" aria-controls="activity" data-tab="positions" aria-selected="true">Open positions <span id="open-count">—</span></button><button role="tab" id="tab-fills" aria-controls="activity" data-tab="fills" aria-selected="false">Trade history <span id="fill-count">—</span></button><button role="tab" id="tab-decisions" aria-controls="activity" data-tab="decisions" aria-selected="false">Decision stream</button><button role="tab" id="tab-health" aria-controls="activity" data-tab="health" aria-selected="false">System health</button></div><label class="filter-label"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg><input id="filter" type="search" placeholder="Filter coin or reason" aria-label="Filter activity"></label></div>
+    <div id="activity" role="tabpanel" aria-labelledby="tab-positions" tabindex="0"><div class="empty">Reading the persistent account ledger…</div></div>
+  </section>
+  <section class="detail-grid"><div class="panel detail-panel"><div class="panel-heading"><h2>Selected coin · evidence</h2><span id="evidence-state" class="tag">UNKNOWN</span></div><div id="evidence"></div></div><div class="panel detail-panel"><div class="panel-heading"><h2>What the bot is rejecting</h2><span class="tag">ACCOUNT TO DATE</span></div><div id="rejections"></div></div></section>
+  <footer><span id="footer-id">RUG DESK · local read-only console</span><span>View refreshes every 5s · worker and quote timestamps shown separately</span></footer>
+</main></div>
+</body></html>

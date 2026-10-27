@@ -1,0 +1,10 @@
+{
+  "source": "console/style.css",
+  "surface": "console/index.html",
+  "mode": "operate",
+  "focus": {"outline": "2px solid #8cdeb3", "outlineOffset": "3px"},
+  "motion": {"duration": "150ms", "timing": "ease-out", "reducedMotion": "no transitions"},
+  "breakpoints": [760, 1000, 1200, 1650],
+  "depth": "tonal surfaces and 1px borders; no shadows",
+  "direction": "User-requested trading observation console; real data, account isolation, dense tables and charts"
+}

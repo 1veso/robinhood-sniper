@@ -5,9 +5,11 @@ Robinhood Chain events, checks supplied wallet and token evidence, models entrie
 and exits, and keeps a durable account ledger. Solana screening and optional Grok
 research annotation are included as separate adapters.
 
-This is version **0.1.9**: runnable software for testing the proposed strategy.
+This is version **0.1.13**: runnable software for testing the proposed strategy.
 
-The separate [Solana RUG DESK](docs/RUG_DESK.md) implements the article's ten-module paper desk, pinned-pool checks, transactional book, manual-fill recording, and independent Windows schedules. Its paid Grok/X entry gate is disabled until funded validation and operator authorization. It does not replace the Robinhood paper account.
+The [RUG DESK observation console](docs/CONSOLE.md) shows the existing paper account at **http://127.0.0.1:8765/**: positions, cost-aware P&L, recorded pool charts, paper fills, safety evidence and worker/Telegram health. Run `python console_server.py` from the installed project, or install its Windows task with `scripts/install-console.ps1`. It refreshes the view every five seconds, exposes no trading controls and keeps the Solana account separate.
+
+The separate [Solana RUG DESK](docs/RUG_DESK.md) implements the article's ten-module paper desk, pinned-pool checks, transactional book and independent Windows schedules. Its paid Grok/X entry gate is disabled until funded validation and operator authorization. It does not replace the Robinhood paper account. Legacy manual-fill bookkeeping is isolated; the intended live workflow is [automatic execution](docs/AUTOMATED_EXECUTION.md), which remains unimplemented.
 
 [Execution costs and live preparation](docs/LIVE_PREPARATION.md) add a versioned cost-aware paper model, net-performance review, unsigned quote/simulation preparation, and finalized actual-fill/fee reconciliation. No signing, broadcasting or automatic promotion to real money is implemented.
 
