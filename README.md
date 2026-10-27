@@ -5,7 +5,9 @@ Robinhood Chain events, checks supplied wallet and token evidence, models entrie
 and exits, and keeps a durable account ledger. Solana screening and optional Grok
 research annotation are included as separate adapters.
 
-This is version **0.1.7**: runnable software for testing the proposed strategy.
+This is version **0.1.8**: runnable software for testing the proposed strategy.
+
+The separate [Solana RUG DESK](docs/RUG_DESK.md) implements the article's ten-module paper desk, pinned-pool checks, transactional book, manual-fill recording, and independent Windows schedules. Its paid Grok/X entry gate is disabled until funded validation and operator authorization. It does not replace the Robinhood paper account.
 
 The [pipeline validation guide](docs/PIPELINE_VALIDATION.md) covers resumable wallet
 history, supplemental safety evidence, and the isolated live-quote entry/exit test

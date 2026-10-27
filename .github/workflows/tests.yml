@@ -14,6 +14,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install optional Solana desk environment
+        run: python -m pip install -r rug_desk/requirements.txt
       - name: Offline unit and integration checks
         run: python run_tests.py
       - name: Synthetic end-to-end acceptance scenario

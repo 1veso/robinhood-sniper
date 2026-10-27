@@ -177,13 +177,16 @@ def run_cycle(runtime: Path, account: str, max_blocks: int, timeout: int) -> dic
             status["wallet_research"] = json.loads(redact(research.stdout, env))
         except (subprocess.TimeoutExpired, ValueError):
             status["wallet_research"] = {"status": "PENDING", "reason": "Research will retry next cycle"}
-        try:
-            solana = subprocess.run([sys.executable, str(ROOT / "solana_research.py")],
-                                    cwd=ROOT, env=env, capture_output=True,
-                                    text=True, encoding="utf-8", timeout=55)
-            status["solana_research"] = json.loads(redact(solana.stdout, env))
-        except (subprocess.TimeoutExpired, ValueError):
-            status["solana_research"] = {"status": "PENDING", "reason": "Screening status unavailable; see runtime/solana evidence journal"}
+        if (runtime / "rug-desk-managed.json").exists():
+            status["solana_research"] = {"status": "INDEPENDENT_DESK", "report": "rug_desk/report.html"}
+        else:
+            try:
+                solana = subprocess.run([sys.executable, str(ROOT / "solana_research.py")],
+                                        cwd=ROOT, env=env, capture_output=True,
+                                        text=True, encoding="utf-8", timeout=55)
+                status["solana_research"] = json.loads(redact(solana.stdout, env))
+            except (subprocess.TimeoutExpired, ValueError):
+                status["solana_research"] = {"status": "PENDING", "reason": "Screening status unavailable; see runtime/solana evidence journal"}
     status["finished_at"] = int(time.time())
     status["updated_at_utc"] = datetime.now(timezone.utc).isoformat()
     atomic_json(runtime / "status.json", status)
