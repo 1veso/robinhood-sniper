@@ -8,13 +8,18 @@ from .adapters.goplus import flag
 from .models import SafetyEvidence
 
 
-EXTRA_SIGNALS = ('is_airdrop_scam', 'gas_abuse', 'anti_whale_modifiable', 'is_anti_whale')
+EXTRA_SIGNALS = ('is_airdrop_scam', 'gas_abuse', 'anti_whale_modifiable')
 
 
 def enhance_rug_screen(screen):
     raw = screen.details.get('raw_report')
     available = isinstance(raw, dict) and bool(raw) and screen.source.startswith('goplus')
-    checks = {**screen.checks, 'rug_screen_available': available}
+    # A fixed transaction/holding limit is not itself evidence of malicious
+    # control. Preserve it as a warning; modifiable limits remain blocking.
+    # Also correct that earlier classification in cached reports, while keeping
+    # their original raw reports and historical decisions unchanged.
+    checks = {k:v for k,v in screen.checks.items() if k != 'rug:is_anti_whale'}
+    checks['rug_screen_available'] = available
     if available:
         for name in EXTRA_SIGNALS:
             checks['rug:'+name] = flag(raw, name)
@@ -26,5 +31,6 @@ def enhance_rug_screen(screen):
             'status': 'REJECT' if any(v is False for v in checks.values()) else 'INCOMPLETE' if any(v is None for v in checks.values()) else 'NO_DETECTED_FLAGS',
             'failed_checks': [k for k,v in checks.items() if v is False],
             'unknown_checks': [k for k,v in checks.items() if v is None],
+            'warnings': ['Token has transaction or holding limits; route-size checks remain required'] if available and raw.get('is_anti_whale') == '1' else [],
             'provider': 'GoPlus Token Security / Robinhood 4663',
             'limitations': 'Provider screening plus separately recorded chain and route checks. Unknown liquidity withdrawal control and deployer history are not a safety pass. No guarantee against a rug pull.'}})

@@ -185,6 +185,18 @@ class RevisionTests(unittest.TestCase):
             self.assertEqual(engine.consider(exploratory_candidate(),quote(),NOW)['reason'],'safety_unknown:rug_screen_available')
         finally: ledger.close()
 
+    def test_fixed_size_limits_warn_while_modifiable_limits_and_actual_failures_reject(self):
+        raw={'is_anti_whale':'1','anti_whale_modifiable':'0'}
+        screen=SafetyEvidence('token',NOW,{'rug:is_anti_whale':False,'liquidity_controls':None},
+            'goplus:4663:token_security',{'raw_report':raw})
+        revised=enhance_rug_screen(screen)
+        self.assertNotIn('rug:is_anti_whale',revised.checks)
+        self.assertTrue(revised.details['rug_screen']['warnings'])
+        self.assertEqual(revised.details['rug_screen']['status'],'INCOMPLETE')
+        raw['anti_whale_modifiable']='1'
+        self.assertFalse(enhance_rug_screen(screen).checks['rug:anti_whale_modifiable'])
+        self.assertFalse(enhance_rug_screen(replace(screen,checks={'sellability':False})).checks['sellability'])
+
 
 class WorkerQuorumTests(unittest.TestCase):
     def exercise(self, outage):

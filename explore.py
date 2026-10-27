@@ -254,6 +254,8 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                     if remembered:
                         safety = SafetyEvidence.from_dict(json.loads(remembered))
                         reconciled = observed_pool_screen(safety, proof)
+                        if book:
+                            reconciled = enhance_rug_screen(reconciled)
                         if any(v is False for v in reconciled.checks.values()):
                             source.finish(swap, {'reason': 'previously_failed_safety', 'checks': safety.checks})
                             continue
