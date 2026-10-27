@@ -312,10 +312,13 @@ class TrialTests(unittest.TestCase):
 
     def test_complete_live_data_path_fill_restart_exit_and_week_cutoff(self):
         tick = [NOW]
+        collectors, routes = [], []
+        (self.folder.parent/'observation-rpc-url.txt').write_text('https://collector.invalid')
+        (self.folder.parent/'quote-rpc-url.txt').write_text('https://quotes.invalid/v2/private-fixture')
         asset = 'eip155:4663/erc20:' + TOKEN
         swap = {**decode_swap(swap_log()), 'observed_at': NOW}
         class Source:
-            def __init__(self, *args): pass
+            def __init__(self, rpc, *args): collectors.append(rpc.url)
             def collect(self): return {'sampled': 1}
             def pending(self): return [swap]
             def finish(self, *args): pass
@@ -327,7 +330,7 @@ class TrialTests(unittest.TestCase):
             def quote(self, *args, **kwargs): return quote(asset=asset, now=tick[0], pool_id=POOL)
         class Route:
             last_evidence = {'scope': 'synthetic offline test only'}
-            def __init__(self, *args): pass
+            def __init__(self, rpc, *args): routes.append(rpc.url)
             def quote(self, *args, **kwargs): return quote(asset=asset, now=tick[0], pool_id=POOL)
         with patch.object(worker.time, 'time', side_effect=lambda: tick[0]), patch.object(worker, 'ExploratorySource', Source), \
              patch.object(worker, 'DexScreenerClient', Market), patch.object(worker, 'V3RouteClient', Route), \
@@ -344,3 +347,5 @@ class TrialTests(unittest.TestCase):
             self.assertEqual(len(last['fills']), 2)
             self.assertEqual(last['snapshot']['closed_positions'], 1)
             self.assertEqual(last['total_monitoring_gaps'], 1)
+            self.assertEqual(set(collectors), {'https://collector.invalid'})
+            self.assertEqual(set(routes), {'https://quotes.invalid/v2/private-fixture'})

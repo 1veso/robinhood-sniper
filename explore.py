@@ -178,10 +178,12 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
               'rug_screens': [], 'real_money_enabled': False, 'strict_strategy_result': False}
     endpoint_file = runtime / 'observation-rpc-url.txt'
     endpoint = endpoint_file.read_text(encoding='utf-8-sig').strip() if endpoint_file.exists() else DEFAULT_RPC
+    quote_endpoint_file = runtime / 'quote-rpc-url.txt'
+    quote_endpoint = quote_endpoint_file.read_text(encoding='utf-8-sig').strip() if quote_endpoint_file.exists() else endpoint
     def error(exc):
-        return (type(exc).__name__ + ': ' + str(exc).replace(endpoint, '[RPC]'))[:400]
+        return (type(exc).__name__ + ': ' + str(exc).replace(quote_endpoint, '[QUOTE RPC]').replace(endpoint, '[RPC]'))[:400]
     def route(token, pool, quantity=Decimal(0)):
-        client = V3RouteClient(RpcClient(endpoint, timeout=8, max_retries=1), DexScreenerClient(chain_id='robinhood'))
+        client = V3RouteClient(RpcClient(quote_endpoint, timeout=8, max_retries=1), DexScreenerClient(chain_id='robinhood'))
         quote = client.quote(token, pool, max_notional=policy.ticket_usd, sell_quantity=quantity)
         return quote, client.last_evidence
     def watch():

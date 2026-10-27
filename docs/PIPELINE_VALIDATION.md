@@ -91,3 +91,11 @@ read the message ([Bot API](https://core.telegram.org/bots/api#sendmessage)).
 
 This notification change does not alter strategy settings, start a new account,
 reset the week, add synthetic fills, or unlock the separate paid Solana X gate.
+
+Position quotes may use `runtime/quote-rpc-url.txt` (added in 0.1.11), while log
+collection retains `runtime/observation-rpc-url.txt`. Before selecting a second
+provider, verify chain ID, genesis and a recent shared canonical block, then
+test size-bounded routes for existing holdings. Keep both URL files private.
+Without a separate quote file, the original single-provider behavior remains.
+This allows a fast existing RPC app to serve quotes without sending broad log
+queries that its plan rejects. It does not relax quote freshness or safety.
