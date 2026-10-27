@@ -128,3 +128,116 @@ class ConsoleTests(unittest.TestCase):
 
     def test_public_bind_is_refused(self):
         with self.assertRaises(ValueError):make_server(self.root,host='0.0.0.0')
+
+    def wallet_exports(self):
+        folder = self.root / 'runtime/research'
+        (folder / 'addresses').mkdir(parents=True)
+        wallet = '0x' + '1' * 40
+        summary = {'wallet':wallet,'research_candidate':True,'evidence_count':203,
+            'current_source_checked_observations':201,'capture_only_observations':1,
+            'invalidated_observations':1,'roles':{'funded_recipient':202,'transaction_sender':1},
+            'evidence_status':'indexed_observations','qualified':False,'history_complete':False,
+            'performance_qualified':False,'first_observed_at':NOW,'last_observed_at':NOW+2,
+            'json_path':'PRIVATE_FILE_SENTINEL','private_key':'PRIVATE_KEY_SENTINEL'}
+        index = {'schema_version':1,'mode':'RESEARCH_ONLY','generated_at':NOW+3,
+            'address_count':1,'candidate_count':1,'observation_count':203,
+            'source_checked_observations':201,'capture_only_observations':1,
+            'invalidated_observations':1,'qualified_count':0,'addresses':[summary],
+            'csv_file':'PRIVATE_FILE_SENTINEL','rpc_url':'PRIVATE_ENDPOINT_SENTINEL'}
+        observation = {'wallet':wallet,'role':'funded_recipient','tx_hash':'0x'+'2'*64,
+            'block_number':123,'observed_at':NOW,'pool':'0x'+'3'*40,'token':'0x'+'4'*40,
+            'canonical':True,'canonical_scope':'source_journal_current','raw_evidence_available':True,
+            'canonical_checked_at':NOW+1,'quote_address':'0x'+'5'*40,'amount_raw':'1000000',
+            'spent_raw':'25000000','spent_usd':'25','transaction_sender':'0x'+'6'*40,
+            'base_payers':['0x'+'7'*40],
+            'source_proof_scope':'funded pool buy and net recipient acquisition; funding ownership unestablished',
+            'source_spend_basis':'pool base input, not proven personal wallet expenditure',
+            'proof_digest':'a'*64,'receipt':{'private':'PRIVATE_RAW_SENTINEL'}}
+        detail = {'schema_version':1,'mode':'RESEARCH_ONLY','generated_at':NOW+3,**summary,
+            'history':{'history_complete':False,'qualified':False,'assessment':'NOT_ASSESSED',
+                'net_pnl_after_follower_stress_usd':None,'qualification_blockers':['history_incomplete'],
+                'controller_review_current':False,'qualification_checked_at':NOW+3,
+                'history_path':'PRIVATE_HISTORY_SENTINEL'},
+            'observations':[observation]*202+[dict(observation,spent_usd=None,spent_raw=None,amount_raw=None)],
+            'raw_proof_location':'PRIVATE_RAW_LOCATION'}
+        (folder / 'wallet-evidence-index.json').write_text(json.dumps(index),encoding='utf-8')
+        (folder / 'addresses' / (wallet+'.json')).write_text(json.dumps(detail),encoding='utf-8')
+        (folder / 'wallet-evidence.csv').write_text('wallet,role\n'+wallet+',funded_recipient\n',encoding='utf-8')
+        return wallet, folder
+
+    def test_discovery_index_exposes_only_public_evidence_and_saved_qualification(self):
+        self.wallet_exports()
+        before = self.ledger.conn.total_changes
+        result = self.data.wallets()
+        self.assertTrue(result['available'])
+        self.assertEqual(result['candidate_count'],1)
+        self.assertEqual(result['source_checked_observations'],201)
+        self.assertEqual(result['capture_only_observations'],1)
+        self.assertFalse(result['addresses'][0]['qualified'])
+        self.assertFalse(result['addresses'][0]['history_complete'])
+        self.assertEqual(result['addresses'][0]['roles']['funded_recipient'],202)
+        self.assertNotIn('PRIVATE_',json.dumps(result))
+        self.assertEqual(before,self.ledger.conn.total_changes)
+
+    def test_address_detail_is_bounded_and_does_not_expose_raw_proofs_or_paths(self):
+        wallet,_ = self.wallet_exports()
+        result = self.data.wallet_evidence(wallet)
+        self.assertEqual(result['wallet'],wallet)
+        self.assertEqual(result['evidence_count'],203)
+        self.assertEqual(result['shown_observations'],200)
+        self.assertEqual(len(result['observations']),200)
+        self.assertEqual(result['observations'][0]['token'],'0x'+'4'*40)
+        self.assertEqual(result['observations'][0]['canonical_scope'],'source_journal_current')
+        self.assertEqual(result['observations'][0]['canonical_checked_at'],NOW+1)
+        self.assertIsNone(result['observations'][0]['spent_usd'])
+        self.assertIsNone(result['observations'][0]['spent_raw'])
+        self.assertIsNone(result['observations'][0]['amount_raw'])
+        proof=result['observations'][1]
+        self.assertEqual(proof['quote_address'],'0x'+'5'*40)
+        self.assertEqual(proof['amount_raw'],'1000000')
+        self.assertEqual(proof['spent_raw'],'25000000')
+        self.assertEqual(proof['spent_usd'],'25')
+        self.assertEqual(proof['transaction_sender'],'0x'+'6'*40)
+        self.assertEqual(proof['base_payers'],['0x'+'7'*40])
+        self.assertIn('ownership unestablished',proof['source_proof_scope'])
+        self.assertEqual(proof['source_spend_basis'],'pool base input, not proven personal wallet expenditure')
+        self.assertIsNone(result['history']['net_pnl_after_follower_stress_usd'])
+        self.assertNotIn('PRIVATE_',json.dumps(result))
+
+    def test_missing_export_is_unavailable_and_address_identity_fails_closed(self):
+        self.assertFalse(self.data.wallets()['available'])
+        self.assertFalse((self.root/'runtime/research').exists())
+        wallet,folder = self.wallet_exports()
+        for invalid in ('../rpc-url','0x1234',wallet+'.json','0x'+'g'*40):
+            with self.assertRaises(ValueError):self.data.wallet_evidence(invalid)
+        path = folder/'addresses'/(wallet+'.json')
+        item=json.loads(path.read_text());item['wallet']='0x'+'2'*40
+        path.write_text(json.dumps(item))
+        with self.assertRaises(ValueError):self.data.wallet_evidence(wallet)
+
+    def test_wallet_http_routes_allow_only_fixed_public_exports(self):
+        wallet,_ = self.wallet_exports()
+        private=self.root/'runtime/rpc-url.txt';private.write_text('PRIVATE_ENDPOINT_SENTINEL')
+        server=make_server(self.root,port=0)
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        def get(path,headers=None):
+            c=http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=5)
+            try:
+                c.request('GET',path,headers=headers or {});r=c.getresponse();return r.status,r.read(),dict(r.getheaders())
+            finally:c.close()
+        try:
+            code,body,headers=get('/api/wallets')
+            self.assertEqual(code,200);self.assertNotIn(b'PRIVATE_',body)
+            code,body,headers=get('/api/wallet-evidence?wallet='+wallet+'&download=1')
+            self.assertEqual(code,200);self.assertNotIn(b'PRIVATE_',body)
+            self.assertEqual(headers['Content-Disposition'],'attachment; filename="'+wallet+'.json"')
+            code,body,headers=get('/api/wallet-export.csv?path=runtime/rpc-url.txt')
+            self.assertEqual(code,200);self.assertIn(wallet.encode(),body)
+            self.assertNotIn(b'PRIVATE_',body)
+            self.assertEqual(headers['Content-Disposition'],'attachment; filename="wallet-evidence.csv"')
+            self.assertEqual(get('/api/wallet-evidence?wallet=..%2Frpc-url')[0],409)
+            self.assertEqual(get('/api/wallets',{'Origin':'https://foreign.example'})[0],403)
+            self.assertEqual(get('/runtime/research/wallet-evidence-index.json')[0],404)
+            self.assertEqual(get('/api/wallet-evidence?wallet='+wallet,{'Sec-Fetch-Site':'cross-site'})[0],403)
+        finally:
+            server.shutdown();server.server_close();thread.join(5)

@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import subprocess
 import threading
@@ -50,6 +51,18 @@ def selected(value, keys):
 
 def read_json(path):
     return json.loads(path.read_text(encoding='utf-8-sig'))
+
+
+def bounded_json(path, maximum=16_000_000):
+    if path.stat().st_size > maximum:
+        raise ValueError('Evidence export exceeds console read limit')
+    return read_json(path)
+
+
+def public_wallet(value):
+    if not isinstance(value, str) or not re.fullmatch(r'0x[0-9a-fA-F]{40}', value):
+        raise ValueError('Invalid public address')
+    return value.lower()
 
 
 def rows(connection, sql, params=()):
@@ -230,6 +243,63 @@ class ConsoleData:
                 'fill_count': fill_count, 'setup_blocked': True, 'blocker': 'Grok / X gate is unfunded and disabled. The Solana trial has not started.' if not fill_count and not open_count else 'Solana ledger activity requires a position adapter; this view does not value those holdings.',
                 'fill_model': report.get('execution_model'), 'paid_ai_enabled': report.get('paid_ai_enabled', False)}
 
+    def wallets(self):
+        """Public generated evidence only; unrelated runtime files are never exposed."""
+        def load():
+            path = self.root / 'runtime/research/wallet-evidence-index.json'
+            if not path.exists():
+                return {'available': False, 'addresses': [], 'generated_at': None}
+            index = bounded_json(path)
+            if index.get('schema_version') != 1 or index.get('mode') != 'RESEARCH_ONLY':
+                raise ValueError('Unknown evidence export format')
+            addresses = []
+            for item in index['addresses'][:10000]:
+                wallet = public_wallet(item['wallet'])
+                row = selected(item, ('research_candidate','evidence_count','current_source_checked_observations',
+                    'capture_only_observations','invalidated_observations','evidence_status','observed_recipient',
+                    'qualified','history_complete','performance_qualified','first_observed_at','last_observed_at'))
+                row['wallet'] = wallet
+                row['roles'] = selected(item.get('roles', {}), ('funded_recipient','transaction_sender','base_payer'))
+                addresses.append(row)
+            return {'available': True, **selected(index, ('generated_at','address_count','candidate_count',
+                'observation_count','source_checked_observations','capture_only_observations',
+                'invalidated_observations','legacy_reference_only_count','qualified_count')),
+                'addresses': addresses, 'row_limit': 10000,
+                'displayed_address_count': len(addresses)}
+        return self.cached('wallets', 5, load)
+
+    def wallet_evidence(self, wallet):
+        wallet = public_wallet(wallet)
+        path = self.root / 'runtime/research/addresses' / (wallet + '.json')
+        item = bounded_json(path)
+        if item.get('schema_version') != 1 or item.get('mode') != 'RESEARCH_ONLY':
+            raise ValueError('Unknown address export format')
+        if public_wallet(item['wallet']) != wallet:
+            raise ValueError('Address evidence identity mismatch')
+        history = selected(item.get('history', {}), ('assessment','history_complete','performance_qualified',
+            'performance_estimate_available','net_pnl_after_follower_stress_usd','gas_usd','closed_positions',
+            'qualification_blockers','controller_status','independence_verified','qualified',
+            'cutoff','controller_review_current','qualification_checked_at'))
+        fields = ('source_id','chain_id','wallet','role','tx_hash','log_index','block_number','block_hash',
+            'observed_at','pool','token','canonical','canonical_scope','canonical_checked_at',
+            'proof_scope','proof_digest','raw_evidence_available','qualification','controller_independence',
+            'funding_ownership','quote_address','amount_raw','spent_raw','spent_usd',
+            'transaction_sender','base_payers','source_proof_scope','source_spend_basis')
+        # The exporter orders each address chronologically; keep recent proof visible.
+        observations = [selected(row, fields) for row in item.get('observations', [])[-200:][::-1]]
+        return {'wallet': wallet, **selected(item, ('generated_at','evidence_status','evidence_count',
+            'current_source_checked_observations','capture_only_observations','invalidated_observations',
+            'first_observed_at','last_observed_at','research_candidate','qualified')),
+            'history': history, 'observations': observations, 'observation_limit': 200,
+            'shown_observations': len(observations),
+            'scope': 'Public address evidence; qualification is the saved assessment at export time, not a trading authorization'}
+
+    def wallet_csv(self):
+        path = self.root / 'runtime/research/wallet-evidence.csv'
+        if path.stat().st_size > 64_000_000:
+            raise ValueError('CSV exceeds console download limit')
+        return path.read_bytes()
+
     def chart(self, bot, asset, pool):
         if bot != 'robinhood' or not asset or not pool or len(asset) > 160 or len(pool) > 100:
             raise ValueError('Unknown chart')
@@ -266,13 +336,15 @@ def make_server(root, host='127.0.0.1', port=8765):
         def log_message(self, *_args):
             pass  # Never log request strings or local account information.
 
-        def send(self, status, body, content_type='application/json; charset=utf-8'):
+        def send(self, status, body, content_type='application/json; charset=utf-8', filename=None):
             self.send_response(status)
             self.send_header('Content-Type', content_type)
             self.send_header('Content-Length', str(len(body)))
             self.send_header('Cache-Control', 'no-store')
             self.send_header('X-Content-Type-Options', 'nosniff')
             self.send_header('Referrer-Policy', 'no-referrer')
+            if filename:
+                self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
             self.send_header('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
             self.end_headers()
             self.wfile.write(body)
@@ -294,6 +366,13 @@ def make_server(root, host='127.0.0.1', port=8765):
                     self.send(200, json_text(data.state(params.get('bot', ['robinhood'])[0])).encode())
                 elif url.path == '/api/chart':
                     self.send(200, json_text(data.chart(params.get('bot', ['robinhood'])[0], params.get('asset', [''])[0], params.get('pool', [''])[0])).encode())
+                elif url.path == '/api/wallets':
+                    self.send(200, json_text(data.wallets()).encode())
+                elif url.path == '/api/wallet-evidence':
+                    evidence = data.wallet_evidence(params.get('wallet', [''])[0])
+                    self.send(200, json_text(evidence).encode(), filename=(evidence['wallet']+'.json') if params.get('download') == ['1'] else None)
+                elif url.path == '/api/wallet-export.csv':
+                    self.send(200, data.wallet_csv(), 'text/csv; charset=utf-8', 'wallet-evidence.csv')
                 elif url.path == '/api/health':
                     self.send(200, json_text({'service':'RUG DESK Console','version':__version__,'read_only':True,'at':int(time.time())}).encode())
                 else:

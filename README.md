@@ -5,7 +5,7 @@ Robinhood Chain events, checks supplied wallet and token evidence, models entrie
 and exits, and keeps a durable account ledger. Solana screening and optional Grok
 research annotation are included as separate adapters.
 
-This is version **0.1.13**: runnable software for testing the proposed strategy.
+This is version **0.1.14**: runnable software for testing the proposed strategy.
 
 The [RUG DESK observation console](docs/CONSOLE.md) shows the existing paper account at **http://127.0.0.1:8765/**: positions, cost-aware P&L, recorded pool charts, paper fills, safety evidence and worker/Telegram health. Run `python console_server.py` from the installed project, or install its Windows task with `scripts/install-console.ps1`. It refreshes the view every five seconds, exposes no trading controls and keeps the Solana account separate.
 
@@ -34,6 +34,8 @@ The Windows service, automatic wallet discovery, receipt-checked historical
 accounting and controller-link screening are documented in
 [Autonomous research operations](docs/AUTONOMY.md). This update also fixes the
 Windows SQLite constructor leak and the Robinhood DEX Screener chain identifier.
+
+[Automatic wallet discovery and address evidence](docs/WALLET_DISCOVERY.md) describes the durable candidate journal, role-aware proofs, per-address JSON/CSV and aggregate CSV/JSONL exports. `python research.py --export-only` refreshes available local evidence without network calls. Discovery alone never qualifies a wallet or changes the active trading policy.
 
 The [article review and integration](docs/ARTICLE_REVIEW.md) records the next
 improvements: existing-account protection, exit checks before collection, a

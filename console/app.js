@@ -15,6 +15,7 @@ const pretty = v => String(v ?? 'unknown').replace(/[_:]/g,' ');
 const html = (id, content) => {if($(id).innerHTML !== content) $(id).innerHTML=content;};
 let bot='robinhood', state=null, chart=null, selectedAsset='', tab='positions', range=21600, query='', generation=0, loading=false, chartKey='', error=false;
 let plot=null;
+let wallets=null, walletError=false, walletLoading=false, selectedWallet='', walletDetail=null, walletDetailError=false, walletDetailRequest=0, walletDetailLoading='';
 
 async function fetchJSON(path){const response=await fetch(path,{cache:'no-store',signal:AbortSignal.timeout(18000)});const data=await response.json();if(!response.ok)throw new Error(data.error||'Console connection interrupted');return data;}
 async function refresh(){
@@ -24,7 +25,7 @@ async function refresh(){
     if(token!==generation)return;
     state=next;error=false;$('offline').hidden=true;
     if(!state.assets.some(a=>a.asset_id===selectedAsset))selectedAsset=(state.assets.find(a=>a.state==='open')||state.assets[0]||{}).asset_id||'';
-    render();await loadChart(token);
+    render();await Promise.all([loadChart(token),tab==='wallets'?loadWallets(token):Promise.resolve()]);
   }catch(e){if(token===generation){error=true;$('offline').textContent='Data connection interrupted. '+e.message+' Last displayed values are retained; they are not current. Automatic retry every 5 seconds.';$('offline').hidden=false;}}
   finally{loading=false;freshness();}
 }
@@ -39,6 +40,28 @@ async function loadChart(token=generation){
     if(token!==generation||selectedAsset!==a.asset_id)return;
     chart=next;chartKey=key;drawChart();
   }catch(e){if(token===generation){chart=null;$('quote-price').textContent='—';$('quote-change').textContent='History unavailable';$('quote-age').textContent='Quote unavailable';html('ta','<span>Indicators unavailable until history reconnects</span>');$('chart-empty').hidden=false;$('chart-empty').textContent='Price history unavailable. The account ledger remains visible; retrying.';$('chart-source').textContent='History request failed';clearCanvas($('price-chart'));}}
+}
+async function loadWallets(token=generation){
+  if(bot!=='robinhood'||walletLoading)return;
+  walletLoading=true;
+  try{
+    const next=await fetchJSON('/api/wallets');
+    if(token!==generation)return;
+    wallets=next;walletError=false;
+    if(selectedWallet&&walletDetailLoading!==selectedWallet&&walletDetail?.generated_at!==next.generated_at)loadWalletDetail(selectedWallet,token);
+  }catch(e){if(token===generation)walletError=true;}
+  finally{if(token===generation){walletLoading=false;if(tab==='wallets')renderActivity();}}
+}
+async function loadWalletDetail(wallet,token=generation){
+  const request=++walletDetailRequest;walletDetailLoading=wallet;
+  selectedWallet=wallet;walletDetail=null;walletDetailError=false;
+  if(tab==='wallets')renderActivity();
+  try{
+    const next=await fetchJSON('/api/wallet-evidence?'+new URLSearchParams({wallet}));
+    if(token!==generation||wallet!==selectedWallet||request!==walletDetailRequest)return;
+    walletDetail=next;
+  }catch(e){if(token===generation&&wallet===selectedWallet&&request===walletDetailRequest)walletDetailError=true;}
+  finally{if(token===generation&&request===walletDetailRequest){walletDetailLoading='';if(tab==='wallets')renderActivity();}}
 }
 function metric(label,value,detail,cls=''){return `<div class="metric"><span>${esc(label)}</span><strong class="${cls}">${value}</strong><small>${detail}</small></div>`;}
 function key(label,value,cls=''){return `<div class="key-row"><span>${esc(label)}</span><b class="${cls}">${value}</b></div>`;}
@@ -89,6 +112,7 @@ function coin(symbol,asset){return `<button class="coin-button" data-asset="${es
 function renderActivity(){
   if(!state)return;
   $('filter').disabled=tab==='health';
+  $('filter').placeholder=tab==='wallets'?'Filter address or role':'Filter coin or reason';
   $('activity').setAttribute('aria-labelledby','tab-'+tab);
   const s=state.snapshot;
   if(tab==='positions'){
@@ -101,12 +125,41 @@ function renderActivity(){
   }else if(tab==='decisions'){
     const decisions=state.decisions.filter(matches);
     html('activity',decisions.length?table(['Coin','Time · Berlin','Decision','Reason','Observed buyers','Pool liquidity','Policy / stage'],decisions.map(d=>`<tr><td>${coin(d.symbol,d.asset_id)}</td><td>${stamp(d.observed_at)}</td><td class="${['BUY','PAPER_BUY'].includes(d.verdict)?'positive':'warning'}">${esc(d.verdict)}</td><td>${esc(pretty(d.reason))}</td><td class="num">${d.buyers??'—'}</td><td class="num">${usd(d.liquidity_usd)}</td><td class="muted">${esc(d.stage||d.policy_version||'—')}</td></tr>`).join(''),'Latest 80 decisions. Buyer count reflects observed recipients; distinct addresses do not establish independent controllers or profitable wallets.'):'<div class="empty">No decisions match this view.</div>');
+  }else if(tab==='wallets'){
+    renderWallets();
   }else{
     const jobs=state.jobs.items.filter(j=>j.name==='RUG DESK Console'||(bot==='robinhood'?j.name.startsWith('SNIPER'):j.name.startsWith('RUG DESK')));
     const jobsHtml=state.jobs.available?jobs.map(j=>`<div class="job"><span>${esc(j.name)}<small>Last trigger ${esc(new Date(j.last_run).toLocaleTimeString('en-GB',{timeZone:'Europe/Berlin'}))}</small></span><span class="${j.state==='Running'?'muted':j.last_result===0?'positive':'warning'}">${esc(j.state)}<small>Result ${j.last_result===0?'0 · success':j.last_result===267009?'running':esc(j.last_result)}</small></span></div>`).join(''):'<p class="warning compact">Windows job status unavailable. Application completion evidence remains below.</p>';
     const cycle=state.status.finished_at&&state.status.started_at?state.status.finished_at-state.status.started_at:null;
     html('activity',`<div class="health-grid"><section><h3>Windows runner</h3>${jobsHtml}<p class="compact muted">Triggers may be skipped while a previous cycle runs. Application finish times show actual completion.</p></section><section><h3>Data & delivery</h3>${key('Last application completion',stamp(state.status.finished_at,true))}${cycle!==null?key('Last cycle duration',cycle+' seconds'):''}${key('Trade / setup queue',ack(state.notifications.trades))}${key('Latest acknowledged message',state.notifications.trades?.last_ack?'#'+state.notifications.trades.last_ack.message_id:'—')}${state.notifications.market?key('Market queue',ack(state.notifications.market)):''}${state.collector?key('Collector lag',finite(state.collector.collector_lag_blocks)?number(state.collector.collector_lag_blocks,0)+' blocks':'Unknown'):''}${key('Monitoring gaps',String(state.gaps.length),state.gaps.length?'warning':'')}${state.research?key('Wallets / qualified',`${state.research.candidate_count??'—'} / ${state.research.approved_wallet_count??'—'}`):''}<p class="compact muted">Telegram acknowledgements mean the Telegram API accepted the message; they are not read receipts. ${state.gaps.length?'Historical gaps remain in the ledger; conservative equity dips during missing marks are not realized sales.':''}</p><p class="compact warning">Automatic live signing, submission and recovery are not implemented. This console cannot enable real money.</p></section></div>${state.policy_revisions?.length?'<div class="activity-note">Policy history: '+state.policy_revisions.map(r=>stamp(r.at,true)+' · '+esc(r.before)+' → '+esc(r.after)).join('; ')+'. Earlier entries retain their original policy. Trial deadline and account are unchanged.</div>':''}${state.gaps.length?table(['Recorded gap · Berlin','Resumed · Berlin','Duration'],state.gaps.map(g=>`<tr><td>${stamp(g.from,true)}</td><td>${stamp(g.to,true)}</td><td>${number(g.seconds/60,1)} min</td></tr>`).join('')):''}`);
   }
+}
+function renderWallets(){
+  if(bot!=='robinhood'){html('activity','<div class="empty">Wallet discovery belongs to the Robinhood wallet follower. Select that bot to inspect its observed recipients and research evidence. The Solana account remains separate.</div>');return;}
+  if(!wallets){html('activity',`<div class="empty">${walletError?'Wallet evidence could not be read. Retrying every 5 seconds.':'Reading the saved wallet evidence index…'}</div>`);return;}
+  if(!wallets.available){html('activity','<div class="empty">No wallet evidence export is available yet. The research worker must publish its first index; this is not evidence of zero candidates. Retrying every 5 seconds.</div>');return;}
+  const stale=!wallets.generated_at||Date.now()/1000-wallets.generated_at>3600;
+  const roleNames={funded_recipient:'Recipient',transaction_sender:'Tx sender',base_payer:'Payer'};
+  const roles=w=>Object.entries(w.roles||{}).filter(([,v])=>v>0).map(([k,v])=>`${roleNames[k]||pretty(k)} ${v}`).join(' · ')||'Legacy reference only';
+  const filtered=wallets.addresses.filter(w=>!query||(query==='qualified'?w.qualified===true:query==='unqualified'?w.qualified!==true:[w.wallet,roles(w),w.research_candidate?'candidate':'evidence only',w.history_complete?'history complete':'history incomplete'].join(' ').toLowerCase().includes(query))).sort((a,b)=>Number(b.research_candidate)-Number(a.research_candidate)||(b.last_observed_at||0)-(a.last_observed_at||0)||a.wallet.localeCompare(b.wallet));
+  const shown=filtered.slice(0,200);
+  const summary=`<div class="wallet-summary"><div><strong>${number(wallets.candidate_count,0)} research candidates</strong><span>${number(wallets.address_count,0)} indexed addresses · ${number(wallets.qualified_count,0)} qualified at export</span></div><a href="/api/wallet-export.csv" download="wallet-evidence.csv">Download evidence CSV</a></div><div class="activity-note ${walletError||stale?'warning':''}">${walletError?'Index refresh failed. Last saved values retained. ':''}Export ${stamp(wallets.generated_at,true)} · ${age(wallets.generated_at)} old${stale?' · over one hour old':''}. ${number(wallets.source_checked_observations,0)} source-checked observations · ${number(wallets.capture_only_observations,0)} checked at capture only · ${number(wallets.invalidated_observations,0)} invalidated.</div>`;
+  const body=shown.map(w=>`<tr class="${selectedWallet===w.wallet?'chosen':''}"><td><button class="wallet-link num" data-wallet="${esc(w.wallet)}" title="Inspect ${esc(w.wallet)}" aria-expanded="${selectedWallet===w.wallet}">${esc(short(w.wallet))}</button><span class="sub">${w.research_candidate?'Research candidate':'Evidence-only address'}</span></td><td>${esc(roles(w))}</td><td class="num">${number(w.current_source_checked_observations,0)}<span class="sub">${number(w.capture_only_observations,0)} capture only${w.invalidated_observations?' · '+number(w.invalidated_observations,0)+' invalidated':''}</span></td><td class="${w.history_complete?'':'muted'}">${w.history_complete?'Complete':'Incomplete / pending'}<span class="sub">${w.performance_qualified?'Performance threshold met':'Performance unestablished'}</span></td><td class="${w.qualified?'positive':'warning'}">${w.qualified?'Qualified at export':'Unqualified'}</td><td>${stamp(w.last_observed_at,true)}<span class="sub">${w.last_observed_at?age(w.last_observed_at)+' ago':'No indexed observations'}</span></td></tr>`).join('');
+  html('activity',summary+walletDetailHTML()+(body?table(['Public address','Observed roles','Source checked','Trading history','Qualification','Last observed · Berlin'],body,`Showing ${shown.length} of ${filtered.length} matching addresses${filtered.length>200?' · narrow the filter to find more':''}. ${wallets.address_count>wallets.displayed_address_count?'The console index is capped at '+number(wallets.row_limit,0)+' addresses; CSV contains the exported evidence. ':''}Roles do not establish ownership, profitable skill or independent control. Source-checked means the last reconciliation with the local canonical journal; capture-only evidence is not a current canonical check.`):'<div class="empty">No addresses match this filter.</div>'));
+}
+function walletDetailHTML(){
+  if(!selectedWallet)return '';
+  const head=`<div class="wallet-detail-heading"><h3>Address evidence</h3><button data-wallet-close aria-label="Close address evidence">Close</button></div><div class="wallet-address num">${esc(selectedWallet)}</div>`;
+  if(!walletDetail)return `<section class="wallet-detail">${head}<p class="compact ${walletDetailError?'warning':'muted'}">${walletDetailError?'Address evidence could not be read. It will retry with the next index refresh.':'Reading address observations…'}</p></section>`;
+  const d=walletDetail,h=d.history||{},observations=d.observations||[];
+  const facts=key('History assessment',esc(pretty(h.assessment)))+key('History complete',h.history_complete===true?'Yes':'No')+key('Performance after follower stress',h.history_complete&&h.performance_estimate_available?signed(h.net_pnl_after_follower_stress_usd):(h.history_complete?'Unavailable · unverified performance or costs':'Unavailable · incomplete history'))+key('Recorded historical gas',h.history_complete?usd(h.gas_usd):'Unknown')+key('Closed historical positions',h.history_complete?number(h.closed_positions,0):'Unknown')+key('Controller status',esc(pretty(h.controller_status)))+key('Controller review current at export',h.controller_review_current===true?'Yes':'No')+key('Qualification at export',h.qualified===true?'Qualified':'Unqualified',h.qualified?'positive':'warning');
+  const rows=observations.map(o=>{
+    const checked=o.canonical_checked_at,old=!checked||Date.now()/1000-checked>3600;
+    const scope=o.canonical===false?'Invalidated':o.canonical===true&&o.canonical_scope==='source_journal_current'?'Local journal check':o.canonical===true&&o.canonical_scope==='rpc_verified_at_capture_only'?'RPC at capture':'Unknown';
+    const spendBasis=o.source_spend_basis==='verified direct wallet expenditure'?'Verified direct wallet spend':o.source_spend_basis==='pool base input, not proven personal wallet expenditure'?'Pool input · ownership unproven':'Spend basis unestablished';
+    return `<tr><td><span title="${esc(o.tx_hash)}" class="num">${esc(short(o.tx_hash))}</span><span class="sub">log ${esc(o.log_index)}</span></td><td>${esc(pretty(o.role))}</td><td>${stamp(o.observed_at,true)}</td><td class="num">${number(o.block_number,0)}</td><td class="${o.canonical===false?'warning':''}">${scope}<span class="sub ${old?'warning':''}">${checked?'As of '+stamp(checked,true)+' · '+age(checked)+' old':'Check time unknown'}</span></td><td class="num">${finite(o.spent_usd)?usd(o.spent_usd):'Unknown'}<span class="sub">${spendBasis}</span></td><td title="${esc(o.pool)}" class="num">${esc(short(o.pool))}</td><td>${o.raw_evidence_available===true?'Indexed':'Unavailable'}</td></tr>`;
+  }).join('');
+  return `<section class="wallet-detail">${head}<div class="wallet-detail-facts">${facts}</div><p class="compact warning">${(h.qualification_blockers||[]).map(v=>esc(pretty(v))).join(' · ')||'No saved qualification blockers.'}</p><p class="compact muted">Assessment exported ${stamp(d.generated_at,true)}. Export time is not chain verification time: local journal checks reflect the collector's last reconciliation, which may lag; capture checks are historical. Check times over one hour old are highlighted. Pool input does not prove this address paid. Discovery evidence is not entry permission or a current safety check. ${number(d.shown_observations,0)} of ${number(d.evidence_count,0)} observations shown, newest first; detail is capped at ${number(d.observation_limit,0)}. <a href="/api/wallet-evidence?wallet=${encodeURIComponent(selectedWallet)}&amp;download=1" download>Download displayed address JSON</a></p>${rows?table(['Transaction','Role','Observed · Berlin','Block','Canonical scope · Berlin','Observed spend','Pool','Raw proof'],rows):'<p class="compact muted">Legacy reference only. No transaction proof is indexed for this address yet.</p>'}</section>`;
 }
 function renderEvidence(){
   const a=state.assets.find(a=>a.asset_id===selectedAsset),p=state.snapshot.positions?.find(p=>p.asset_id===selectedAsset),screen=state.screens[selectedAsset];
@@ -171,16 +224,16 @@ function drawEquity(){
 }
 
 document.querySelectorAll('[data-bot]').forEach(button=>button.addEventListener('click',()=>{
-  if(bot===button.dataset.bot)return;bot=button.dataset.bot;generation++;selectedAsset='';chart=null;state=null;loading=false;error=false;query='';$('filter').value='';$('offline').hidden=true;
+  if(bot===button.dataset.bot)return;bot=button.dataset.bot;generation++;selectedAsset='';chart=null;state=null;loading=false;error=false;query='';wallets=null;walletError=false;walletLoading=false;selectedWallet='';walletDetail=null;walletDetailError=false;walletDetailLoading='';$('filter').value='';$('offline').hidden=true;
   document.querySelectorAll('[data-bot]').forEach(b=>{b.classList.toggle('selected',b===button);b.setAttribute('aria-pressed',String(b===button));});
   $('account-title').textContent=bot==='solana'?'RUG DESK · Solana':'Wallet follower';$('chain').textContent=bot==='solana'?'Solana Mainnet':'Robinhood Chain · 4663';$('account-id').textContent='Reading selected account…';$('account-id').title='';$('strategy-note').textContent='Reading account policy…';$('worker-freshness').textContent='Waiting for worker status';$('trial-state').textContent='Reading trial status';$('trial-deadline').textContent='—';$('quote-price').textContent='—';$('quote-change').textContent='Loading selected account';$('quote-age').textContent='—';$('instrument-state').textContent='LOADING';html('asset-select','<option>Loading coins…</option>');$('asset-select').disabled=true;for(const id of ['guardrails','health-mini','evidence','rejections','ta'])html(id,'');for(const id of ['open-count','fill-count','trial-return'])$(id).textContent='—';$('trial-detail').textContent='Reading separate account';$('footer-id').textContent='Loading selected account';$('notice').textContent='Observation only · reading separate account';clearCanvas($('equity-chart'));html('metrics',metric('Account','Loading…','Reading separate persistent account'));html('activity','<div class="empty">Reading selected account…</div>');$('chart-empty').hidden=false;$('chart-empty').textContent='Loading selected account…';clearCanvas($('price-chart'));refresh();
 }));
-document.querySelectorAll('[data-tab]').forEach(button=>button.addEventListener('click',()=>{tab=button.dataset.tab;document.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',String(b===button)));renderActivity();}));
+document.querySelectorAll('[data-tab]').forEach(button=>button.addEventListener('click',()=>{tab=button.dataset.tab;document.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-selected',String(b===button)));renderActivity();if(tab==='wallets')loadWallets();}));
 document.querySelector('.tabs').addEventListener('keydown',e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;const buttons=[...document.querySelectorAll('[data-tab]')];let i=buttons.indexOf(document.activeElement);if(i<0)return;e.preventDefault();i=e.key==='Home'?0:e.key==='End'?buttons.length-1:(i+(e.key==='ArrowRight'?1:-1)+buttons.length)%buttons.length;buttons[i].focus();buttons[i].click();});
 document.querySelectorAll('[data-range]').forEach(button=>button.addEventListener('click',()=>{range=Number(button.dataset.range);document.querySelectorAll('[data-range]').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-pressed',String(b===button));});drawChart();}));
 $('filter').addEventListener('input',()=>{query=$('filter').value.toLowerCase().trim();renderActivity();});
 $('asset-select').addEventListener('change',()=>{selectedAsset=$('asset-select').value;chart=null;renderEvidence();renderActivity();loadChart();});
-$('activity').addEventListener('click',e=>{const button=e.target.closest('[data-asset]');if(button&&state.assets.some(a=>a.asset_id===button.dataset.asset)){selectedAsset=button.dataset.asset;chart=null;$('asset-select').value=selectedAsset;renderEvidence();renderActivity();loadChart();}});
+$('activity').addEventListener('click',e=>{const wallet=e.target.closest('[data-wallet]');if(wallet){loadWalletDetail(wallet.dataset.wallet);return;}if(e.target.closest('[data-wallet-close]')){selectedWallet='';walletDetail=null;renderActivity();return;}const button=e.target.closest('[data-asset]');if(button&&state.assets.some(a=>a.asset_id===button.dataset.asset)){selectedAsset=button.dataset.asset;chart=null;$('asset-select').value=selectedAsset;renderEvidence();renderActivity();loadChart();}});
 for(const id of ['ema-toggle','levels-toggle'])$(id).addEventListener('change',drawChart);
 $('price-chart').addEventListener('pointermove',e=>{if(!plot)return;const rect=e.currentTarget.getBoundingClientRect(),xx=e.clientX-rect.left,t=plot.minT+(xx-plot.left)/plot.cw*(plot.maxT-plot.minT),p=plot.points.reduce((a,b)=>Math.abs(a.at-t)<Math.abs(b.at-t)?a:b);const f=plot.fills.find(f=>Math.abs(plot.x(f.observed_at)-xx)<7);$('chart-tip').textContent=f?stamp(f.observed_at,true)+' CET\nPAPER '+f.action+' · '+price(f.fill_price)+'\nQuantity '+number(f.quantity,3):stamp(p.at,true)+' CET\n'+price(p.price)+' · observed';$('chart-tip').hidden=false;});
 $('price-chart').addEventListener('pointerleave',()=>{$('chart-tip').hidden=true;});

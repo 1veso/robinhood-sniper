@@ -10,6 +10,70 @@ from sniper.adapters.evm import RpcError
 
 
 class ResearchIntegrationTests(unittest.TestCase):
+    def sender_cache(self, *, reorg=False, wrong_header=False):
+        from test_evm import swap_log, receipt, bh, TX_SWAP, OTHER, NOW
+        end_reads = [0]
+        def rpc_call(method, params=None):
+            if method == 'eth_blockNumber': return hex(110)
+            if method == 'eth_getBlockByNumber':
+                n = int(params[0], 16)
+                if n == 105: end_reads[0] += 1
+                return {'number':hex(n), 'hash':bh(n, reorg and n==105 and end_reads[0]>=3), 'timestamp':hex(NOW)}
+            raise AssertionError(method)
+        rpc = Mock()
+        rpc.call.side_effect = rpc_call
+        def cached_call(method, params, **kwargs):
+            if method == 'eth_getLogs': return [swap_log()]
+            if method == 'eth_getTransactionByHash': return {'hash':TX_SWAP,'from':OTHER,'blockNumber':hex(102),'blockHash':bh(102)}
+            if method == 'eth_getTransactionReceipt': return receipt()
+            if method == 'eth_getBlockByNumber': return {'number':hex(102),'hash':bh(102,wrong_header),'timestamp':hex(NOW)}
+            raise AssertionError(method)
+        cache=Mock(rpc=rpc)
+        cache.call.side_effect=cached_call
+        return cache
+
+    def test_sender_discovery_records_canonical_proof_without_calling_sender_a_buyer(self):
+        from test_evm import bh, OTHER, WALLET
+        evidence=Mock()
+        state, result=research.discover(self.sender_cache(), {'cursor':100,'cursor_hash':bh(100)},sample=3,evidence=evidence)
+        self.assertIn(OTHER,state['candidates'])
+        self.assertNotIn(WALLET,state['candidates'])
+        self.assertFalse(state['candidates'][OTHER]['qualified'])
+        observation=evidence.add_sender_observations.call_args.args[0][0]
+        self.assertEqual(observation['role'],'transaction_sender')
+        self.assertEqual(observation['block_header']['hash'],bh(102))
+        self.assertEqual(result['sampled_transactions'],1)
+
+    def test_failed_discovery_anchor_cannot_mutate_existing_counters_or_write_evidence(self):
+        from test_evm import bh, OTHER
+        state={'cursor':100,'cursor_hash':bh(100),'candidates':{OTHER:{'wallet':OTHER,'sampled_transactions':7,'last_seen_at':1,'qualified':False}}}
+        before=json.loads(json.dumps(state))
+        evidence=Mock()
+        with self.assertRaises(research.ResearchPending):
+            research.discover(self.sender_cache(reorg=True),state,sample=3,evidence=evidence)
+        self.assertEqual(state,before)
+        evidence.add_sender_observations.assert_not_called()
+
+    def test_sender_discovery_requires_individual_canonical_block(self):
+        from test_evm import bh
+        state={'cursor':100,'cursor_hash':bh(100)}
+        evidence=Mock()
+        with self.assertRaises(research.ResearchPending):
+            research.discover(self.sender_cache(wrong_header=True),state,sample=3,evidence=evidence)
+        self.assertNotIn('candidates',state)
+        evidence.add_sender_observations.assert_not_called()
+
+    def test_export_only_never_constructs_network_clients_or_reads_credentials(self):
+        from test_evm import WALLET, TX_SWAP
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime=Path(temporary); folder=runtime/'research';folder.mkdir()
+            (folder/'discovery.json').write_text(json.dumps({'candidates':{WALLET:{'wallet':WALLET,'sampled_transactions':1,'first_seen_at':1,'example_transaction':TX_SWAP,'qualified':False}}}))
+            with patch.object(research,'RpcClient',side_effect=AssertionError('network client')), patch.object(research,'child_environment',side_effect=AssertionError('secret read')):
+                result=research.export_evidence(runtime)
+            self.assertEqual(result['network_calls'],0)
+            self.assertTrue((folder/'addresses'/f'{WALLET}.json').exists())
+            self.assertTrue((folder/'wallet-evidence.csv').exists())
+
     def test_observed_buyers_are_imported_without_granting_qualification(self):
         from sniper.adapters.evm_store import EvmStore
         from sniper.confirmation_book import ConfirmationBook

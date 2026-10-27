@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
+from copy import deepcopy
 import csv
 from decimal import Decimal
 import json
 import os
 from pathlib import Path
 import sys
-import sqlite3
 import time
 from urllib.parse import urlsplit
 
@@ -17,45 +18,29 @@ sys.path.insert(0, str(ROOT / "src"))
 from sniper.adapters.evm import RpcClient, RpcError, DEFAULT_RPC, USDG, SWAP_TOPIC, decode_swap, address, hash32, quantity
 from sniper.adapters.wallet_history import ResearchCache, ResearchPending, CoverageExceeded, block_at_or_before, reconstruct_wallet
 from sniper.wallet_analysis import analyse_wallet, cluster_controllers, apply_controller_reviews
+from sniper.candidate_evidence import CandidateEvidence
 from supervise import atomic_json, child_environment, instance_lock
 
 
-def import_observed_buyers(runtime, state):
-    """Prioritize actual paper-source recipients, without granting qualification."""
+def sync_observed_evidence(runtime, state, evidence):
+    """Import a bounded oldest-first batch; the evidence journal owns its checkpoint."""
     path = runtime / 'exploration/events.sqlite3'
     if not path.exists():
-        return 0
-    conn = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)
-    added = 0
-    try:
-        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_confirmations'").fetchone():
-            return 0
-        rows = conn.execute('''SELECT p.payload FROM paper_confirmations p JOIN evm_events e
-            ON e.chain_id=4663 AND e.tx_hash=p.tx_hash AND e.log_index=p.log_index
-            AND e.block_hash=p.block_hash AND e.kind='sampled_swap' AND e.canonical=1
-            ORDER BY p.observed_at DESC LIMIT 1000''')
-        candidates = state.setdefault('candidates', {})
-        for row in rows:
-            proof = json.loads(row[0])
-            if proof.get('verified_swap') is not True or proof.get('factory_verified') is not True:
-                continue
-            wallet = address(proof['wallet'])
-            if wallet not in candidates:
-                if len(candidates) >= 5000:
-                    break
-                added += 1
-                candidates[wallet] = {'wallet': wallet, 'first_seen_at': int(time.time()),
-                    'sampled_transactions': 0, 'example_transaction': proof['tx_hash'],
-                    'example_pool': proof['pool'], 'qualified': False,
-                    'source': 'canonical funded recipient observation; historical qualification pending'}
-            candidates[wallet]['observed_recipient'] = True
-            candidates[wallet]['last_seen_at'] = max(candidates[wallet].get('last_seen_at', 0), proof['observed_at'])
-        return added
-    finally:
-        conn.close()
+        return {'added_candidates': 0, 'imported_observations': 0, 'remaining': 0, 'status': 'source_unavailable'}
+    manifest = runtime / 'exploration/trial.json'
+    source_id = json.loads(manifest.read_text()).get('source_id') if manifest.exists() else None
+    return evidence.import_confirmations(path, state, limit=500, expected_source_id=source_id)
 
 
-def discover(cache, state, *, blocks=2000, sample=12):
+def import_observed_buyers(runtime, state):
+    """Compatibility API: durable canonical-recipient import, no qualification."""
+    folder = runtime / 'research'
+    folder.mkdir(exist_ok=True)
+    with closing(CandidateEvidence(folder / 'candidate-evidence.sqlite3')) as evidence:
+        return sync_observed_evidence(runtime, state, evidence)['added_candidates']
+
+
+def discover(cache, state, *, blocks=2000, sample=12, evidence=None):
     rpc = cache.rpc
     rpc.verify_chain()
     head = quantity(rpc.call("eth_blockNumber")) - 5
@@ -92,7 +77,10 @@ def discover(cache, state, *, blocks=2000, sample=12):
     # Uniform deterministic sample across the interval, rather than a largest-
     # balance leaderboard. Sampling affects discovery only, never history coverage.
     chosen = [tx_hashes[i * len(tx_hashes) // min(sample, len(tx_hashes))] for i in range(min(sample, len(tx_hashes)))] if tx_hashes else []
-    candidates = dict(state.get("candidates", {}))
+    # Never mutate state on a timed-out/reorged pass; nested candidate counters
+    # must not leak into the later CSV when the anchor check fails.
+    candidates = deepcopy(state.get("candidates", {}))
+    observations = []
     added = 0
     for tx_hash in chosen:
         swap = by_tx[tx_hash]
@@ -107,6 +95,13 @@ def discover(cache, state, *, blocks=2000, sample=12):
         if not any(decode_swap(log) == swap for log in receipt.get("logs", [])
                    if (log.get("topics") or [None])[0] == SWAP_TOPIC):
             raise ValueError("Discovery receipt lacks sampled swap")
+        block_header = cache.call('eth_getBlockByNumber', [hex(swap['block_number']), False], anchor=anchor['hash'])
+        if (not isinstance(block_header, dict) or quantity(block_header['number']) != swap['block_number']
+                or hash32(block_header['hash']) != swap['block_hash']
+                or quantity(receipt['blockNumber']) != swap['block_number']
+                or quantity(tx['blockNumber']) != swap['block_number']):
+            raise ResearchPending('Discovery sampled block changed; interval will retry')
+        observed_at = quantity(block_header['timestamp'])
         wallet = address(tx["from"])
         if wallet not in candidates:
             if len(candidates) >= 5000:
@@ -116,10 +111,19 @@ def discover(cache, state, *, blocks=2000, sample=12):
                                   "example_transaction": tx_hash, "example_pool": swap["address"],
                                   "qualified": False, "source": "successful swap-transaction sender; route qualification pending"}
         candidates[wallet]["sampled_transactions"] += 1
-        candidates[wallet]["last_seen_at"] = int(time.time())
+        candidates[wallet]["last_seen_at"] = max(candidates[wallet].get('last_seen_at', 0), observed_at)
+        observations.append({'source_id':'rpc-swap-discovery-v1', 'source':'rpc_swap_sample',
+            'wallet':wallet, 'role':'transaction_sender', 'tx_hash':tx_hash,
+            'log_index':swap['log_index'], 'block_number':swap['block_number'], 'block_hash':swap['block_hash'],
+            'observed_at':observed_at, 'pool':swap['address'], 'canonical_at_capture':True,
+            'transaction':tx, 'receipt':receipt, 'block_header':block_header,
+            'proof_scope':'successful swap transaction sender; recipient, route and funding ownership not established',
+            'interval_anchor':{'block':end,'hash':anchor['hash']}})
     check = rpc.call("eth_getBlockByNumber", [hex(end), False])
     if check["hash"] != anchor["hash"]:
         raise ResearchPending("Chain changed during discovery; interval will retry")
+    if evidence is not None:
+        evidence.add_sender_observations(observations)
     state.update(cursor=end, cursor_hash=anchor["hash"], candidates=candidates,
                  first_block=state.get("first_block", start), updated_at=int(time.time()))
     return state, {"new_candidates": added, "sampled_transactions": len(chosen), "observed_swap_events": len(swaps),
@@ -128,6 +132,13 @@ def discover(cache, state, *, blocks=2000, sample=12):
 
 
 def run_research(runtime: Path, *, max_calls=60, seconds=45):
+    folder = runtime / 'research'
+    folder.mkdir(exist_ok=True)
+    with closing(CandidateEvidence(folder / 'candidate-evidence.sqlite3')) as evidence:
+        return _run_research(runtime, evidence, max_calls=max_calls, seconds=seconds)
+
+
+def _run_research(runtime: Path, evidence, *, max_calls=60, seconds=45):
     folder = runtime / "research"
     folder.mkdir(exist_ok=True)
     env = child_environment(runtime)
@@ -136,12 +147,12 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
     rpc = RpcClient(env.get("SNIPER_RPC_URL") or DEFAULT_RPC, timeout=10, max_retries=1)
     discovery_rpc = RpcClient(env.get("SNIPER_OBSERVATION_RPC_URL") or rpc.url, timeout=10, max_retries=1)
     discovery_seconds = min(10, seconds / 4)
-    discovery_calls = min(12, max_calls // 4)
+    discovery_calls = min(12, max(4, max_calls // 4))
     cache = ResearchCache(folder / "cache", discovery_rpc, blockscout_key=key,
                           max_calls=discovery_calls, seconds=discovery_seconds)
     path = folder / "discovery.json"
     state = json.loads(path.read_text()) if path.exists() else {}
-    imported = import_observed_buyers(runtime, state)
+    imported = sync_observed_evidence(runtime, state, evidence)
     if state.get('candidates'):
         atomic_json(path, state)
     pending = []
@@ -151,7 +162,9 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
         # exist, a five-minute discovery cadence leaves time to finish histories.
         if not state.get("candidates") or time.time() - state.get("updated_at", 0) >= 300:
             with discovery_rpc.budget(discovery_seconds):
-                state, discovery = discover(cache, state, sample=4)
+                # Each sampled transaction needs tx + receipt + canonical header;
+                # reserve one call for logs without consuming the history budget.
+                state, discovery = discover(cache, state, sample=max(1, (discovery_calls - 1) // 3), evidence=evidence)
             atomic_json(path, state)
         else:
             discovery = {"status": "cached", "cursor": state.get("cursor"),
@@ -160,6 +173,8 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
         pending.append(str(exc))
     except RpcError as exc:
         pending.append(f"DISCOVERY_RPC_UNAVAILABLE: {exc}")
+    except (ValueError, KeyError, TypeError):
+        pending.append('DISCOVERY_EVIDENCE_INVALID: checkpoint retained; no unverified sender added')
     cache = ResearchCache(folder / "cache", rpc, blockscout_key=key,
                           max_calls=max_calls - discovery_calls,
                           seconds=seconds - discovery_seconds)
@@ -249,7 +264,7 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
                "rpc_hosts": {"discovery": urlsplit(discovery_rpc.url).hostname,
                              "history": urlsplit(rpc.url).hostname},
                "discovery": discovery, "candidate_count": len(candidates), "history_reports": len(reports),
-               "imported_observed_buyers": imported,
+               "imported_observed_buyers": imported['added_candidates'], "observed_evidence_import": imported,
                "complete_history_count": sum(r.get('history_complete') is True for r in reports),
                "unsupported_history_rejections": sum(r.get('assessment') == 'REJECTED_UNSUPPORTED_HISTORY' for r in reports),
                "performance_qualified_count": len(shortlist), "approved_wallet_count": len(selected),
@@ -259,6 +274,7 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
                                     "checkpoint": getattr(cache, 'checkpoint_progress', {})},
                "controller_policy": "Automatic links merge suspected controllers. No observed link is not proof of independence; no automatic qualified:true assertion.",
                "reports": reports, "candidate_file": str(folder / "wallet-candidates.csv")}
+    summary['address_evidence'] = evidence.export(folder, state, reports, selected, snapshot, int(time.time()))
     atomic_json(folder / "wallet-research.json", summary)
     atomic_json(folder / "wallet-shortlist.json", shortlist)
     csv_path = folder / "wallet-candidates.csv"
@@ -271,10 +287,33 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
     return summary
 
 
+def export_evidence(runtime: Path):
+    """Refresh local evidence/exports without reading keys or calling a provider."""
+    folder = runtime / 'research'
+    folder.mkdir(exist_ok=True)
+    state_path = folder / 'discovery.json'
+    state = json.loads(state_path.read_text()) if state_path.exists() else {}
+    summary_path = folder / 'wallet-research.json'
+    summary = json.loads(summary_path.read_text()) if summary_path.exists() else {}
+    snapshot = summary.get('snapshot')
+    reports = summary.get('reports', [])
+    selected_path = folder / 'qualified-wallets.json'
+    selected = json.loads(selected_path.read_text()) if selected_path.exists() else {}
+    with closing(CandidateEvidence(folder / 'candidate-evidence.sqlite3')) as evidence:
+        imported = sync_observed_evidence(runtime, state, evidence)
+        atomic_json(state_path, state)
+        result = evidence.export(folder, state, reports, selected, snapshot, int(time.time()))
+    summary.update(candidate_count=len(state.get('candidates', {})), address_evidence=result,
+                   observed_evidence_import=imported, evidence_updated_at=int(time.time()))
+    atomic_json(summary_path, summary)
+    return {'mode':'RESEARCH_ONLY','network_calls':0,'observed_evidence_import':imported,'address_evidence':result}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--calls", type=int, default=60)
     parser.add_argument("--seconds", type=int, default=45)
+    parser.add_argument('--export-only', action='store_true', help='Refresh saved address evidence and exports without network calls')
     args = parser.parse_args()
     if not 10 <= args.calls <= 500 or not 15 <= args.seconds <= 300:
         parser.error("calls must be 10..500 and seconds 15..300")
@@ -282,7 +321,7 @@ def main():
     runtime.mkdir(exist_ok=True)
     try:
         with instance_lock(runtime / "research.lock"):
-            result = run_research(runtime, max_calls=args.calls, seconds=args.seconds)
+            result = export_evidence(runtime) if args.export_only else run_research(runtime, max_calls=args.calls, seconds=args.seconds)
     except Exception as exc:
         print(json.dumps({"mode": "RESEARCH_ONLY", "error": type(exc).__name__, "qualified": False}))
         return 2

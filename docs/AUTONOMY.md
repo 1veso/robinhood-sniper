@@ -47,6 +47,9 @@ Reports:
 - `runtime/status.json`: last completed cycle; check `updated_at_utc` for freshness.
 - `runtime/service.jsonl`: rotating service history, 5 MB plus one prior file.
 - `runtime/research/wallet-candidates.csv`: automatically discovered addresses and source transaction hashes.
+- `runtime/research/candidate-evidence.sqlite3`: durable address-level evidence, source identity and incremental import progress.
+- `runtime/research/addresses/0xADDRESS.json` and `.csv`: one public address's evidence; JSON also includes its research status.
+- `runtime/research/wallet-evidence.csv`, `.jsonl` and `wallet-evidence-index.json`: reviewable evidence exports and coverage index.
 - `runtime/research/wallet-research.json`: discovery coverage, historical progress, performance results, controller groups and missing evidence.
 - `runtime/research/wallet-shortlist.json`: wallets passing the performance screen, still subject to controller review.
 - `runtime/research/qualified-wallets.json`: performance-qualified wallets with valid external controller reviews.
@@ -113,14 +116,33 @@ disabled. If it recurs, inspect Windows certificate trust and endpoint access.
 
 ## Automatic discovery and qualification
 
-Discovery reads the V3 Swap topic across the chain, rather than requiring a
-preexisting wallet list or only recently created pools. It samples up to 12
-successful transaction senders evenly across each contiguous interval of up to
-2,000 blocks. Dense queries retry progressively smaller prefixes down to 250
-blocks; the cursor never skips the unprocessed suffix.
-Receipts corroborate the sampled events. The sample is a candidate-discovery
-mechanism, not a comprehensive market census or profitability ranking. The
-bounded discovery universe is saved and its lag is reported.
+The [wallet discovery and evidence guide](WALLET_DISCOVERY.md) documents the
+durable address index, source roles, reorg handling and export formats. The worker
+imports up to 500 local funded-buy confirmation proofs per cycle, oldest first,
+with a persistent checkpoint and source UUID binding. These canonical
+observations join the candidate queue without granting performance or controller
+qualification.
+
+Independent discovery also reads the V3 Swap topic across the chain, rather than
+requiring a preexisting wallet list or only recently created pools. Its normal
+pass samples up to three successful transaction senders evenly across a
+contiguous interval of up to 2,000 blocks. The transaction, receipt and sampled
+block header are corroborated before the interval's staged updates are committed.
+Dense queries retry smaller prefixes down to 250 blocks; the cursor never skips
+the unprocessed suffix. Actual completed samples and coverage are reported.
+
+This sample is a discovery mechanism, not a comprehensive market census or
+profitability ranking. The independent historical cursor can lag behind the
+chain head; its backlog is retained and disclosed separately from current local
+funded-buy imports. A transaction sender can be a router or relayer. Evidence
+therefore keeps transaction-sender, funded-recipient and base-payer roles distinct,
+retains orphaned observations and does not infer common ownership from routing.
+
+To import available local proofs and refresh address-level exports without any
+provider requests, run `python research.py --export-only` from the installed
+project folder. This does not change trading configuration or supply missing
+historical P&L. Legacy example-transaction references remain explicitly weaker
+than verified history.
 
 For candidates, the historical adapter collects normal transactions, ERC-20
 transfers and internal transactions over a frozen 30-day window. Pagination
@@ -149,12 +171,19 @@ at least 30 minutes, nonnegative last-week realized P&L after open-basis stress,
 and positive total P&L after costs and open-basis/follower stress. Failed screens
 and missing evidence remain visible. These are experimental rules, not established
 predictors. Unlike the old optional `rank` command's three-leader display limit,
-the research shortlist is not limited to three; the entry policy still needs
-five reviewed controller groups.
+the research shortlist is not limited to three. The original strict reference
+entry policy needs five reviewed controller groups. The active exploratory
+two-recipient/$30,000 account is separate and is not changed by discovery or
+qualification work.
 
-History work resumes from cached responses in a rotating queue. Daily historical
-cohorts retain separate cutoffs and earlier results. Large histories may take many
-cycles; no record becomes complete merely because a cycle deadline was reached.
+History work resumes from cached responses and transaction-level SQLite
+checkpoints. An unfinished frozen cohort keeps its cutoff across invocations;
+there is no daily reset that discards partial work. The active wallet rotates
+after three batches so one large history cannot monopolize the queue. Earlier
+cohort results remain separate. Large histories may take many cycles; no record
+becomes complete merely because a cycle deadline was reached. The 1,000-request
+Blockscout UTC-day budget is unchanged; local proof imports and exports remain
+available while indexed-history work waits for its next budget window.
 
 ## Controller checks and evidence
 
@@ -189,12 +218,14 @@ records external attestations; it cannot authenticate a false manual assertion.
 The application never invents such a review or promotes a candidate by activity
 count alone.
 
-The initial `observation-001` account freezes an empty watchlist. It collects new
-pool observations while independent discovery researches the wider swap universe.
-Once at least five reviewed groups and fresh safety/size-aware route evidence
-exist, start a NEW named experiment using `qualified-wallets.json` as its frozen
-wallet input. Existing experiments are not silently reselected. Required safety
-and executable-route evidence remain the boundaries documented in OPERATIONS.md.
+The initial strict-reference `observation-001` account freezes an empty watchlist.
+It collects pool observations while independent discovery researches the wider
+swap universe. A future strict experiment would need at least five reviewed
+groups, fresh safety/size-aware route evidence and its own explicitly initialized
+account using `qualified-wallets.json` as frozen input. Discovery does not start
+that experiment, reselect an existing account or reimpose its gate on the active
+exploratory trial. Required safety and executable-route evidence remain the
+boundaries documented in OPERATIONS.md.
 
 ## Stop and resume
 
