@@ -26,6 +26,8 @@ JOBS = {
     # Minute trigger is a timezone-independent check, not a report every minute.
     'report': ('RUG DESK Report', 1, 240, ['rug_desk/report.py', '--send']),
     'console': ('RUG DESK Console', 5, 0, ['console_server.py']),
+    'neon-signals': ('NEON Paper Signals', 1, 170, ['neon_bot.py', 'signals']),
+    'neon-watch': ('NEON Paper Watch', 10, 480, ['neon_bot.py', 'watch']),
 }
 
 
@@ -57,6 +59,8 @@ def initialize(root=ROOT):
         write_report(book, int(time.time()))
     finally:
         book.close()
+    from sniper.neon import initialize as initialize_neon
+    initialize_neon(root)
     return status(root)
 
 

@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$AppRoot, [Parameter(Mandatory=$true)][string]$Python, [switch]$Remove, [switch]$CheckOnly)
+param([Parameter(Mandatory=$true)][string]$AppRoot, [Parameter(Mandatory=$true)][string]$Python, [switch]$Remove, [switch]$CheckOnly, [switch]$NeonOnly)
 $ErrorActionPreference = 'Stop'
 $app = (Resolve-Path -LiteralPath $AppRoot).Path
 $pythonExe = (Resolve-Path -LiteralPath $Python).Path
@@ -8,10 +8,11 @@ $owner = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $names = @{
     paper='SNIPER Exploratory Paper'; research='SNIPER Paper Research'; monitor='SNIPER Telegram Monitor';
     shadow='SNIPER Automatic Executor Shadow'; watch='RUG DESK Watch'; scan='RUG DESK Scan';
-    report='RUG DESK Report'; console='RUG DESK Console'
+    report='RUG DESK Report'; console='RUG DESK Console'; 'neon-signals'='NEON Paper Signals'; 'neon-watch'='NEON Paper Watch'
 }
-$minutes = @{paper=2;research=1;monitor=2;shadow=1;watch=10;scan=30;report=1;console=5}
-$limits = @{paper=5;research=2;monitor=3;shadow=3;watch=9;scan=21;report=5;console=0}
+$minutes = @{paper=2;research=1;monitor=2;shadow=1;watch=10;scan=30;report=1;console=5;'neon-signals'=1;'neon-watch'=10}
+$limits = @{paper=5;research=2;monitor=3;shadow=3;watch=9;scan=21;report=5;console=0;'neon-signals'=3;'neon-watch'=9}
+if ($NeonOnly) { $names = @{'neon-signals'='NEON Paper Signals';'neon-watch'='NEON Paper Watch'} }
 # COM avoids repeated CIM/module startup and keeps validation and mutation in one session.
 $service = New-Object -ComObject 'Schedule.Service'
 $service.Connect()
@@ -46,6 +47,10 @@ foreach ($key in $names.Keys) {
         $definition.Settings.StartWhenAvailable = $true
         $definition.Settings.DisallowStartIfOnBatteries = $false
         $definition.Settings.StopIfGoingOnBatteries = $false
+        if ($key.StartsWith('neon-')) {
+            $definition.Settings.RestartCount = 3
+            $definition.Settings.RestartInterval = 'PT1M'
+        }
         $definition.Settings.ExecutionTimeLimit = ('PT' + $limits[$key] + 'M')
         $login = $definition.Triggers.Create(9)
         $login.UserId = $owner
@@ -59,6 +64,6 @@ foreach ($key in $names.Keys) {
         # TASK_CREATE, never overwrite a task that appeared after preflight.
         $old = $folder.RegisterTaskDefinition($name,$definition,2,$owner,$null,3)
     }
-    if ($key -in @('console','paper','watch','scan','shadow')) { $old.Run($null) | Out-Null }
+    if ($key -in @('console','paper','watch','scan','shadow','neon-signals','neon-watch')) { $old.Run($null) | Out-Null }
 }
 Write-Output 'Task ownership checked; operation completed.'

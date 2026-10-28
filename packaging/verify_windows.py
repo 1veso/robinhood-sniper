@@ -29,6 +29,11 @@ def main():
     second = json.loads(run([py, app / 'desktop.py', 'status']))
     assert first['solana_account'] == second['solana_account']
     assert first['solana_account']['mode'] == 'paper' and not first['paid_ai_enabled']
+    neon_before=json.loads((app/'neon_bot/runtime/account.json').read_text())
+    run([py,app/'neon_bot.py','watch','--no-send'])
+    neon_state=json.loads(run([py,app/'neon_bot.py','status']))
+    assert neon_state['account_id']==neon_before['account_id'] and neon_state['trial'] is None
+    assert not neon_state['entry_enabled'] and neon_state['snapshot']['cash']=='1000'
     assert not first['paper_initialized']
     run([py, app / 'desktop.py', 'start-paper'], expected=2)
     assert not (app / 'runtime/exploration/trial.json').exists()
@@ -95,6 +100,9 @@ try {
         with urllib.request.urlopen('http://127.0.0.1:8766/api/state?bot=solana', timeout=20) as response:
             state = json.load(response)
         assert state['real_money_enabled'] is False
+        with urllib.request.urlopen('http://127.0.0.1:8766/api/state?bot=neon',timeout=20) as response:
+            neon=json.load(response)
+        assert neon['account_id']==neon_before['account_id'] and neon['fill_count']==0
     finally:
         server.terminate();server.wait(timeout=15)
     result = {'artifact_sha256': build['sha256'], 'extracted_without_private_state': True,
@@ -102,6 +110,7 @@ try {
               'new_trial_blocked_without_telegram_ack': True, 'isolated_watch_completions': 2,
               'actual_windows_job': scheduled, 'console_health': health, 'strategy_fills_created': 0,
               'signing_calls': 0, 'broadcast_calls': 0, 'telegram_calls': 0,
+              'neon_isolated_identity_watch_console_verified':True,
               'root': str(target), 'verified_at': int(time.time())}
     (ROOT / 'dist/windows-verification.json').write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2))

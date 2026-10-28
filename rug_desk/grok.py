@@ -77,9 +77,12 @@ def validate(response):
 
 
 class Judge:
-    def __init__(self, root=config.ROOT, *, enabled=None, transport=request_json, clock=time.time):
+    def __init__(self, root=config.ROOT, *, enabled=None, transport=request_json, clock=time.time,
+                 budget_root=None, billing_account_id=None):
         self.root, self.transport, self.clock = Path(root), transport, clock
         self.enabled = enabled
+        self.budget_root = Path(budget_root) if budget_root is not None else self.root
+        self.billing_account_id = billing_account_id
 
     def recurring_enabled(self):
         from rug_desk.model_gate import status
@@ -90,23 +93,28 @@ class Judge:
         if enabled is not True:
             raise ValueError('Paid model judgment disabled')
         runtime = self.root / 'runtime'
-        with process_lock(runtime / 'paid-request.lock'):
+        budget_runtime = self.budget_root / 'runtime'
+        if self.billing_account_id is not None:
+            if not isinstance(self.billing_account_id, str) or not 1 <= len(self.billing_account_id) <= 120:
+                raise ValueError('Invalid billing account identity')
+            context = {**context, 'execution_account_id': self.billing_account_id}
+        with process_lock(budget_runtime / 'paid-request.lock'):
             now = int(self.clock())
             key = (self.root.parent / 'runtime' / 'xai-api-key.txt').read_text(encoding='utf-8-sig').strip()
             if not key or '\n' in key or '\r' in key:
                 raise ValueError('Missing or malformed xAI credential file')
             request_id = 'rug-desk:' + uuid.uuid4().hex
-            budget = DailyBudget(runtime / 'ai-budget.sqlite3', Decimal(config.AI_DAILY_LIMIT_USD))
-            if context.get('execution_account_id'):
-                budget.db.execute('CREATE TABLE IF NOT EXISTS advisory_request_accounts(request_id TEXT PRIMARY KEY,account_id TEXT NOT NULL)')
-                budget.db.execute('INSERT INTO advisory_request_accounts VALUES(?,?)',(request_id,context['execution_account_id']))
-                budget.db.commit()
+            budget = DailyBudget(budget_runtime / 'ai-budget.sqlite3', Decimal(config.AI_DAILY_LIMIT_USD))
             from rug_desk.model_gate import binding
             # Preserve exactly what the model was allowed to judge, without credentials.
             audit = {'request_id': request_id, 'at': now, 'model': config.MODEL, **context,
                      'binding':binding(self.root),'request':payload}
             try:
                 budget.reserve(request_id, Decimal(config.AI_RESERVATION_USD), now)
+                if context.get('execution_account_id'):
+                    budget.db.execute('CREATE TABLE IF NOT EXISTS advisory_request_accounts(request_id TEXT PRIMARY KEY,account_id TEXT NOT NULL)')
+                    budget.db.execute('INSERT INTO advisory_request_accounts VALUES(?,?)',(request_id,context['execution_account_id']))
+                    budget.db.commit()
                 response = self.transport('POST', URL, payload, {'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}, 90)
                 usage = budget.record_usage(request_id, response)
                 audit.update(response=response, usage=usage)

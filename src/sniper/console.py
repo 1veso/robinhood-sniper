@@ -109,7 +109,7 @@ class ConsoleData:
     def _inspect_jobs(self):
         if os.name != 'nt':
             return {'available': False, 'items': [], 'checked_at': None, 'error': 'unsupported_platform'}
-        command = "$ErrorActionPreference='Stop'; Get-ScheduledTask -TaskName 'SNIPER*','RUG DESK*' | Where-Object { $_.TaskName -in @('SNIPER Exploratory Paper','SNIPER Paper Research','SNIPER Telegram Monitor','SNIPER Automatic Executor Shadow','RUG DESK Watch','RUG DESK Scan','RUG DESK Report','RUG DESK Console') } | ForEach-Object { $i=$_ | Get-ScheduledTaskInfo; [pscustomobject]@{name=$_.TaskName;state=[string]$_.State;last_result=$i.LastTaskResult;last_run=$i.LastRunTime.ToUniversalTime().ToString('o');next_run=$i.NextRunTime.ToUniversalTime().ToString('o')} } | ConvertTo-Json -Compress"
+        command = "$ErrorActionPreference='Stop'; Get-ScheduledTask -TaskName 'SNIPER*','RUG DESK*','NEON*' | Where-Object { $_.TaskName -in @('SNIPER Exploratory Paper','SNIPER Paper Research','SNIPER Telegram Monitor','SNIPER Automatic Executor Shadow','RUG DESK Watch','RUG DESK Scan','RUG DESK Report','RUG DESK Console','NEON Paper Signals','NEON Paper Watch') } | ForEach-Object { $i=$_ | Get-ScheduledTaskInfo; [pscustomobject]@{name=$_.TaskName;state=[string]$_.State;last_result=$i.LastTaskResult;last_run=$i.LastRunTime.ToUniversalTime().ToString('o');next_run=$i.NextRunTime.ToUniversalTime().ToString('o')} } | ConvertTo-Json -Compress"
         result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', command], capture_output=True, timeout=25, creationflags=subprocess.CREATE_NO_WINDOW)
         if result.returncode:
             raise ValueError('Task inspection unavailable')
@@ -159,16 +159,21 @@ class ConsoleData:
             return value
 
     def state(self, bot='robinhood'):
-        if bot not in ('robinhood', 'solana'):
+        if bot not in ('robinhood', 'solana', 'neon'):
             raise ValueError('Unknown bot')
         def load():
-            data = self.robinhood() if bot == 'robinhood' else self.solana()
+            if bot == 'neon':
+                from .neon_console import view
+                data = view(self.root)
+            else:
+                data = self.robinhood() if bot == 'robinhood' else self.solana()
             data.update({'bot': bot, 'version': __version__, 'generated_at': int(time.time()),
                          'refresh_seconds': 5, 'read_only': True, 'real_money_enabled': False,
                          'execution_target': 'automatic', 'live_execution_ready': False,
                          'jobs': self.jobs()})
             from .switchover import inventory
-            data['switchover'] = inventory(self.root, 'evm' if bot=='robinhood' else 'solana')
+            if bot!='neon':
+                data['switchover'] = inventory(self.root, 'evm' if bot=='robinhood' else 'solana')
             if bot=='robinhood':
                 try:
                     executor=read_json(self.root/'runtime/executor/status.json')
@@ -274,7 +279,7 @@ class ConsoleData:
             collector = selected(read_json(self.root / 'runtime/status.json'), ('finished_at','health','collector_lag_blocks'))
         except (OSError, ValueError):
             collector = None
-        return {'account_id': identity, 'name': 'Robinhood · Wallet follower', 'chain': 'Robinhood Chain · 4663',
+        return {'account_id': identity, 'name': 'Robinhood Â· Wallet follower', 'chain': 'Robinhood Chain Â· 4663',
                 'status': selected(status, ('started_at','finished_at','trial_state','entry_halt','collection')),
                 'error_count': len(status.get('errors', [])), 'trial': selected(trial, ('started_at','ends_at','revision_started_at','policy_version')),
                 'snapshot': snapshot, 'policy': policy, 'assets': list(assets.values()), 'fills': fills, 'closed': closed,
@@ -299,7 +304,7 @@ class ConsoleData:
             open_count = c.execute('SELECT COUNT(*) FROM positions').fetchone()[0]
         # A blocked, empty desk has no invented bankroll/equity curve. A future active desk
         # needs its own ledger adapter before exposing position-level financial analytics.
-        return {'account_id': identity['account_id'], 'name': 'Solana · RUG DESK', 'chain': 'Solana Mainnet',
+        return {'account_id': identity['account_id'], 'name': 'Solana Â· RUG DESK', 'chain': 'Solana Mainnet',
                 'status': {'finished_at': max((x['finished'] or 0 for x in runs), default=0), 'trial_state': report.get('trial_status')},
                 'snapshot': {'open_positions': open_count, 'positions': [], 'realized_pnl': report.get('realized_pnl_total'), 'as_of': report.get('generated_at')},
                 'trial': {}, 'policy': {}, 'assets': [], 'fills': [], 'closed': [], 'equity_history': [], 'screens': {},
@@ -367,6 +372,9 @@ class ConsoleData:
         return path.read_bytes()
 
     def chart(self, bot, asset, pool):
+        if bot == 'neon':
+            from .neon_console import chart
+            return self.cached(('chart', bot, asset, pool), 5, lambda: chart(self.root,asset,pool))
         if bot != 'robinhood' or not asset or not pool or len(asset) > 160 or len(pool) > 100:
             raise ValueError('Unknown chart')
         def load():

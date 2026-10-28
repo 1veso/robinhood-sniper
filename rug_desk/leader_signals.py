@@ -39,10 +39,14 @@ def event_identity(event):
         return 'invalid:' + hashlib.sha256(encode(event).encode()).hexdigest()
 
 
-def validate_event(event, now, replay):
+def validate_event(event, now, replay, event_verifier=None):
     if not isinstance(event, dict) or event.get('chain') != 'solana':
         raise LeaderGate('non_solana_or_malformed_event')
-    if event.get('source') not in ('manual_alert', 'replay') or (event['source'] == 'replay' and not replay):
+    if event.get('source') == 'solana_finalized_cp_swap':
+        if event_verifier is None or event_verifier(event, now) is not True:
+            raise LeaderGate('automatic_event_proof_missing_or_invalid')
+        validate_address(event['pool'])
+    elif event.get('source') not in ('manual_alert', 'replay') or (event['source'] == 'replay' and not replay):
         raise LeaderGate('replay_requires_isolated_account')
     reference(event['source_ref']); handle(event['handle'])
     validate_address(event['mint']); validate_address(event['wallet'])
@@ -62,7 +66,8 @@ def record_decision(store, identity, result, now, *, finish=True):
             ('PAPER_FILLED' if result.get('entry') else 'SKIP' if result['verdict']=='SKIP' else 'NO_FILL', encode(result), identity))
 
 
-def process_event(book, event, *, clock=time.time, market=None, rugcheck=None, judge=None):
+def process_event(book, event, *, clock=time.time, market=None, rugcheck=None, judge=None,
+                  event_verifier=None, admission_guard=None):
     store = Selections(book); now = int(clock())
     identity = event_identity(event)
     digest = hashlib.sha256(encode(event).encode()).hexdigest()
@@ -83,7 +88,9 @@ def process_event(book, event, *, clock=time.time, market=None, rugcheck=None, j
     expected_selection = None
     def gate():
         moment = int(clock())
-        validate_event(event, moment, store.replay_account())
+        validate_event(event, moment, store.replay_account(), event_verifier)
+        if admission_guard:
+            admission_guard(moment)
         selection = store.status(moment)
         if not selection['entry_enabled']:
             raise LeaderGate('selection_'+selection['status'].lower()+('_empty' if selection.get('empty_selection') else ''))
@@ -114,7 +121,8 @@ def process_event(book, event, *, clock=time.time, market=None, rugcheck=None, j
                 'entry': True, 'position_id': position['id'], 'selection_id': expected_selection,
                 'reason': 'Existing paper pipeline recorded a simulated fill; not a CopyFomo or on-chain execution'}, int(clock()))
         result = check(book, event['mint'], market=market, rugcheck=rugcheck, judge=LeaderJudge(),
-                       clock=clock, entry_guard=gate, entry_hook=committed, signal_context=context)
+                       clock=clock, entry_guard=gate, entry_hook=committed, signal_context=context,
+                       expected_pool=event.get('pool') if event.get('source') == 'solana_finalized_cp_swap' else None)
         result['event_id'] = identity
         if not result.get('entry'):
             try:

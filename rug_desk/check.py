@@ -14,7 +14,7 @@ from sniper.adapters.solana import validate_address
 
 
 def check(book, mint, *, market=None, rugcheck=None, judge=None, clock=time.time,
-          entry_guard=None, entry_hook=None, signal_context=None):
+          entry_guard=None, entry_hook=None, signal_context=None, expected_pool=None):
     mint = validate_address(mint)
     now = int(clock())
     if not book.claim(mint, now):
@@ -31,6 +31,9 @@ def check(book, mint, *, market=None, rugcheck=None, judge=None, clock=time.time
         result['facts'] = facts
         if facts['failure']:
             result['reason'] = facts['failure']
+            return result
+        if expected_pool is not None and facts['pool'] != expected_pool:
+            result['reason'] = 'Observed leader pool differs from screened pool'
             return result
         result['stage'] = 'pool'
         quote = market.quote(mint, facts['pool'])

@@ -1,6 +1,6 @@
 RUG DESK Paper - Windows x64
 
-Run RUG-DESK-Setup-0.1.19-win-x64.exe. No separate Python installation is needed for paper operation.
+Run RUG-DESK-Setup-0.1.20-win-x64.exe. No separate Python installation is needed for paper operation.
 This local build is unsigned; Windows may show an unknown-publisher warning.
 Verify the accompanying SHA-256 before installing a transferred copy.
 
@@ -47,3 +47,8 @@ Uninstall preserves program files, credentials and all account data intentionall
 Archive those files before any later manual removal. Disabling jobs stops exits.
 
 See app/docs/DESKTOP.md and app/docs/LIVE_PREPARATION.md for limitations and checks.
+
+Neon bot is the third separate account ($1,000 paper cash). Its one-minute
+research worker and ten-minute exit watcher run in the background. Grok stays
+disabled; complete trader histories and funded authorized model evidence are
+required before its own seven-day clock starts. See app/docs/NEON_BOT.md.
