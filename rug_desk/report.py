@@ -91,6 +91,9 @@ def summary(book, now):
         try:
             db.row_factory = sqlite3.Row
             usage = [dict(r) for r in db.execute('SELECT r.*,u.billed_usd,u.payload FROM advisory_reservations r LEFT JOIN advisory_usage u USING(request_id) ORDER BY r.created_at DESC')]
+            if db.execute("SELECT 1 FROM sqlite_master WHERE name='advisory_request_accounts'").fetchone():
+                live_requests={r[0] for r in db.execute('SELECT request_id FROM advisory_request_accounts')}
+                usage=[r for r in usage if r['request_id'] not in live_requests]
         finally:
             db.close()
     from rug_desk.grok import Judge

@@ -76,7 +76,7 @@ class ExecutionServiceTests(unittest.TestCase):
         positions=[self.position(position_id='bad'),self.position(position_id='good',token='0x'+'7'*40)]
         class J:
             policy={'base_token':BASE,'account_id':'a','chain_id':4663,'wallet':'0x'+'1'*40,'policy_hash':'p'}
-            def positions(self):return positions
+            def management_positions(self):return positions
             def orders(self):return []
             def update_position_peak(self,*args):pass
             def enqueue(self,i,now):self.queued=i

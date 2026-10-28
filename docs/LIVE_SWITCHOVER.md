@@ -1,9 +1,11 @@
-# Live switchover preparation — 0.1.18
+# Live switchover preparation — 0.1.19
 
 Both strategies remain paper-only. Free checks do not authorize real money, paid
 X, signer provisioning or funding. Future routine trades must be automatic after
 an explicitly authorized initial deployment. Existing configurations, accounts,
 cash, holdings, costs, exits and deadlines are unchanged.
+
+The earlier 0.1.18 checks below are dated preparation evidence. See [0.1.19 execution changes](EXECUTION_RELEASE_0.1.19.md). The free CP setup probe returned no route; refreshed EVM evidence showed 956 seconds of finality lag and zero balances. Draft settlement is Solana USDC and EVM WETH; neither capital amount, signer nor deployment is approved.
 
 ## Completed
 
@@ -63,9 +65,9 @@ pass nor an approved live DEX manifest.
 | Blocker | Required resolution | Boundary |
 |---|---|---|
 | Solana Grok/X | Funded access, explicitly authorized spending, successful basic/X tests | User chose paid calls disabled; do not bypass or start the trial |
-| Solana instruction semantics | Implement and independently review supported Jupiter/AMM layouts, recipients, pool/vault/mint relations and executable/upgrade pins | Wire validity, route JSON and simulation are insufficient; always `signable=false` |
-| Solana automatic lifecycle | Restricted signer, durable signed-byte journal, expiry-aware submission/recovery, finalized receipt integration, original exits/costs/notices | Not a completed Solana executor; manual receipt tools are not the intended workflow |
-| EVM finality design | Review measured delay against stops/exits; approve a latency policy or separately implement/review provisional-position semantics | Never weaken finalized-only settlement merely to make a test pass |
+| Solana instruction semantics | Independently review the implemented direct classic-SPL CP-Swap validator and deployment pins; verify an available supported route | Arbitrary provider instructions remain unsupported; old preparation artifacts remain `signable=false` |
+| Solana automatic lifecycle | Restricted signer, durable signed-byte journal, expiry-aware submission/recovery, finalized receipt integration, original exits/costs/notices | Restricted lifecycle code is implemented and offline tested; funded mainnet lifecycle validation remains missing |
+| EVM finality design | Review and approve the implemented optional confirmed-position exit semantics and measured latency | Final cash/fills/P&L remain finalized; provisional management is disabled |
 | Wallet execution | Authorized validation of selected strategy routes, balances, rent, fees, setup and failed attempts | No funding during current paper setup; unfunded simulation cannot prove a successful mainnet swap |
 | Initial live policy | Approve capital, settlement asset, exposure/loss/gas limits, emergency behavior and review references; bind a separate execution account | Example policy remains incomplete/unauthorized; paper cash is not a real allocation |
 | Signer deployment | Approved local restricted provisioning, dependency validation and independent review | Source crypto tests do not mean the paper installer contains a ready live signer |

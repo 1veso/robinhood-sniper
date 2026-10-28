@@ -588,9 +588,11 @@ class EvmExecutionAdapter:
         latest = quantity(self.rpc.call('eth_blockNumber'))
         if latest-block+1 < self.policy['confirmations']:
             return {'status':'pending','reason':'confirmation_depth','block_number':block,'block_hash':block_hash}
+        is_finalized=False
         if self.policy.get('require_finalized', True):
             finalized = self.rpc.call('eth_getBlockByNumber',['finalized',False])
-            if not finalized or quantity(finalized['number']) < block:
+            is_finalized=bool(finalized and quantity(finalized['number'])>=block)
+            if not is_finalized and self.policy.get('exit_settlement_mode')!='confirmed_exit_management':
                 return {'status':'pending','reason':'finality_not_reached'}
         tx = self.rpc.call('eth_getTransactionByHash',[tx_hash])
         expected = prepared['tx']
@@ -607,8 +609,12 @@ class EvmExecutionAdapter:
         summary = {'tx_hash':tx_hash,'block_hash':block_hash,'block_number':block,
                    'observed_at':quantity(header['timestamp']),'status':status,
                    'gas_used':gas,'effective_gas_price_wei':str(price),'fee_wei':str(fee),
-                   'canonical':True,'finalized':self.policy.get('require_finalized',True) is True,
-                   'finality':'finalized' if self.policy.get('require_finalized',True) else 'confirmed'}
+                   'canonical':True,'finalized':is_finalized,'confirmation_depth':latest-block+1,
+                   'finality':'finalized' if is_finalized else 'confirmed'}
+        def settlement(outcome,fill):
+            if not is_finalized and self.policy.get('exit_settlement_mode')=='confirmed_exit_management':
+                return {'status':'included','outcome':outcome,'receipt':summary,'fill':fill}
+            return {'status':outcome,'receipt':summary,'fill':fill}
         if status not in (0,1) or gas > expected['gas'] or price > expected['gasPrice'] or fee > int(prepared['max_fee_wei']):
             return {'status':'unknown','reason':'receipt_fee_or_status_outside_policy','receipt':summary}
         before,after = hex(block-1),hex(block)
@@ -623,15 +629,15 @@ class EvmExecutionAdapter:
             if delta_in or delta_out or receipt.get('logs'):
                 return {'status':'unknown','reason':'reverted_receipt_has_unexplained_movements','receipt':summary}
             self._recheck_anchor({'block_number':block,'block_hash':block_hash})
-            return {'status':'reverted','receipt':summary,'fill':{'input_raw':'0','output_raw':'0','fee_wei':str(fee),
-                    'token_in':intent['token_in'],'token_out':intent['token_out'],'wallet':self.wallet,'pnl_complete':False}}
+            return settlement('reverted',{'input_raw':'0','output_raw':'0','fee_wei':str(fee),
+                    'token_in':intent['token_in'],'token_out':intent['token_out'],'wallet':self.wallet,'pnl_complete':False})
         if intent['kind'] != 'swap':
             exact = 0 if intent['kind']=='approval_reset' else int(intent['amount_in_raw'])
             if delta_in or delta_out or self._allowance(intent['token_in'],after) != exact:
                 return {'status':'unknown','reason':'approval_state_or_balance_mismatch','receipt':summary}
             self._recheck_anchor({'block_number':block,'block_hash':block_hash})
-            return {'status':'confirmed','receipt':summary,'fill':{'input_raw':'0','output_raw':'0','fee_wei':str(fee),
-                    'token_in':intent['token_in'],'token_out':intent['token_out'],'wallet':self.wallet,'kind':intent['kind'],'pnl_complete':False}}
+            return settlement('confirmed',{'input_raw':'0','output_raw':'0','fee_wei':str(fee),
+                    'token_in':intent['token_in'],'token_out':intent['token_out'],'wallet':self.wallet,'kind':intent['kind'],'pnl_complete':False})
         transfers = {intent['token_in']:0,intent['token_out']:0}
         swaps=[]
         direct_input=direct_output=0
@@ -667,6 +673,6 @@ class EvmExecutionAdapter:
                 or int(swap[input_key])!=delta_in or int(swap[output_key])!=-delta_out):
             return {'status':'unknown','reason':'pinned_swap_does_not_match_wallet_flows','receipt':summary}
         self._recheck_anchor({'block_number':block,'block_hash':block_hash})
-        return {'status':'confirmed','receipt':summary,'fill':{'input_raw':str(delta_in),'output_raw':str(delta_out),
+        return settlement('confirmed',{'input_raw':str(delta_in),'output_raw':str(delta_out),
                 'fee_wei':str(fee),'token_in':intent['token_in'],'token_out':intent['token_out'],
-                'wallet':self.wallet,'pnl_complete':False,'accounting_scope':'exact raw token/native deltas; no invented USD conversion'}}
+                'wallet':self.wallet,'pnl_complete':False,'accounting_scope':'exact raw token/native deltas; no invented USD conversion'})

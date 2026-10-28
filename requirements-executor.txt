@@ -1,3 +1,5 @@
-# Optional automatic EVM execution only; the paper runtime remains unchanged.
+# Optional automatic execution only; the paper runtime remains unchanged.
 # Maintained transaction signing/recovery; never use hand-written cryptography.
 eth-account==0.14.0
+solders==0.29.0
+jsonalias==0.1.1

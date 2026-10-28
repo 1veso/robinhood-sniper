@@ -82,20 +82,8 @@ class Judge:
         self.enabled = enabled
 
     def recurring_enabled(self):
-        path = self.root / 'runtime' / 'paid-ai.json'
-        if not path.exists():
-            return False
-        record = json.loads(path.read_text(encoding='utf-8'))
-        proof_path = self.root / 'runtime' / 'x-search-test.json'
-        if record.get('enabled') is not True or record.get('operator_authorized') is not True or not proof_path.exists():
-            return False
-        proof = json.loads(proof_path.read_text(encoding='utf-8'))
-        basic_path = self.root / 'runtime' / 'inference-test.json'
-        if not basic_path.exists():
-            return False
-        basic = json.loads(basic_path.read_text(encoding='utf-8'))
-        return (proof.get('model') == config.MODEL and proof.get('validated') is True
-                and basic.get('model') == config.MODEL and basic.get('validated') is True)
+        from rug_desk.model_gate import status
+        return status(self.root,self.clock())['enabled']
 
     def _request(self, payload, validator, context):
         enabled = self.recurring_enabled() if self.enabled is None else self.enabled
@@ -109,7 +97,14 @@ class Judge:
                 raise ValueError('Missing or malformed xAI credential file')
             request_id = 'rug-desk:' + uuid.uuid4().hex
             budget = DailyBudget(runtime / 'ai-budget.sqlite3', Decimal(config.AI_DAILY_LIMIT_USD))
-            audit = {'request_id': request_id, 'at': now, 'model': config.MODEL, **context}
+            if context.get('execution_account_id'):
+                budget.db.execute('CREATE TABLE IF NOT EXISTS advisory_request_accounts(request_id TEXT PRIMARY KEY,account_id TEXT NOT NULL)')
+                budget.db.execute('INSERT INTO advisory_request_accounts VALUES(?,?)',(request_id,context['execution_account_id']))
+                budget.db.commit()
+            from rug_desk.model_gate import binding
+            # Preserve exactly what the model was allowed to judge, without credentials.
+            audit = {'request_id': request_id, 'at': now, 'model': config.MODEL, **context,
+                     'binding':binding(self.root),'request':payload}
             try:
                 budget.reserve(request_id, Decimal(config.AI_RESERVATION_USD), now)
                 response = self.transport('POST', URL, payload, {'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}, 90)
@@ -119,7 +114,7 @@ class Judge:
                     raise ValueError('Billed usage unavailable')
                 result = validator(response)
                 audit['validated'] = True
-                return {**result, 'request_id': request_id, 'model': config.MODEL}
+                return {**result, 'request_id': request_id, 'model': config.MODEL,'judged_at':now,'binding':audit['binding']}
             except Exception as exc:
                 audit.update(validated=False, error_type=type(exc).__name__)
                 raise ValueError('Model judgment unavailable or invalid; inspect redacted response journal') from None
@@ -127,7 +122,7 @@ class Judge:
                 budget.close()
                 atomic(runtime / 'x-responses' / (request_id.replace(':', '-') + '.json'), encode(audit))
 
-    def ask(self, mint, facts, quote, *, context=None):
+    def ask(self, mint, facts, quote, *, context=None, execution_account_id=None):
         enabled = self.recurring_enabled() if self.enabled is None else self.enabled
         if enabled is not True:
             return {'verdict': 'SKIP', 'confidence': '0', 'why': 'Paid X judgment disabled; funded access and successful X test required', 'validated': False}
@@ -147,7 +142,12 @@ class Judge:
             'input': [{'role': 'system', 'content': JUDGE_PROMPT},
                       {'role': 'user', 'content': encode(evidence)}],
             'text': {'format': {'type': 'json_schema', 'name': 'rug_desk_verdict', 'strict': True, 'schema': schema}}}
-        return self._request(payload, validate, {'mint': mint, 'purpose': 'token_judgment'})
+        audit_context={'mint': mint, 'purpose': 'token_judgment'}
+        if execution_account_id is not None:
+            if not isinstance(execution_account_id,str) or not 1<=len(execution_account_id)<=120:
+                raise ValueError('Invalid execution account audit identity')
+            audit_context['execution_account_id']=execution_account_id
+        return self._request(payload, validate, audit_context)
 
     def rank_traders(self, candidates):
         from rug_desk.prompts import TRADER_PROMPT
@@ -186,7 +186,8 @@ def main():
                     {'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}, 60)
                 usage = budget.record_usage(request_id, response)
                 text = response_text(response).strip()
-                result = {'model': config.MODEL, 'http_status': 200, 'text': text, 'usage': usage,
+                from rug_desk.model_gate import binding
+                result = {'model': config.MODEL, 'http_status': 200, 'text': text, 'usage': usage,'binding':binding(args.root),
                           'validated': text == 'OK' and usage['cost_verified'], 'tested_at': int(time.time()),
                           'x_search_verified': False}
                 atomic(runtime / 'inference-test.json', encode(result))

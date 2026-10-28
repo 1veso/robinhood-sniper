@@ -45,9 +45,11 @@ The separate Solana RUG DESK remains blocked by its unfunded, disabled Grok/X ga
 
 [Jupiter V2 /order](https://developers.jup.ag/docs/api-reference/swap/order) returns quote metadata and an assembled transaction. Before an automatic Solana signer could accept it, the implementation must independently decode the message, resolve address lookups, validate every permitted program/instruction and account, check recipients/amounts/fees, and verify the intended pool. Matching JSON route metadata and a successful simulation do not perform those checks.
 
-Solana automatic signing/submission is therefore **unsupported**, not silently routed through the EVM executor. The future adapter must preserve the same durable submission/recovery/receipt rules. The Solana RPC documentation explicitly notes that [successful sendTransaction](https://solana.com/docs/rpc/http/sendtransaction) does not establish confirmation. Its paper account and seven-day clock remain separate from Robinhood.
+Version 0.1.19 implements a separate restricted classic-SPL Raydium CP-Swap validator, local instruction builder, signer, durable lifecycle and original exits. Arbitrary provider instructions and other AMMs remain unsupported. See [the release boundaries](EXECUTION_RELEASE_0.1.19.md). No Solana live deployment is enabled or independently approved. The Solana RPC documentation explicitly notes that [successful sendTransaction](https://solana.com/docs/rpc/http/sendtransaction) does not establish confirmation. Its paper account and seven-day clock remain separate from Robinhood.
 
 ## Deployment boundary and current validation
+
+Version 0.1.19 also implements opt-in EVM confirmed-position exit management with separate finalized accounting, bounded unfinalized exposure and a reorg halt. It requires independent review and remains disabled. Model credentials do not gate existing Solana exits. Solana daily limits retain the Berlin day.
 
 Version 0.1.18 adds `solana_wire.py` (bounded v0 compilation/decoding and RPC lookup
 checks) and `solana_preflight.py` (unsigned Metis build/simulation). These resolve

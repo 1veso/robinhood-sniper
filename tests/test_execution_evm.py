@@ -309,6 +309,22 @@ class EvmExecutorTests(unittest.TestCase):
             self.assertFalse(result['fill']['pnl_complete'])
             self.rpc.after[TOKEN]+=1
             self.assertEqual(self.backend.reconcile(order)['status'],'unknown')
+
+    def test_confirmed_receipt_is_separate_from_final_accounting(self):
+        order=self.receipt_fixture();original=self.rpc.call
+        def delayed(method,params=None):
+            r=original(method,params)
+            if method=='eth_getBlockByNumber' and params[0]=='finalized':r={**r,'number':hex(90)}
+            return r
+        self.rpc.call=delayed
+        with patch.object(self.backend,'_validate_signed'):
+            self.assertEqual(self.backend.reconcile(order)['status'],'pending')
+            self.backend.policy['exit_settlement_mode']='confirmed_exit_management'
+            result=self.backend.reconcile(order)
+            self.assertEqual(result['status'],'included');self.assertEqual(result['outcome'],'confirmed')
+            self.assertFalse(result['receipt']['finalized']);self.assertEqual(result['fill']['output_raw'],'50000000')
+            self.rpc.after[TOKEN]+=1
+            self.assertEqual(self.backend.reconcile(order)['status'],'unknown')
             self.rpc.after[TOKEN]-=1;self.rpc.native_after-=1
             self.assertEqual(self.backend.reconcile(order)['status'],'unknown')
 

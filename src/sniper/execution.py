@@ -18,8 +18,8 @@ import time
 import uuid
 
 
-OPEN = ('QUEUED', 'PREPARING', 'PREPARED', 'SIGNING', 'SIGNED', 'SUBMITTED', 'UNKNOWN', 'WAITING_APPROVAL')
-SIGNED = ('SIGNED', 'SUBMITTED', 'UNKNOWN')
+OPEN = ('QUEUED', 'PREPARING', 'PREPARED', 'SIGNING', 'SIGNED', 'SUBMITTED', 'UNKNOWN', 'WAITING_APPROVAL', 'INCLUDED')
+SIGNED = ('SIGNED', 'SUBMITTED', 'UNKNOWN', 'INCLUDED')
 TERMINAL = ('CONFIRMED', 'REVERTED', 'REJECTED', 'EXPIRED', 'REVIEW')
 RESERVING = OPEN + ('REVIEW',)
 
@@ -98,6 +98,16 @@ def validate_policy(policy):
         raise ValueError('Transaction gas budget exceeds daily budget')
     if p['deployment_authorized'] and (not p['capital_raw'] or p['wallet'] == '0x'+'0'*40):
         raise ValueError('Live deployment requires a funded-policy identity')
+    mode=p.get('exit_settlement_mode','finalized_only')
+    if mode not in ('finalized_only','confirmed_exit_management'):
+        raise ValueError('Unsupported exit settlement mode')
+    if mode=='confirmed_exit_management':
+        if not isinstance(p.get('provisional_exit_review_reference'),str) or not p['provisional_exit_review_reference'].strip():
+            raise ValueError('Provisional exit management requires an explicit review')
+        if type(p.get('max_unfinalized_transactions'))is not int or not 1<=p['max_unfinalized_transactions']<=8:
+            raise ValueError('Bounded unfinalized transaction capacity is required')
+        if p.get('require_finalized') is not True:
+            raise ValueError('Provisional management cannot weaken finalized accounting')
     p['policy_hash'] = policy_hash(p)
     return p
 
@@ -105,9 +115,14 @@ def validate_policy(policy):
 class ExecutionJournal:
     """One independent wallet/account/policy, protected by SQLite transactions."""
 
+    validate_policy = staticmethod(validate_policy)
+    address = staticmethod(address)
+    tx_hash = staticmethod(tx_hash)
+    block_hash = staticmethod(tx_hash)
+
     def __init__(self, path, policy, *, create=False):
         self.path = Path(path)
-        self.policy = validate_policy(policy)
+        self.policy = self.validate_policy(policy)
         # Signing grants are process-local and monotonic. A persisted prepared
         # transaction alone cannot keep a dead/expired worker's signer active.
         self._signing_deadlines = {}
@@ -218,6 +233,30 @@ class ExecutionJournal:
         return [{**dict(r), 'take_profit_done': bool(r['take_profit_done'])}
                 for r in self.db.execute("SELECT * FROM execution_positions WHERE closed_at IS NULL ORDER BY opened_at,position_id")]
 
+    def management_positions(self):
+        """Operational confirmed holdings; never used as finalized P&L/cash."""
+        positions={p['position_id']:dict(p) for p in self.positions()}
+        if self.policy.get('exit_settlement_mode')!='confirmed_exit_management':return list(positions.values())
+        included=sorted((o for o in self.orders() if o['status']=='INCLUDED'),key=lambda o:o['nonce'])
+        for o in included:
+            result=o['receipt'];i=o['intent']
+            if not result or result.get('outcome')!='confirmed' or i.get('kind','swap')!='swap':continue
+            f=result['fill'];amount_in,amount_out=int(f['input_raw']),int(f['output_raw'])
+            if i['side']=='buy':
+                positions[o['id']]={'position_id':o['id'],'token':i['token_out'],'pool':i['pool'],
+                    'original_qty_raw':str(amount_out),'remaining_qty_raw':str(amount_out),'cost_basis_raw':str(amount_in),
+                    'entry_cost_raw':str(amount_in),'opened_at':result['receipt']['observed_at'],
+                    'peak_price':self._get('provisional_peak:'+o['id']) or str(Decimal(amount_in)/amount_out),
+                    'take_profit_done':False,'provisional':True}
+            else:
+                p=positions.get(i['position_id'])
+                if not p or amount_in>int(p['remaining_qty_raw']):raise ValueError('Provisional sale exceeds derived holdings')
+                qty,basis=int(p['remaining_qty_raw']),int(p['cost_basis_raw'])
+                p.update(remaining_qty_raw=str(qty-amount_in),cost_basis_raw=str(basis-(basis if amount_in==qty else basis*amount_in//qty)),
+                         take_profit_done=p['take_profit_done'] or i.get('reason')=='take_profit',provisional=True)
+                if amount_in==qty:positions.pop(i['position_id'])
+        return list(positions.values())
+
     def notices(self):
         return [{**dict(r), 'payload': json.loads(r['payload'])}
                 for r in self.db.execute('SELECT * FROM execution_notices WHERE ack_at IS NULL ORDER BY at,id')]
@@ -239,7 +278,10 @@ class ExecutionJournal:
                 'native_fees_wei': str(sum(int(f['fee_wei']) for f in fills)),
                 'realized_base_before_native_fees_raw': str(sum(int(f['realized_base_raw']) for f in fills)),
                 'pnl_complete': False, 'cost_scope': 'Base-token deltas and native fees separately; no assumed USD valuation',
-                'positions': self.positions(), 'order_counts': {s: sum(o['status'] == s for o in orders) for s in OPEN+TERMINAL},
+                'positions': self.positions(), 'management_positions': self.management_positions(),
+                'provisional_transaction_count':sum(o['status']=='INCLUDED' for o in orders),
+                'exit_settlement_mode':self.policy.get('exit_settlement_mode','finalized_only'),
+                'order_counts': {s: sum(o['status'] == s for o in orders) for s in OPEN+TERMINAL},
                 'entry_halt': self._get('entry_halt') or None, 'full_halt': self._get('full_halt') or None,
                 'fill_count': sum(f['success'] == 1 and f['side'] in ('buy', 'sell') for f in fills)}
 
@@ -265,6 +307,11 @@ class ExecutionJournal:
             if row and value > Decimal(row[0]):
                 self.db.execute('UPDATE execution_positions SET peak_price=? WHERE position_id=?', (str(value), position_id))
                 self._audit(position_id, 'peak', {'price': str(value)}, at)
+            elif not row:
+                position=next((p for p in self.management_positions() if p['position_id']==position_id),None)
+                if position and position.get('provisional') and value>Decimal(position['peak_price']):
+                    self._set('provisional_peak:'+position_id,str(value))
+                    self._audit(position_id,'provisional_peak',{'price':str(value)},at)
 
     def _validate_intent(self, intent, now):
         p = self.policy
@@ -310,10 +357,16 @@ class ExecutionJournal:
                 raise ValueError('Distinct buyer/transaction quorum is missing')
         return i
 
+    @staticmethod
+    def day_start(now):
+        return now//86400*86400
+
     def _entry_limits(self, intent, now, exclude_id=None):
         p = self.policy
         if self._get('entry_halt') or self._get('full_halt'):
             raise ValueError('New entries are halted')
+        if any(o['status']=='INCLUDED' and not (o['parent_id']==intent['id'] and o['intent'].get('kind') in ('approval','approval_reset')) for o in self.orders()):
+            raise ValueError('Unfinalized exposure blocks additional entries')
         amount = int(intent['amount_in_raw'])
         if not 0 < amount <= p['max_order_raw']:
             raise ValueError('Order exceeds approved amount')
@@ -333,7 +386,7 @@ class ExecutionJournal:
         exposure = sum(int(x['cost_basis_raw']) for x in positions)
         if amount+reserved+exposure > p['max_total_exposure_raw']:
             raise ValueError('Account exposure limit')
-        day = now//86400*86400
+        day = self.day_start(now)
         entries = self.db.execute("SELECT COUNT(*) FROM execution_fills WHERE observed_at>=? AND side='buy' AND success=1", (day,)).fetchone()[0]
         if entries+len(pending) >= p['max_entries_per_day']:
             raise ValueError('Daily entry limit')
@@ -350,7 +403,7 @@ class ExecutionJournal:
             for key in ('amount_in_raw','min_output_raw','quoted_output_raw'):
                 if key in normalized: normalized[key] = str(raw(normalized[key], key, 1))
             for key in ('token_in','token_out','pool'):
-                if key in normalized: normalized[key] = address(normalized[key])
+                if key in normalized: normalized[key] = self.address(normalized[key])
             if digest(normalized) != original['intent_digest']:
                 raise ValueError('Conflicting intent replay')
             return original
@@ -367,11 +420,11 @@ class ExecutionJournal:
                 self._entry_limits(i, now)
                 reserve = int(i['amount_in_raw'])
             else:
-                position = self.db.execute('SELECT * FROM execution_positions WHERE position_id=? AND closed_at IS NULL', (i.get('position_id'),)).fetchone()
+                position = next((p for p in self.management_positions() if p['position_id']==i.get('position_id')),None)
                 if not position or i['token_in'] != position['token'] or i['pool'] != position['pool']:
                     raise ValueError('Exit does not match owned position')
                 reserved_sells = sum(int(o['intent']['amount_in_raw']) for o in self.orders()
-                                     if o['status'] in RESERVING and not o['parent_id'] and o['intent'].get('position_id') == i['position_id'])
+                                     if o['status'] in RESERVING and o['status']!='INCLUDED' and not o['parent_id'] and o['intent'].get('position_id') == i['position_id'])
                 if int(i['amount_in_raw'])+reserved_sells > int(position['remaining_qty_raw']):
                     raise ValueError('Exit exceeds unreserved holdings')
             self.db.execute('INSERT INTO execution_orders(id,intent,intent_digest,status,created_at,updated_at,reservation_raw) VALUES(?,?,?,?,?,?,?)',
@@ -426,15 +479,60 @@ class ExecutionJournal:
         if notify and status in ('UNKNOWN', 'REVIEW', 'REVERTED', 'REJECTED'):
             self._notice(order_id, status.lower(), {'order_id': order_id, 'status': status, 'error': error}, now)
 
+    def _settled(self, order, result, now):
+        """Chain-specific metadata hook inside the atomic settlement transaction."""
+
+    def expire_signed(self, order, evidence, now, fence):
+        raise ValueError('This chain has no positive signed-expiry proof implementation')
+
+    def record_inclusion(self,order,result,now,fence):
+        """Persist verified provisional flows without posting cash, fills or P&L."""
+        r=result.get('receipt') or {};f=result.get('fill') or {};i=order['intent']
+        if (self.policy.get('exit_settlement_mode')!='confirmed_exit_management' or r.get('canonical') is not True
+                or r.get('finalized') is not False or result.get('outcome') not in ('confirmed','reverted')
+                or self.tx_hash(r.get('tx_hash'))!=order['tx_hash']):
+            raise ValueError('Unreviewed or invalid provisional receipt')
+        self.block_hash(r['block_hash']);integer(r['block_number'],'block_number')
+        integer(r['observed_at'],'observed_at')
+        if integer(r.get('confirmation_depth'),'confirmation_depth')<self.policy['confirmations']:
+            raise ValueError('Provisional receipt depth insufficient')
+        amount_in,amount_out=raw(f.get('input_raw',0),'input_raw'),raw(f.get('output_raw',0),'output_raw')
+        if raw(f.get('fee_wei'),'fee_wei')>int(order['gas_reservation_wei']):raise ValueError('Provisional expense exceeds reserve')
+        if result['outcome']=='confirmed' and i.get('kind','swap')=='swap':
+            if (amount_in!=int(i['amount_in_raw']) or amount_out<int(i['min_output_raw'])
+                    or f.get('wallet')!=self.policy['wallet'] or f.get('token_in')!=i['token_in'] or f.get('token_out')!=i['token_out']):
+                raise ValueError('Provisional flow identity/amount mismatch')
+        elif amount_in or amount_out:raise ValueError('Non-swap outcome cannot create holdings')
+        # Depth naturally changes; block, outcome and flows must remain identical.
+        identity=lambda v: (v['receipt']['block_hash'],v['receipt']['block_number'],v['outcome'],v['fill'])
+        if order['status']=='INCLUDED' and identity(order['receipt'])!=identity(result):
+            raise ValueError('Provisional outcome changed')
+        with self.transaction():
+            fence()
+            self.db.execute('UPDATE execution_orders SET receipt=?,receipt_digest=? WHERE id=?',(encode(result),digest(result),order['id']))
+            self._status(order['id'],'INCLUDED',now,notify=False)
+            if order['status']!='INCLUDED':
+                self._notice(order['id'],'provisional_inclusion',{'order_id':order['id'],'tx_hash':order['tx_hash'],
+                    'scope':'Verified confirmed flows for exit management only; no finalized fill or P&L'},now)
+            if order['parent_id'] and result['outcome']=='confirmed':
+                if self.order(order['parent_id'])['status']=='WAITING_APPROVAL':
+                    self._status(order['parent_id'],'QUEUED',now,notify=False)
+
     def _finalize(self, order, result, now, *, fence=None):
         receipt = result.get('receipt') or {}
         fill = result.get('fill') or {}
-        identity = tx_hash(receipt.get('tx_hash', order['tx_hash']))
-        block_hash = tx_hash(receipt['block_hash'])
+        identity = self.tx_hash(receipt.get('tx_hash', order['tx_hash']))
+        block_hash = self.block_hash(receipt['block_hash'])
         block_number = integer(receipt['block_number'], 'block_number')
         at = integer(receipt.get('observed_at', now), 'observed_at')
         if identity != order['tx_hash'] or result.get('status') not in ('confirmed', 'reverted'):
             raise ValueError('Receipt identity/outcome mismatch')
+        if order['status']=='INCLUDED':
+            previous=order['receipt']
+            fields=('tx_hash','block_hash','block_number')
+            if (any(previous['receipt'].get(k)!=receipt.get(k) for k in fields)
+                    or previous['outcome']!=result['status'] or previous['fill']!=fill):
+                raise ValueError('Final receipt conflicts with provisional inclusion')
         # Adapter contract requires explicit canonical, depth-finalized evidence.
         if receipt.get('canonical') is not True or not (receipt.get('finalized') is True or receipt.get('finality') == 'finalized'):
             raise ValueError('Receipt lacks canonical finality evidence')
@@ -449,8 +547,8 @@ class ExecutionJournal:
         if not success and (amount_in or amount_out):
             raise ValueError('Reverted transaction cannot have a swap fill')
         if success and not approval:
-            if (address(fill['wallet']) != self.policy['wallet'] or address(fill['token_in']) != intent['token_in']
-                    or address(fill['token_out']) != intent['token_out']):
+            if (self.address(fill['wallet']) != self.policy['wallet'] or self.address(fill['token_in']) != intent['token_in']
+                    or self.address(fill['token_out']) != intent['token_out']):
                 raise ValueError('Receipt token/account mismatch')
             requested = int(intent['amount_in_raw'])
             if not 0 < amount_in <= requested or amount_out <= 0:
@@ -476,6 +574,8 @@ class ExecutionJournal:
                     cash -= amount_in
                     self.db.execute('INSERT INTO execution_positions(position_id,token,pool,original_qty_raw,remaining_qty_raw,cost_basis_raw,entry_cost_raw,opened_at,peak_price) VALUES(?,?,?,?,?,?,?,?,?)',
                         (order['id'], intent['token_out'], intent['pool'], str(amount_out), str(amount_out), str(amount_in), str(amount_in), at, str(Decimal(amount_in)/Decimal(amount_out))))
+                    peak=self._get('provisional_peak:'+order['id'])
+                    if peak:self.db.execute('UPDATE execution_positions SET peak_price=? WHERE position_id=?',(peak,order['id']))
                 else:
                     position = self.db.execute('SELECT * FROM execution_positions WHERE position_id=? AND closed_at IS NULL', (intent['position_id'],)).fetchone()
                     if not position or amount_in > int(position['remaining_qty_raw']):
@@ -490,13 +590,16 @@ class ExecutionJournal:
             self.db.execute('INSERT INTO execution_fills VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
                 (identity, order['id'], intent.get('kind') if approval else intent['side'], str(amount_in), str(amount_out), str(fee), str(realized), block_number, block_hash, at, int(success), evidence_digest))
             self.db.execute('UPDATE execution_orders SET receipt=?,receipt_digest=? WHERE id=?', (encode(result), evidence_digest, order['id']))
+            self._settled(order, result, now)
             self._status(order['id'], 'CONFIRMED' if success else 'REVERTED', now)
             self._notice(order['id'], 'receipt', {'order_id': order['id'], 'tx_hash': identity, 'success': success,
                 'kind': intent.get('kind', 'swap'), 'side': intent['side'], 'input_raw': str(amount_in), 'output_raw': str(amount_out),
                 'fee_wei': str(fee), 'realized_base_before_native_fees_raw': str(realized), 'acceptance': self.policy['acceptance_mode']}, now)
             if order['parent_id']:
-                self._status(order['parent_id'], 'QUEUED' if success else 'REJECTED', now,
-                             None if success else 'approval transaction reverted')
+                parent=self.order(order['parent_id'])
+                if parent['status']=='WAITING_APPROVAL':
+                    self._status(order['parent_id'], 'QUEUED' if success else 'REJECTED', now,
+                                 None if success else 'approval transaction reverted')
 
 
 class AutomaticExecutor:
@@ -556,9 +659,17 @@ class AutomaticExecutor:
         if not self._lease(now):
             return {'status': 'BUSY'}
         try:
-            signed = [o for o in j.orders() if o['status'] in SIGNED]
+            signed = sorted((o for o in j.orders() if o['status'] in SIGNED),key=lambda o:o['nonce'])
             if signed:
-                return self._reconcile(signed[0], now)
+                if j.policy.get('exit_settlement_mode')!='confirmed_exit_management':
+                    return self._reconcile(signed[0], now)
+                progress=None
+                for order in signed:
+                    progress=self._reconcile(order,now)
+                    if progress['status'] not in ('INCLUDED','CONFIRMED','REVERTED'):return progress
+                pending=[o for o in j.orders() if o['status']=='INCLUDED']
+                if len(pending)>=j.policy['max_unfinalized_transactions']:
+                    return {'status':'WAITING_FINALITY','reason':'Unfinalized capacity is fully reserved'}
             if j._get('full_halt'):
                 return {'status': 'HALTED', 'reason': j._get('full_halt')}
             if any(o['status'] == 'REVIEW' for o in j.orders()):
@@ -573,6 +684,10 @@ class AutomaticExecutor:
                 return {'status': 'REVIEW', 'order_id': interrupted[0]['id']}
             candidates = [o for o in j.orders() if o['status'] in ('QUEUED','PREPARING','PREPARED')]
             candidates.sort(key=lambda o: (o['intent']['side'] != 'sell', o['created_at'], o['id']))
+            included=[o for o in j.orders() if o['status']=='INCLUDED']
+            if included:
+                candidates=[o for o in candidates if o['intent']['side']=='sell' or all(
+                    a['parent_id']==o['id'] and a['intent'].get('kind') in ('approval','approval_reset') for a in included)]
             if j._get('entry_halt'):
                 candidates = [o for o in candidates if o['intent']['side'] == 'sell']
             if not candidates:
@@ -601,7 +716,7 @@ class AutomaticExecutor:
             raise ValueError('A signed identity cannot be refreshed or replaced')
         new = self.backend.refresh_intent(json.loads(encode(order['intent'])))
         allowed = {'quoted_output_raw','min_output_raw','quote_at','deadline','block_number','block_hash',
-                   'block_timestamp','fee','token_code_sha256','entry_evidence'}
+                   'block_timestamp','fee','token_code_sha256','entry_evidence','provider_quote_digest','context_slot'}
         old_immutable = {k:v for k,v in order['intent'].items() if k not in allowed}
         new_immutable = {k:v for k,v in new.items() if k not in allowed}
         if old_immutable != new_immutable:
@@ -667,7 +782,7 @@ class AutomaticExecutor:
                     root = j.order(order['parent_id']) if order['parent_id'] else order
                     j._validate_intent(root['intent'], now)
                     j._entry_limits(root['intent'], now, exclude_id=root['id'])
-                day = now//86400*86400
+                day = j.day_start(now)
                 spent = sum(int(r[0]) for r in j.db.execute('SELECT fee_wei FROM execution_fills WHERE observed_at>=?', (day,)))
                 reserved = sum(int(o['gas_reservation_wei']) for o in j.orders() if o['status'] in RESERVING and o['id']!=order['id'])
                 if gas > j.policy['max_tx_gas_wei'] or spent+reserved+gas > j.policy['max_gas_wei_day']:
@@ -684,7 +799,7 @@ class AutomaticExecutor:
             self._fence()
             if signed.get('nonce') != nonce or not isinstance(signed.get('raw_transaction'), str) or not re.fullmatch(r'0x(?:[0-9a-fA-F]{2})+', signed['raw_transaction']):
                 raise ValueError('Invalid signed transaction bytes/nonce')
-            identity = tx_hash(signed['tx_hash'])
+            identity = j.tx_hash(signed['tx_hash'])
             with j.transaction():
                 self._fence()
                 current = j.order(order['id'])
@@ -715,6 +830,12 @@ class AutomaticExecutor:
             result = self.backend.reconcile(order)
             self._fence()
             state = result.get('status')
+            if state == 'included':
+                j.record_inclusion(order,result,now,self._fence)
+                return {'status':'INCLUDED','order_id':order['id']}
+            if state == 'expired':
+                j.expire_signed(order, result.get('evidence'), now, self._fence)
+                return {'status': 'EXPIRED', 'order_id': order['id']}
             if state in ('confirmed','reverted'):
                 j._finalize(order, result, now, fence=self._fence)
                 return {'status': j.order(order['id'])['status'], 'order_id': order['id']}
@@ -724,6 +845,8 @@ class AutomaticExecutor:
                     j._status(order['id'], 'REVIEW', now, 'canonical chain changed; holdings not fabricated')
                     j._set('full_halt', 'reorganization requires canonical recovery')
                 return {'status': 'REVIEW', 'order_id': order['id']}
+            if order['status']=='INCLUDED' and state in ('pending','unknown'):
+                raise ValueError('Previously verified provisional inclusion is no longer verifiable')
             if state not in ('pending','unknown'):
                 raise ValueError('Unsupported reconciliation state')
             if (state == 'pending' and not j._get('full_halt') and not (j._get('entry_halt') and order['intent']['side'] == 'buy') and now < order['prepared']['expires_at']
@@ -741,7 +864,7 @@ class AutomaticExecutor:
                 finally:
                     j._broadcast_grants.pop(order['tx_hash'], None)
                 self._fence()
-                if tx_hash(returned) != order['tx_hash']:
+                if j.tx_hash(returned) != order['tx_hash']:
                     raise ValueError('Provider returned a different transaction identity')
                 with j.transaction():
                     self._fence()
@@ -757,5 +880,9 @@ class AutomaticExecutor:
         except Exception as exc:
             with j.transaction():
                 self._fence()
+                if order['status']=='INCLUDED':
+                    j._status(order['id'],'REVIEW',now,'Provisional receipt unavailable or changed')
+                    j._set('full_halt','Provisional exposure requires canonical recovery')
+                    return {'status':'REVIEW','order_id':order['id']}
                 j._status(order['id'], 'UNKNOWN', now, type(exc).__name__)
             return {'status': 'UNKNOWN', 'order_id': order['id'], 'error': type(exc).__name__}

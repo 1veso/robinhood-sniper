@@ -39,7 +39,7 @@ class SwitchoverTests(unittest.TestCase):
         states={c['name']:c['state'] for c in result['checks']}
         self.assertEqual(states['Unsigned buy/sell builds'],'VERIFIED')
         self.assertEqual(states['Wallet-specific simulation'],'VERIFIED_SETUP_ONLY')
-        self.assertEqual(states['Solana automatic executor'],'INCOMPLETE')
+        self.assertEqual(states['Solana automatic executor'],'IMPLEMENTED_UNREVIEWED')
         self.assertFalse(result['live_execution_ready']); self.assertFalse(result['automatic_promotion'])
         self.assertFalse(result['per_trade_approval_required'])
 

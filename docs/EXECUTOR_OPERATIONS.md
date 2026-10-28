@@ -1,5 +1,7 @@
 # Automatic executor operations
 
+Version 0.1.19 adds opt-in confirmed-position exit management, a separate restricted Solana executor, actual-wallet validation commands and DPAPI provisioning. Read [the release boundaries](EXECUTION_RELEASE_0.1.19.md). No live mode is enabled; all review, capital, funded-validation and initial-authorization requirements remain.
+
 Use the installed directory C:\Users\User\Downloads\sniper-v0.1.0 consistently. The source checkout is C:\Dev\SNIPER\sniper-publish. The execution journal is separate from the existing exploratory paper ledger and from isolated acceptance accounts. Never point the executor at the paper ledger or copy its fills into an execution account.
 
 ## Commands

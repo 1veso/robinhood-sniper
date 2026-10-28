@@ -63,11 +63,16 @@ def inventory(root, chain, now=None):
         simulated = built and all((p.get('simulation') or {}).get('succeeded') is True for p in probes)
         add('Wallet-specific simulation', 'VERIFIED_SETUP_ONLY' if simulated else 'BLOCKED',
             'Simulation does not approve instructions or create a fill.' if simulated else 'The saved setup simulations did not succeed; an unfunded/missing wallet account cannot execute on mainnet.')
-        paid = read(root/'rug_desk/runtime/paid-ai.json')
-        add('Approved Grok/X gate', 'REQUIRES_VERIFIED_ACCESS' if paid.get('enabled') is True and paid.get('operator_authorized') is True else 'DISABLED',
-            'Paid model calls remain disabled under current user instructions. Solana trial cannot start without the required evidence.', 'authorization')
-        add('Solana automatic executor', 'INCOMPLETE',
-            'Wire decoding, chain lookup checks and unsigned simulation are implemented. Full Jupiter/AMM semantics, restricted signer, durable automatic submission/recovery and strategy integration remain unfinished.', 'implementation')
+        from rug_desk.model_gate import status as model_status
+        gate=model_status(root/'rug_desk',now)
+        add('Approved Grok/X gate', 'VERIFIED_LOCAL_PROOFS' if gate['enabled'] else 'DISABLED',
+            '; '.join(gate['blockers']) if gate['blockers'] else 'Account/key/config-bound funded test evidence is current. Per-call validation and budget still apply.', 'authorization')
+        add('Solana automatic executor', 'IMPLEMENTED_UNREVIEWED',
+            'Direct classic-SPL Raydium CP instruction construction, restricted signing, durable recovery and strategy integration are implemented. Other routes fail closed. Independent review, supported wallet simulations and initial deployment remain required.', 'implementation')
+        cp=read(root/'runtime/live-preparation/solana-cp-execution-probe.json')
+        stamp=cp.get('observed_at');current_cp=type(stamp)is int and 0<=now-stamp<=3600 and cp.get('wallet_sha256')==wallet_hash
+        add('Restricted CP route probe','OBSERVED_SETUP_ONLY' if current_cp and cp.get('independent_pool_quote_validated') is True else 'UNVERIFIED',
+            'A successful public setup quote does not approve a strategy token or funded execution. Missing routes remain blocked.')
         add('Solana strategy trial', 'REQUIRED', 'Synthetic setup tests and public quotes do not count as the separate seven-day cost-aware strategy trial.', 'strategy')
     else:
         contracts = evidence.get('contracts') if usable else {}
@@ -79,7 +84,8 @@ def inventory(root, chain, now=None):
         add('EVM deployment pins', 'VERIFIED' if usable and matches else 'UNVERIFIED', 'Public bytecode and selected proxy identity checks are observations, not an independent audit.')
         lag = evidence.get('finality_lag_seconds') if usable else None
         add('EVM finality and exits', 'REVIEW_REQUIRED',
-            f'Observed finalized lag: {lag} seconds. The serialized finalized-only executor can delay exits; a reviewed latency bound is now required.' if type(lag) is int else 'Current finalized-lag observation unavailable. Review serialized exit latency before deployment.', 'design')
+            (f'Observed finalized lag: {lag} seconds. ' if type(lag) is int else 'Current finalized-lag observation unavailable. ')+
+            'Reviewed confirmed exit management can act on provisional holdings while accounting waits for finality. Reorgs halt execution; pending nonce and capacity can still delay exits. This mode is not enabled.', 'design')
         add('EVM executor', 'SHADOW_ONLY', 'Deterministic executor exists with offline recovery tests. The active worker has no live authority.', 'implementation')
         add('Wallet-specific swap simulation', 'UNVERIFIED', 'Public quotes and empty-wallet checks do not prove a funded swap can execute.')
         add('Strategy evidence review', 'REQUIRED', 'Review the unchanged trial deadline, net costs, unresolved holdings, policy segments and monitoring gaps. Profitability cannot authorize deployment.', 'strategy')

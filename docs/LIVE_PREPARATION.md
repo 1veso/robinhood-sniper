@@ -2,11 +2,11 @@
 
 Version 0.1.18 adds repeatable free checks, unsigned Metis builds and a measured
 EVM finality gate. See [LIVE_SWITCHOVER.md](LIVE_SWITCHOVER.md) for current evidence
-and the explicitly unfinished Solana automatic executor.
+and historical preparation evidence. Version 0.1.19 adds a restricted direct CP-Swap automatic executor and optional EVM confirmed-position exit management; see [the release boundaries](EXECUTION_RELEASE_0.1.19.md). Both remain disabled pending review and funded validation.
 
 The user's 2026-10-27 request authorizes adding execution costs and preparing later live execution. Existing trading thresholds, exits, wallet rules and `rug_desk/config.py` remain unchanged. The Solana account gets an explicitly versioned cost model before its first strategy fill. The existing Robinhood paper engine already includes same-block V3 pool fees/impact, 100 bps adverse execution stress, and conservative gas: twice the larger quoter estimate plus 100,000 gas units, valued at the current gas/ETH price. That is still a paper estimate, not a wallet-specific executed transaction.
 
-**Latest execution requirement:** the user requires automatic trading, with no routine per-trade approval or manual signing. [Automatic execution requirements](AUTOMATED_EXECUTION.md) supersede the article’s manual workflow. The current preparation reader is not a live executor; the Solana signing/instruction-validation path remains unimplemented. The separate Robinhood executor is documented in [Executor operations](EXECUTOR_OPERATIONS.md) and stays disabled for real funds.
+**Latest execution requirement:** the user requires automatic trading, with no routine per-trade approval or manual signing. [Automatic execution requirements](AUTOMATED_EXECUTION.md) supersede the article’s manual workflow. The current preparation reader is not a live executor; a separate restricted Solana signing/instruction-validation path is now implemented but unreviewed for deployment. The separate Robinhood executor is documented in [Executor operations](EXECUTOR_OPERATIONS.md) and stays disabled for real funds.
 
 ## Solana paper accounting
 
@@ -39,7 +39,7 @@ Activation command, used only for the authorized empty Solana account:
 
 The report's draft review criteria require seven days of the cost-aware trial, at least 30 completed positions, reconciled API costs, current open-position marks, positive net results after costs and open losses, positive results after the extra cost shock, profitable chronological halves, positive closed-trade results after removing the best trade, and review of operational errors. These are practical review gates, not statistically proven evidence of an edge. They can identify insufficient evidence; they cannot guarantee future profit.
 
-Passing them sets **performance ready for human review**, never `real_money_enabled`. No profitable balance, deadline or configuration flag causes a wallet to sign. The user controls initial live deployment and approves its wallet, capital and risk limits. The required future executor must then validate, sign, submit and reconcile ordinary trades automatically under that authority, with no per-trade human approval. The Robinhood implementation is available in shadow/disabled mode; the Solana instruction validator and signing path remain incomplete. Any eventual real-money validation must use a separately authorized, bounded deployment; paper and real holdings remain separate.
+Passing them sets **performance ready for human review**, never `real_money_enabled`. No profitable balance, deadline or configuration flag causes a wallet to sign. The user controls initial live deployment and approves its wallet, capital and risk limits. The required future executor must then validate, sign, submit and reconcile ordinary trades automatically under that authority, with no per-trade human approval. The Robinhood implementation is available in shadow/disabled mode; the separate restricted Solana instruction validator and signing path require independent review and funded validation. Any eventual real-money validation must use a separately authorized, bounded deployment; paper and real holdings remain separate.
 
 The existing Robinhood trial keeps its account/deadline and its own results. The Solana trial still waits for funded xAI inference/X Search validation. Do not combine their P&L or count synthetic acceptance fills as performance.
 

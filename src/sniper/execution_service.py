@@ -204,9 +204,9 @@ class GuardedBackend:
 
 def plan_exits(journal, backend, now):
     planned=[];errors=[]
-    for position in journal.positions():
+    for position in journal.management_positions():
         try:
-            if any(o['status'] in OPEN and o['intent'].get('position_id')==position['position_id'] for o in journal.orders()): continue
+            if any(o['status'] in OPEN and o['status']!='INCLUDED' and o['intent'].get('position_id')==position['position_id'] for o in journal.orders()): continue
             quote=backend.adapter.quote_swap(position['token'],journal.policy['base_token'],position['pool'],int(position['remaining_qty_raw']))
             result=exit_decision(position,quote,int(backend.clock()))
             if result is None: continue
@@ -281,7 +281,8 @@ def validate_deployment(policy):
     """No profitability flag or paper metadata can grant initial live authority."""
     if policy.get('deployment_authorized') is not True or policy.get('acceptance_mode') is True:
         raise ValueError('Explicit initial live deployment is required')
-    required=('user_approval_reference','independent_review_reference','observation_source_id','keystore_path','finality_review_reference')
+    signer_field='signer_path' if policy.get('signer_provider')=='windows_dpapi' else 'keystore_path'
+    required=('user_approval_reference','independent_review_reference','observation_source_id',signer_field,'finality_review_reference')
     if any(not isinstance(policy.get(k),str) or not policy[k].strip() for k in required):
         raise ValueError('Deployment review, observation identity and local signer must be bound')
     if policy.get('chain_id')!=4663 or policy.get('execution_target')!='automatic':raise ValueError('Unsupported execution deployment')
@@ -317,8 +318,18 @@ def live_backend(root, journal):
         value=os.environ.get('SNIPER_EXECUTOR_KEYSTORE_PASSWORD')
         if not value:raise ValueError('Restricted keystore password is unavailable')
         return value
-    adapter.signer=RestrictedEvmSigner.encrypted_keystore(adapter,Path(p['keystore_path']),password,journal.signing_authorized)
-    return GuardedBackend(adapter,root/'runtime/executor/live/events.sqlite3',p,DexScreenerClient(chain_id='robinhood'),journal=journal)
+    backend=GuardedBackend(adapter,root/'runtime/executor/live/events.sqlite3',p,DexScreenerClient(chain_id='robinhood'),journal=journal)
+    def authorize(prepared):
+        if not journal.signing_authorized(prepared):return False
+        i=prepared['intent']
+        if i['side']=='buy':backend.entry_evidence(i['token_out'],i['pool']);backend.check_equity_risk(i)
+        return journal.signing_authorized(prepared)
+    if p.get('signer_provider')=='windows_dpapi':
+        from .signer_vault import load_signer
+        adapter.signer=RestrictedEvmSigner(adapter,lambda:load_signer(Path(p['signer_path']),p),authorize)
+    else:
+        adapter.signer=RestrictedEvmSigner.encrypted_keystore(adapter,Path(p['keystore_path']),password,authorize)
+    return backend
 
 
 def notify_execution(journal, folder, runtime):
@@ -338,8 +349,9 @@ def notify_execution(journal, folder, runtime):
                 '\nEvent: '+notice['kind']+'\nOrder: '+str(notice.get('order_id') or data.get('order_id',''))+
                 '\nTransaction: '+str(data.get('tx_hash','pending'))+
                 '\nActual input/output raw: '+str(data.get('input_raw','—'))+' / '+str(data.get('output_raw','—'))+
-                '\nActual native fee wei: '+str(data.get('fee_wei','—'))+
-                '\nOnly finalized canonical receipts change holdings. Base and native fees remain separate; no unverified net USD P&L.')
+                '\nActual native fee '+journal.policy.get('native_unit','wei')+': '+str(data.get('fee_lamports',data.get('fee_wei','—')))+
+                '\n'+str(data.get('scope','Finalized canonical receipts alone change accounting. Provisional holdings, when enabled, are used only for exits.'))+
+                '\nBase and native fees remain separate; no unverified net USD P&L.')
             outbox.enqueue(str(notice['id']),{'message':message,'account_id':journal.policy['account_id'],'notice_id':notice['id']},notice['at'])
         counts=outbox.counts()
         if counts.get('pending'):
@@ -360,7 +372,7 @@ def live_cycle(root):
     with closing(ExecutionJournal(folder/'ledger.sqlite3',policy)) as journal:
         backend=live_backend(root,journal);worker=AutomaticExecutor(journal,backend);now=int(time.time())
         # Reconciliation and exits always run before entry work and do not use paper holdings.
-        progress=worker.tick(now) if any(o['status'] in ('SIGNED','SUBMITTED','UNKNOWN','SIGNING') for o in journal.orders()) else {'status':'IDLE'}
+        progress=worker.tick(now) if any(o['status'] in ('SIGNED','SUBMITTED','UNKNOWN','SIGNING','INCLUDED') for o in journal.orders()) else {'status':'IDLE'}
         errors=[]
         exits,exit_errors=plan_exits(journal,backend,int(time.time()))
         errors.extend(exit_errors)

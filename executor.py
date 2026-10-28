@@ -24,8 +24,14 @@ def initialize_live(root, policy_path):
     policy=json.loads(policy_path.read_text(encoding='utf-8-sig'))
     folder=root/'runtime/executor/live'
     if folder.exists():raise ValueError('Live account already exists; never reset or overwrite it')
-    # A source UUID is part of policy identity. Generate once during explicit initialization.
-    policy['observation_source_id']=str(uuid.uuid4())
+    # A DPAPI vault binds the exact reviewed policy. Never rewrite that identity
+    # after provisioning. Legacy unbound keystores retain the prior initializer.
+    if policy.get('signer_provider')=='windows_dpapi':
+        policy=validate_policy(policy);validate_deployment(policy)
+        if str(uuid.UUID(policy['observation_source_id']))!=policy['observation_source_id']:
+            raise ValueError('Reviewed observation source UUID required')
+    else:
+        policy['observation_source_id']=str(uuid.uuid4())
     policy=validate_policy(policy)
     validate_deployment(policy)
     rpc=ExecutionRpcClient((root/'runtime/quote-rpc-url.txt').read_text(encoding='utf-8-sig').strip(),timeout=8,max_retries=1)
@@ -38,6 +44,14 @@ def initialize_live(root, policy_path):
     if rpc.call('eth_getCode',[policy['wallet'],tag])!='0x':raise ValueError('Only dedicated EOA execution wallets are supported')
     if quantity(rpc.call('eth_getTransactionCount',[policy['wallet'],'latest']))!=quantity(rpc.call('eth_getTransactionCount',[policy['wallet'],'pending'])):
         raise ValueError('Resolve pending wallet transactions before deployment')
+    from sniper.execution_wallet_check import validate_wallet
+    wallet_checks=validate_wallet(root,policy,rpc=rpc)
+    if wallet_checks['validated'] is not True:raise ValueError('Both actual setup-pair wallet simulations must succeed before deployment')
+    if policy.get('signer_provider')=='windows_dpapi':
+        from sniper.signer_vault import load_signer
+        from eth_account import Account
+        if Account.from_key(load_signer(Path(policy['signer_path']),policy)).address.lower()!=policy['wallet']:
+            raise ValueError('Provisioned signer does not own the approved public wallet')
     folder.mkdir(parents=True)
     with closing(EvmStore(folder/'events.sqlite3')) as store:
         store.db.execute("UPDATE evm_metadata SET value=? WHERE key='identity'",(policy['observation_source_id'],))
@@ -45,6 +59,7 @@ def initialize_live(root, policy_path):
     with closing(OpportunityInbox(folder/'opportunities.sqlite3')):pass
     with closing(ExecutionJournal(folder/'ledger.sqlite3',policy,create=True)) as journal:
         atomic_json(folder/'policy.json',journal.policy)
+    atomic_json(folder/'wallet-validation.json',wallet_checks)
     return {'mode':'LIVE_DEPLOYMENT_INITIALIZED','signed':False,'broadcast':False,
             'account_id':policy['account_id'],'scope':'Separate live ledger initialized. Start the approved live workers explicitly.'}
 
@@ -62,6 +77,7 @@ def main():
     acceptance=sub.add_parser('acceptance');acceptance.add_argument('--output',type=Path)
     init=sub.add_parser('initialize-live');init.add_argument('--policy',type=Path,required=True)
     init.add_argument('--initial-deployment-authorized',action='store_true')
+    check=sub.add_parser('validate-wallet');check.add_argument('--policy',type=Path,required=True)
     args=parser.parse_args();root=args.app_root.resolve();folder=root/'runtime/executor'
     if args.command=='status':
         path=folder/('live-status.json' if args.mode=='live' else 'status.json')
@@ -76,6 +92,11 @@ def main():
         from sniper.execution_acceptance import run_acceptance
         output=args.output or folder/'acceptance'/str(uuid.uuid4())
         result=run_acceptance(output);print(json.dumps(result));return 0
+    if args.command=='validate-wallet':
+        from sniper.execution_wallet_check import validate_wallet
+        result=validate_wallet(root,json.loads(args.policy.read_text(encoding='utf-8-sig')))
+        atomic_json(root/'runtime/live-preparation/evm-policy-wallet-validation.json',result)
+        print(json.dumps(result));return 0 if result['validated'] else 2
     if args.command=='initialize-live':
         if not args.initial_deployment_authorized:parser.error('Initial deployment authorization flag is required')
         folder.mkdir(parents=True,exist_ok=True)
