@@ -60,6 +60,22 @@ WATCH permits exactly one refresh after 1,800 seconds, with a later evidence win
 
 The board prepares a hypothetical matched-fill subset comparison, separated by original account. Retained trades use identical recorded candidate, entry time, ticket, costs, exits and realized net P&L. Removed trades contribute zero; freed capital is not redeployed. It does not manufacture alternative fills, skipped-token returns or a reoptimized portfolio. Model-cost estimates are recorded separately and are not vendor invoices.
 
-Only completed assessments available by the original entry time enter the prospective comparison. Open positions, unmatched trades and late assessments are counted as exclusions. The current asynchronous journal reader usually sees checks after completion: those assessments can explain disagreements, but cannot prove prospective profitability. A future pre-entry factual capture/enrichment source would be required to populate a valid timing-matched cohort without changing baseline timing. No performance conclusion is available while Jev and its required evidence remain disconnected.
+Only completed assessments available by the original entry time enter the prospective comparison. Open positions, unmatched trades and late assessments are counted as exclusions. The asynchronous journal reader usually sees checks after completion: those assessments can explain disagreements, but cannot prove prospective profitability. The pre-entry admission path described in `JEV_PROMOTION.md` is implemented; complete factual enrichment remains unconnected. No performance conclusion is available while Jev and its required evidence remain disconnected.
 
 `tests/test_jev.py` verifies the contract, fractional score, separate confidence, input isolation, invalid/missing facts, failures, concurrent duplicates, restart/WATCH limits, hard rejection, read-only APIs and baseline behavior when disabled. `tests/verify_jev_acceptance.py` saves a traceable synthetic integration example using the existing cost-aware paper executor and a mocked TypeSafe reply. It must be run only in a new isolated folder. Its fills and results are excluded from every strategy P&L.
+
+## Reproducible E2E without paid calls
+
+`tests/verify_jev_e2e.py` exercises the real pinned adapter through HTTP against a local fake TypeSafe server, then reads the persistent journal through the real console HTTP endpoints. The harness rejects non-loopback DNS/socket connections and loads no credentials. It never runs against an existing account: `--output` must be a new child of the source `runtime/jev-acceptance` directory.
+
+```powershell
+python tests/verify_jev_e2e.py --output runtime/jev-acceptance/e2e-new-run
+# Optional: test installed application modules, retaining isolated source fixtures.
+python tests/verify_jev_e2e.py --app-root C:/Users/User/Downloads/sniper-v0.1.0 --output runtime/jev-acceptance/e2e-installed-new-run
+```
+
+The shadow case demonstrates a linked disagreement without an extra order, duplicate suppression, missing evidence from the existing collector, disabled-worker behavior and original exits. A missing price retains the holding. Its post-entry assessment is correctly excluded from performance comparison.
+
+The separate active-paper fixture demonstrates a prospective Jev BUY through existing token/risk checks, the original paper executor and stop watcher. Its comparison uses the actual fixture fills and recorded cost model, with no manually manufactured position P&L. Other checks exercise typed probabilities, fractional Score boundaries, invalid/missing data, hard rejection, API error, malformed response, timeout without retry, one WATCH refresh after reopening the journal, and SQLite readback in a fresh interpreter.
+
+Outputs include `verification.json`, exact credential-free `http-requests.json`, `board-traces.json` and the isolated SQLite accounts. These are synthetic integration evidence, excluded from every strategy result. Passing does not establish real TypeSafe authentication/inference, complete market evidence, Pump launch coverage, predictive performance or Solana live execution readiness. Operational promotion/spending settings remain unchanged.
