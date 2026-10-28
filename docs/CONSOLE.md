@@ -1,4 +1,8 @@
-# RUG DESK observation console
+# TENDIES TRACKER Observation Console
+
+The shared console is named **TENDIES TRACKER Observation Console**. Its desktop
+shortcut is **TENDIES TRACKER**. RUG DESK remains the Solana strategy name; existing
+task identifiers, executable paths and account identities remain compatible.
 
 Open **http://127.0.0.1:8765/** on the execution PC. This is a live view of the existing paper accounts, not a demonstration dataset or an order-entry terminal.
 

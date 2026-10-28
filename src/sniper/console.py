@@ -460,7 +460,7 @@ def make_server(root, host='127.0.0.1', port=8765):
                 elif url.path == '/api/wallet-export.csv':
                     self.send(200, data.wallet_csv(), 'text/csv; charset=utf-8', 'wallet-evidence.csv')
                 elif url.path == '/api/health':
-                    self.send(200, json_text({'service':'RUG DESK Console','version':__version__,'read_only':True,'at':int(time.time())}).encode())
+                    self.send(200, json_text({'service':'TENDIES TRACKER Observation Console','version':__version__,'read_only':True,'at':int(time.time())}).encode())
                 elif url.path == '/api/jev-assessment':
                     from .jev_review import detail
                     self.send(200, json_text(detail(data.root, params.get('id',[''])[0])).encode())
@@ -485,7 +485,7 @@ def main(default_root):
     parser.add_argument('--port', type=int, default=8765)
     args = parser.parse_args()
     server = make_server(args.data_root, port=args.port)
-    print(f'RUG DESK observation console: http://127.0.0.1:{server.server_port}', flush=True)
+    print(f'TENDIES TRACKER Observation Console: http://127.0.0.1:{server.server_port}', flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

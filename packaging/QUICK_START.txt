@@ -1,4 +1,4 @@
-RUG DESK Paper - Windows x64
+TENDIES TRACKER Observation Console - Windows x64
 
 Run RUG-DESK-Setup-0.1.21-win-x64.exe. No separate Python installation is needed for paper operation.
 This local build is unsigned; Windows may show an unknown-publisher warning.

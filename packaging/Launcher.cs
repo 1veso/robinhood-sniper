@@ -14,10 +14,10 @@ class RugDesk : Form {
     public RugDesk(string root) {
         app = root;
         python = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "python", "python.exe");
-        Text = "RUG DESK | Paper trading control"; Size = new Size(900, 680);
+        Text = "TENDIES TRACKER Observation Console"; Size = new Size(900, 680);
         MinimumSize = new Size(740, 590); StartPosition = FormStartPosition.CenterScreen;
         Font = new Font("Segoe UI", 10); BackColor = Color.FromArgb(20, 25, 32); ForeColor = Color.WhiteSmoke;
-        var title = new Label {Text="RUG DESK  /  PAPER", Font=new Font("Segoe UI",22,FontStyle.Bold), Dock=DockStyle.Top, Height=60, Padding=new Padding(20,12,0,0)};
+        var title = new Label {Text="TENDIES TRACKER  /  PAPER", Font=new Font("Segoe UI",22,FontStyle.Bold), Dock=DockStyle.Top, Height=60, Padding=new Padding(20,12,0,0)};
         var help = new Label {Dock=DockStyle.Top, Height=112, Padding=new Padding(20,8,20,0), Text=
             "Live market data. Simulated cash and fills. No mainnet paper-money deposits.\n"+
             "New PC: import your Telegram bot token, send SNIPER SETUP to your bot, then pair below.\n"+
@@ -78,7 +78,7 @@ class RugDesk : Form {
         for(int i=0;i+1<args.Length;i++)if(args[i]=="--app-root")root=Path.GetFullPath(args[i+1]);
         if(!File.Exists(Path.Combine(root,"desktop.py"))){MessageBox.Show("The paper app is missing. Run RUG-DESK-Setup.exe first.");return 2;}
         if(Array.IndexOf(args,"--uninstall")>=0){
-            if(MessageBox.Show("Disable this installation's background jobs? Open paper positions will stop being managed. All account data and program files will be preserved.","RUG DESK",MessageBoxButtons.YesNo)!=DialogResult.Yes)return 0;
+            if(MessageBox.Show("Disable this installation's background jobs? Open paper positions will stop being managed. All account data and program files will be preserved.","TENDIES TRACKER",MessageBoxButtons.YesNo)!=DialogResult.Yes)return 0;
             var p=Process.Start(new ProcessStartInfo(Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"python/python.exe"),Q(Path.Combine(root,"desktop.py"))+" uninstall-jobs"){UseShellExecute=false,CreateNoWindow=true});p.WaitForExit();if(p.ExitCode!=0){MessageBox.Show("Could not remove jobs. Existing task ownership was preserved.");return 2;}
             Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\RugDeskPaper",false);
             MessageBox.Show("Background jobs removed. Your ledgers, inputs and application files remain at "+root);return 0;

@@ -1,5 +1,9 @@
 # Windows desktop distribution
 
+The launcher opens **TENDIES TRACKER Observation Console** from the
+**TENDIES TRACKER** desktop shortcut. Existing `RugDesk.exe` paths and background
+task identifiers are retained for compatibility with installed accounts.
+
 Version 0.1.17 supplies an unsigned x64 `.exe` installer, native launcher and private
 CPython 3.14.10 runtime. Install per user without administrator rights. The launcher
 opens the existing loopback browser console; trading and credentials are never

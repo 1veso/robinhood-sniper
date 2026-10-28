@@ -56,7 +56,7 @@ class Setup {
             string app=existing.Length>0?existing:Path.Combine(destination,"app");
             if(existing.Length==0)Run(Path.Combine(destination,"python/python.exe"),Q(Path.Combine(app,"desktop.py"))+" initialize");
             string exe=Path.Combine(destination,"RugDesk.exe");string launcherArgs="--app-root "+Q(app);
-            string shortcut=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),"RUG DESK.lnk");
+            string shortcut=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),"TENDIES TRACKER.lnk");
             string escapedExe=exe.Replace("'","''"), escapedArgs=launcherArgs.Replace("'","''");
             string script="$s=(New-Object -ComObject WScript.Shell).CreateShortcut('"+shortcut.Replace("'","''")+"');$s.TargetPath='"+escapedExe+"';$s.Arguments='"+escapedArgs+"';$s.WorkingDirectory='"+destination.Replace("'","''")+"';$s.Save()";
             Run("powershell.exe","-NoProfile -NonInteractive -Command "+Q(script));
