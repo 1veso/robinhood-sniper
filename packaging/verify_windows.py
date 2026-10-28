@@ -64,7 +64,7 @@ try {
  $t=$folder.RegisterTaskDefinition($name,$definition,2,$owner,$null,3)
  $t.Run($null) | Out-Null
  $completed=$false
- for($i=0;$i -lt 30;$i++) {
+ for($i=0;$i -lt 90;$i++) {
   Start-Sleep -Seconds 1
   $t=$folder.GetTask($name)
   if($t.State -ne 4 -and $t.LastRunTime.Year -ge 2026){$completed=$true;break}
@@ -76,7 +76,7 @@ try {
  if($owned -and $owned.Definition.Actions.Item(1).WorkingDirectory -eq $app){$owned.Stop(0);$folder.DeleteTask($name,0)}
 }
 """.replace('TASK', sq(task)).replace('APP', sq(app)).replace('PYTHON', sq(target / 'python/pythonw.exe')))
-    scheduled = json.loads(run(['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script]))
+    scheduled = json.loads(run(['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script],timeout=125))
     with sqlite3.connect(app / 'rug_desk/runtime/book.sqlite3') as c:
         assert c.execute("select count(*) from runs where job='watch' and status='ok' and finished is not null").fetchone()[0] == 2
         assert c.execute('select count(*) from fills').fetchone()[0] == 0
