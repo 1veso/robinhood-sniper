@@ -11,7 +11,7 @@ $names = @{
     report='RUG DESK Report'; console='RUG DESK Console'; 'neon-signals'='NEON Paper Signals'; 'neon-watch'='NEON Paper Watch'
 }
 $minutes = @{paper=2;research=1;monitor=2;shadow=1;watch=10;scan=30;report=1;console=5;'neon-signals'=1;'neon-watch'=10}
-$limits = @{paper=5;research=2;monitor=3;shadow=3;watch=9;scan=21;report=5;console=0;'neon-signals'=3;'neon-watch'=9}
+$limits = @{paper=5;research=5;monitor=3;shadow=3;watch=9;scan=21;report=5;console=0;'neon-signals'=3;'neon-watch'=9}
 if ($NeonOnly) { $names = @{'neon-signals'='NEON Paper Signals';'neon-watch'='NEON Paper Watch'} }
 # COM avoids repeated CIM/module startup and keeps validation and mutation in one session.
 $service = New-Object -ComObject 'Schedule.Service'

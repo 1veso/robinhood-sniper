@@ -139,6 +139,7 @@ def run_research(runtime: Path, *, max_calls=60, seconds=45):
 
 
 def _run_research(runtime: Path, evidence, *, max_calls=60, seconds=45):
+    started = time.monotonic()
     folder = runtime / "research"
     folder.mkdir(exist_ok=True)
     env = child_environment(runtime)
@@ -274,7 +275,11 @@ def _run_research(runtime: Path, evidence, *, max_calls=60, seconds=45):
                                     "checkpoint": getattr(cache, 'checkpoint_progress', {})},
                "controller_policy": "Automatic links merge suspected controllers. No observed link is not proof of independence; no automatic qualified:true assertion.",
                "reports": reports, "candidate_file": str(folder / "wallet-candidates.csv")}
+    export_started = time.monotonic()
     summary['address_evidence'] = evidence.export(folder, state, reports, selected, snapshot, int(time.time()))
+    summary['export_seconds'] = round(time.monotonic() - export_started, 3)
+    summary['finished_at'] = int(time.time())
+    summary['duration_seconds'] = round(time.monotonic() - started, 3)
     atomic_json(folder / "wallet-research.json", summary)
     atomic_json(folder / "wallet-shortlist.json", shortlist)
     csv_path = folder / "wallet-candidates.csv"

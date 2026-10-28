@@ -61,6 +61,21 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(result["entry_status"], "BLOCKED")
         self.assertEqual(json.loads(wallet_file.read_text()), {"candidate": {"qualified": False}})
 
+    def test_research_timeout_is_distinct_from_completed_collection(self):
+        def child(command, **kwargs):
+            if Path(command[1]).name == 'research.py':
+                self.assertEqual(kwargs['timeout'], 240)
+                raise subprocess.TimeoutExpired(command, kwargs['timeout'])
+            return subprocess.CompletedProcess(command, 0, '{}', '')
+        with patch.object(supervise, 'ROOT', self.root), patch.object(
+                supervise.subprocess, 'run', side_effect=child):
+            result = supervise.run_cycle(self.runtime, 'research', 1000, 180)
+        self.assertEqual(result['return_code'], 0)
+        self.assertEqual(result['wallet_research']['status'], 'TIMEOUT')
+        self.assertEqual(result['entry_status'], 'BLOCKED')
+        saved = json.loads((self.runtime/'status.json').read_text())
+        self.assertEqual(saved['wallet_research']['timeout_seconds'], 240)
+
     def test_private_rpc_is_not_written_to_status_or_logs(self):
         secret_url = "https://rpc.example/v2/private-key-for-test"
         observation_url = "https://observe.example/v2/other-private-key"

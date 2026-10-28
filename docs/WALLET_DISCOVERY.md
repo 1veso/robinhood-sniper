@@ -5,6 +5,17 @@ addresses and refreshes their evidence exports automatically. It does not need a
 manually supplied watchlist. A discovered address is a research lead, not a
 profitable wallet or a verified independent controller.
 
+The research child has a 240-second process limit, including local publication.
+Its provider budgets remain 45 seconds per pass and 1,000 Blockscout requests per
+UTC day. The October 28 supervision repair replaces a 75-second child limit that
+interrupted exports as the evidence journal grew. `export_seconds`, `finished_at`
+and `duration_seconds` in `wallet-research.json` record completed publication;
+`updated_at` and individual canonical-check times retain their original scope.
+A child timeout is reported as `TIMEOUT`, not a successful research refresh.
+The minute trigger skips overlapping runs; it is not a guarantee of one completed
+research pass each minute. Existing seven-minute Windows task limits are retained;
+new desktop installations allow five minutes around the bounded child.
+
 Run commands below from the installed `sniper-v0.1.0` folder. The existing RPC and
 Blockscout configuration is reused. No private key, seed phrase, funded wallet or
 brokerage API key is required for discovery or these exports.

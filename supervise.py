@@ -173,10 +173,14 @@ def run_cycle(runtime: Path, account: str, max_blocks: int, timeout: int) -> dic
         try:
             research = subprocess.run([sys.executable, str(ROOT / "research.py")],
                                       cwd=ROOT, env=env, capture_output=True,
-                                      text=True, encoding="utf-8", timeout=75)
+                                      text=True, encoding="utf-8", timeout=240)
             status["wallet_research"] = json.loads(redact(research.stdout, env))
-        except (subprocess.TimeoutExpired, ValueError):
-            status["wallet_research"] = {"status": "PENDING", "reason": "Research will retry next cycle"}
+        except subprocess.TimeoutExpired:
+            status["wallet_research"] = {"status": "TIMEOUT", "timeout_seconds": 240,
+                "reason": "Research publication did not complete; retained checkpoints will resume next cycle"}
+        except ValueError:
+            status["wallet_research"] = {"status": "INVALID_RESULT",
+                "reason": "Research returned no valid completion report; inspect saved publication timestamps"}
         if (runtime / "rug-desk-managed.json").exists():
             status["solana_research"] = {"status": "INDEPENDENT_DESK", "report": "rug_desk/report.html"}
         else:

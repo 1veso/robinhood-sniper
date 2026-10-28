@@ -18,7 +18,7 @@ INPUTS = ('jupiter-server-api-key.txt', 'solana-trading-address.txt', 'evm-tradi
           'observation-rpc-url.txt', 'quote-rpc-url.txt', 'solana-rpc-url.txt', 'telegram-bot-token.txt')
 JOBS = {
     'paper': ('SNIPER Exploratory Paper', 2, 230, ['explore.py']),
-    'research': ('SNIPER Paper Research', 1, 75, ['research.py']),
+    'research': ('SNIPER Paper Research', 1, 240, ['research.py']),
     'monitor': ('SNIPER Telegram Monitor', 2, 110, ['monitor.py', '--send']),
     'shadow': ('SNIPER Automatic Executor Shadow', 1, 100, ['executor.py', 'once', '--mode', 'shadow']),
     'watch': ('RUG DESK Watch', 10, 480, ['rug_desk/watch.py', '--send']),
