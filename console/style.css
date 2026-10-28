@@ -8,3 +8,5 @@
 @media(max-width:760px){.wallet-summary{align-items:flex-start;flex-direction:column;gap:12px;padding:16px}.wallet-detail{padding:16px}.wallet-detail-facts{grid-template-columns:1fr}.wallet-detail .table-scroll{margin:16px -16px -16px}.wallet-address{font-size:11px}}
 
 #activity:has(.wallet-summary)>.table-scroll{max-height:540px;overflow:auto;scrollbar-gutter:stable}.wallet-detail>.table-scroll{max-height:360px;overflow:auto;scrollbar-gutter:stable}#activity:has(.wallet-summary) th{position:sticky;top:0;z-index:1}
+
+[hidden]{display:none!important}.jev-json{max-height:560px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;background:#101815;padding:18px;border:1px solid var(--line)}#jev-panel{padding:20px}#jev-panel h3{margin-top:26px}#jev-panel [data-jev-id]{color:var(--green);text-decoration:underline;text-underline-offset:3px}

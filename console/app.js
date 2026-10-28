@@ -16,6 +16,30 @@ const html = (id, content) => {if($(id).innerHTML !== content) $(id).innerHTML=c
 let bot='robinhood', state=null, chart=null, selectedAsset='', tab='positions', range=21600, query='', generation=0, loading=false, chartKey='', error=false;
 let plot=null;
 let wallets=null, walletError=false, walletLoading=false, selectedWallet='', walletDetail=null, walletDetailError=false, walletDetailRequest=0, walletDetailLoading='';
+let jevDetail=null,jevDetailError='',jevLoading=false;
+
+async function loadJevDetail(id){
+  jevLoading=true;jevDetail=null;jevDetailError='';if(bot==='jev'&&state?.bot==='jev')renderJev();
+  try{jevDetail=await fetchJSON('/api/jev-assessment?'+new URLSearchParams({id}));}
+  catch(e){jevDetailError='Assessment could not be read. No account was changed.';}
+  finally{jevLoading=false;if(bot==='jev'&&state?.bot==='jev')renderJev();}
+}
+function renderJev(){
+  $('account-title').textContent='Pump / Jev Review';$('chain').textContent='Solana · existing candidates';
+  $('account-id').textContent='Shared baseline accounts · no separate trading balance';$('account-id').title='';
+  $('version').textContent='v'+state.version+' · LOCAL / READ ONLY';
+  $('strategy-note').textContent='Evidence-Gated Second Opinion · '+state.model+' · '+state.policy.version;
+  $('trial-state').textContent='SHADOW';$('trial-deadline').textContent='Original trial clocks and exits unchanged';
+  $('notice').textContent=state.blocker+' This review cannot create, resize or close an order.';
+  const count=Object.values(state.counts).reduce((a,b)=>a+b,0);
+  html('metrics',metric('Assessments',number(count,0),'Linked snapshots; not trades')+metric('Completed model replies',number(state.counts.COMPLETE||0,0),'Full distributions retained')+metric('Extra orders','0','No executor or signer access')+metric('External calls',state.external_calls_enabled?'Authorized':'Disabled','Grok authorization unchanged'));
+  const rows=state.assessments.map(a=>{const r=a.result,ans=r.response?.answers;
+    return `<tr><td><button data-jev-id="${esc(a.id)}">${esc(short(a.candidate_id))}</button><br><span class="muted">${esc(a.baseline.source)}</span></td><td>${stamp(a.snapshot_at)}<br>${age(a.snapshot_at)} old</td><td>${esc(a.baseline.verdict)}<br>${esc(a.baseline.stage)}</td><td>${esc(a.status)}<br>${esc(r.proposed||'PASS')}</td><td>${ans?`P(buy label) ${number(ans.action.probabilities.buy,3)}<br>Choice confidence ${number(ans.action.confidence,3)}<br>P(organic yes) ${number(ans.organic.noul,3)} · P(late yes) ${number(ans.late.noul,3)}<br>Exit ${number(ans.exit_risk.score)} / 4 (${number(ans.exit_risk.score+1)} / 5 display)`:'No model response'}</td><td>${r.comparison_disagreement===null?'Not assessed':r.comparison_disagreement?'Disagrees':'Agrees'}<br>${esc(pretty(r.reason))}</td><td>${a.watch_count} / 1${r.recheck_at?'<br>Due '+stamp(r.recheck_at):''}</td></tr>`;}).join('');
+  const comparison=state.comparison,accounts=Object.entries(comparison.by_account);
+  const paired=accounts.length?table(['Baseline account','Matched closed trades','Baseline net P&L','Jev-filtered hypothetical net P&L'],accounts.map(([id,v])=>`<tr><td>${esc(short(id))}</td><td>${v.matched_closed}</td><td>${signed(v.baseline_net_pnl)}</td><td>${signed(v.filtered_net_pnl)}</td></tr>`).join('')):'<p class="muted">No timing-matched completed cohort yet. No hypothetical profit is reported.</p>';
+  html('jev-panel',`<div class="panel-heading"><h2>Shadow assessments</h2><span class="tag">${state.enabled?'RECORDING':'DISABLED'}</span></div><p class="compact muted">Action probabilities classify the supplied dossier. They are not probabilities of profitable trades. Unknown evidence stays unknown. Latest 200 journal snapshots.</p>${rows?table(['Candidate / exact dossier','Observed · Berlin','Baseline','Jev status / proposal','Probability and score','Comparison / reason','WATCH refresh'],rows):'<div class="empty">Waiting for existing candidate records.</div>'}<h3>Exact evidence and answers</h3>${jevLoading?'<p>Reading assessment…</p>':jevDetailError?'<p class="warning">'+esc(jevDetailError)+'</p>':jevDetail?'<pre class="jev-json">'+esc(JSON.stringify(jevDetail,null,2))+'</pre>':'<p class="muted">Select a candidate to inspect its timestamped dossier, source references, missing fields, exact model input, complete distributions and separate baseline decision.</p>'}<h3>Paired evaluation · hypothetical only</h3>${paired}<p class="compact muted">${esc(comparison.method)}</p><p class="compact muted">${esc(comparison.limitations)} Exclusions: ${esc(JSON.stringify(comparison.exclusions))}.</p><h3>Pump coverage</h3><p>${esc(state.pump_feed.coverage)}</p><p class="compact muted">${esc(state.pump_feed.dependency)}</p><h3>Linked accounts and worker</h3><p class="compact">${state.source_bindings.map(x=>esc(x.source)+' · '+esc(x.account_id)).join('<br>')||'No source accounts bound yet.'}</p><p class="compact muted">Latest completion ${stamp(state.status.finished_at,true)}. ${state.runs[0]?esc(state.runs[0].status):'No completed run'}. The board cannot enable paid calls or trading.</p>`);
+  $('footer-id').textContent='Pump / Jev Review · shadow journal · baseline execution unchanged';
+}
 
 async function fetchJSON(path){const response=await fetch(path,{cache:'no-store',signal:AbortSignal.timeout(18000)});const data=await response.json();if(!response.ok)throw new Error(data.error||'Console connection interrupted');return data;}
 async function refresh(){
@@ -67,6 +91,9 @@ function metric(label,value,detail,cls=''){return `<div class="metric"><span>${e
 function key(label,value,cls=''){return `<div class="key-row"><span>${esc(label)}</span><b class="${cls}">${value}</b></div>`;}
 function ack(q){if(!q?.available)return '<span class="warning">Unavailable</span>';const pending=Object.entries(q.counts).filter(([k])=>!['sent','suppressed','expired'].includes(k)).reduce((n,[,v])=>n+v,0);return `<span class="${pending?'warning':'positive'}">${q.counts.sent||0} acknowledged${pending?' · '+pending+' unresolved':''}</span>`;}
 function render(){
+  document.querySelectorAll('.market-grid,.ledger-panel,.detail-grid').forEach(el=>{el.hidden=bot==='jev';});
+  $('jev-panel').hidden=bot!=='jev';
+  if(bot==='jev'){renderJev();return;}
   const s=state.snapshot,p=state.policy,sol=bot==='solana',neon=bot==='neon';
   $('account-title').textContent=neon?'Neon bot':sol?'RUG DESK · Solana':'Wallet follower';$('chain').textContent=state.chain;
   $('account-id').textContent='Account '+short(state.account_id);$('account-id').title=state.account_id;
@@ -100,6 +127,7 @@ function freshness(){
   if(!state)return;
   const finished=state.status.finished_at,old=!finished||Date.now()/1000-finished>state.cadence_seconds*3;
   $('worker-freshness').textContent=`Worker completed ${age(finished)} ago${old?' · overdue':''}${state.error_count?' · '+state.error_count+' cycle errors':''}`;$('worker-freshness').className='context-status'+(old||state.error_count?' warning':'');
+  if(bot==='jev')return;
   if(state.trial.ends_at){const remaining=state.trial.ends_at-Date.now()/1000;
     $('trial-state').textContent=remaining>0?`Paper trial · ${Math.floor(remaining/86400)}d ${Math.floor(remaining%86400/3600)}h remaining`:'Entry period ended · exits continue';
     $('trial-deadline').textContent='Ends '+new Date(state.trial.ends_at*1000).toLocaleString('en-GB',{timeZone:'Europe/Berlin',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})+' CET';
@@ -124,7 +152,7 @@ function renderActivity(){
     html('activity',fills.length?table(['Coin','Time · Berlin','Paper action','Quantity','Fill price','Cash change','Costs','Realized P&L','Reason'],fills.map(f=>`<tr><td>${coin(f.symbol,f.asset_id)}</td><td>${stamp(f.observed_at,true)}</td><td><span class="action ${f.action==='OPEN'?'positive':f.action==='PARTIAL'?'warning':'negative'}">${esc(f.action)}</span></td><td class="num">${number(f.quantity,3)}</td><td class="num">${price(f.fill_price)}</td><td class="num">${signed(f.cash_delta)}</td><td class="num">${usd(Number(f.friction_usd)+Number(f.gas_usd))}</td><td class="num ${tone(f.pnl)}">${f.action==='OPEN'?'—':signed(f.pnl)}</td><td>${esc(pretty(f.reason))}</td></tr>`).join(''),'Only this strategy account is shown. Isolated acceptance fills are excluded. These are automatic paper ledger executions, not signed blockchain swaps.'):`<div class="empty">${query?'No fills match this filter.':'No strategy fills in this account. Isolated plumbing tests do not appear here.'}</div>`);
   }else if(tab==='decisions'){
     const decisions=state.decisions.filter(matches);
-    html('activity',decisions.length?table(['Coin','Time · Berlin','Decision','Reason','Observed buyers','Pool liquidity','Policy / stage'],decisions.map(d=>`<tr><td>${coin(d.symbol,d.asset_id)}</td><td>${stamp(d.observed_at)}</td><td class="${['BUY','PAPER_BUY'].includes(d.verdict)?'positive':'warning'}">${esc(d.verdict)}</td><td>${esc(pretty(d.reason))}</td><td class="num">${d.buyers??'—'}</td><td class="num">${usd(d.liquidity_usd)}</td><td class="muted">${esc(d.stage||d.policy_version||'—')}</td></tr>`).join(''),'Latest 80 decisions. Buyer count reflects observed recipients; distinct addresses do not establish independent controllers or profitable wallets.'):'<div class="empty">No decisions match this view.</div>');
+    html('activity',decisions.length?table(['Coin','Time · Berlin','Decision','Reason','Observed buyers','Pool liquidity','Policy / stage','Jev shadow'],decisions.map(d=>`<tr><td>${coin(d.symbol,d.asset_id)}</td><td>${stamp(d.observed_at)}</td><td class="${['BUY','PAPER_BUY'].includes(d.verdict)?'positive':'warning'}">${esc(d.verdict)}</td><td>${esc(pretty(d.reason))}</td><td class="num">${d.buyers??'—'}</td><td class="num">${usd(d.liquidity_usd)}</td><td class="muted">${esc(d.stage||d.policy_version||'—')}</td><td>${d.jev?`<button data-jev-link="${esc(d.jev.id)}">${esc(d.jev.status)} · ${esc(d.jev.proposed)}</button>`:'—'}</td></tr>`).join(''),'Latest 80 decisions. Buyer count reflects observed recipients; distinct addresses do not establish independent controllers or profitable wallets.'):'<div class="empty">No decisions match this view.</div>');
   }else if(tab==='wallets'){
     renderWallets();
   }else{
@@ -225,6 +253,7 @@ function drawChart(){
   plot={points,fills:visibleFills,x,y,minT,maxT,left,cw};freshness();
 }
 function drawEquity(){
+  if(bot==='jev')return;
   const {ctx,w,h}=canvasContext($('equity-chart')),points=state.equity_history;if(points.length<2){ctx.fillStyle='#9baaa6';ctx.font='11px Segoe UI';ctx.fillText('No trial equity series',4,h/2);return;}
   let low=Math.min(...points.map(p=>Number(p.equity))),high=Math.max(...points.map(p=>Number(p.equity)));if(high===low)high=low+1;
   const first=points[0].observed_at,last=points.at(-1).observed_at;
@@ -243,6 +272,8 @@ document.querySelectorAll('[data-range]').forEach(button=>button.addEventListene
 $('filter').addEventListener('input',()=>{query=$('filter').value.toLowerCase().trim();renderActivity();});
 $('asset-select').addEventListener('change',()=>{selectedAsset=$('asset-select').value;chart=null;renderEvidence();renderActivity();loadChart();});
 $('activity').addEventListener('click',e=>{const wallet=e.target.closest('[data-wallet]');if(wallet){loadWalletDetail(wallet.dataset.wallet);return;}if(e.target.closest('[data-wallet-close]')){selectedWallet='';walletDetail=null;renderActivity();return;}const button=e.target.closest('[data-asset]');if(button&&state.assets.some(a=>a.asset_id===button.dataset.asset)){selectedAsset=button.dataset.asset;chart=null;$('asset-select').value=selectedAsset;renderEvidence();renderActivity();loadChart();}});
+$('jev-panel').addEventListener('click',e=>{const button=e.target.closest('[data-jev-id]');if(button)loadJevDetail(button.dataset.jevId);});
+$('activity').addEventListener('click',e=>{const button=e.target.closest('[data-jev-link]');if(button){document.querySelector('[data-bot="jev"]').click();loadJevDetail(button.dataset.jevLink);}});
 for(const id of ['ema-toggle','levels-toggle'])$(id).addEventListener('change',drawChart);
 $('price-chart').addEventListener('pointermove',e=>{if(!plot)return;const rect=e.currentTarget.getBoundingClientRect(),xx=e.clientX-rect.left,t=plot.minT+(xx-plot.left)/plot.cw*(plot.maxT-plot.minT),p=plot.points.reduce((a,b)=>Math.abs(a.at-t)<Math.abs(b.at-t)?a:b);const f=plot.fills.find(f=>Math.abs(plot.x(f.observed_at)-xx)<7);$('chart-tip').textContent=f?stamp(f.observed_at,true)+' CET\nPAPER '+f.action+' · '+price(f.fill_price)+'\nQuantity '+number(f.quantity,3):stamp(p.at,true)+' CET\n'+price(p.price)+' · observed';$('chart-tip').hidden=false;});
 $('price-chart').addEventListener('pointerleave',()=>{$('chart-tip').hidden=true;});

@@ -15,11 +15,12 @@
 </header>
 <div class="shell">
 <aside class="rail" aria-label="Bot navigation">
-  <div class="rail-title">Your bots <span>03</span></div>
+  <div class="rail-title">Your bots <span>04</span></div>
   <button class="bot-button selected" data-bot="robinhood" aria-pressed="true"><span class="bot-icon">R</span><span><strong>Wallet follower</strong><small>Robinhood Chain</small></span><i class="dot" aria-hidden="true"></i></button>
   <button class="bot-button" data-bot="solana" aria-pressed="false"><span class="bot-icon sol">S</span><span><strong>RUG DESK</strong><small>Solana · setup</small></span><i class="dot amber" aria-hidden="true"></i></button>
   <button class="bot-button" data-bot="neon" aria-pressed="false"><span class="bot-icon sol">N</span><span><strong>Neon bot</strong><small>Solana · leader following</small></span><i class="dot amber" aria-hidden="true"></i></button>
-  <div class="rail-rule"></div><p class="rail-caption">One account per bot.<br>Performance stays separate.</p>
+  <button class="bot-button" data-bot="jev" aria-pressed="false"><span class="bot-icon sol">J</span><span><strong>Pump / Jev Review</strong><small>Shadow · second opinion</small></span><i class="dot amber" aria-hidden="true"></i></button>
+  <div class="rail-rule"></div><p class="rail-caption">Strategy accounts stay separate.<br>Jev reviews existing accounts.</p>
   <div class="rail-bottom"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6l-8-3Zm-4 9 3 3 5-6"/></svg><strong>Observation only</strong><p>Automatic paper trading.<br>Real money is disabled.</p><span id="version">LOCAL CONSOLE</span></div>
 </aside>
 <main id="workspace" tabindex="-1">
@@ -28,6 +29,7 @@
   <div class="context-line"><span id="strategy-note">Reading the active strategy…</span><span class="context-status" id="worker-freshness">—</span></div>
   <section class="account-strip" aria-label="Account summary" id="metrics"><div class="metric"><span>Equity</span><strong>—</strong><small>Reading persistent ledger</small></div></section>
   <div id="notice" class="notice">Live market observations · simulated fills · no wallet transactions</div>
+  <section id="jev-panel" class="panel detail-panel" aria-label="Pump Jev shadow review" hidden></section>
   <div class="market-grid">
     <section class="panel chart-panel" aria-label="Market observations">
       <div class="panel-heading chart-heading"><div class="instrument"><label class="sr-only" for="asset-select">Traded coin</label><select id="asset-select"><option>Loading coins…</option></select><span id="instrument-state" class="tag">—</span></div><div class="chart-modes" aria-label="Chart time range"><button data-range="3600" aria-pressed="false">1H</button><button data-range="21600" aria-pressed="true" class="active">6H</button><button data-range="86400" aria-pressed="false">24H</button><button data-range="0" aria-pressed="false">ALL</button></div></div>

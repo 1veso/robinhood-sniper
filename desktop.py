@@ -28,6 +28,7 @@ JOBS = {
     'console': ('RUG DESK Console', 5, 0, ['console_server.py']),
     'neon-signals': ('NEON Paper Signals', 1, 170, ['neon_bot.py', 'signals']),
     'neon-watch': ('NEON Paper Watch', 10, 480, ['neon_bot.py', 'watch']),
+    'jev-review': ('Pump Jev Shadow Review', 1, 50, ['jev_review.py', 'once']),
 }
 
 

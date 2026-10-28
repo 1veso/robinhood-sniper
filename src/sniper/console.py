@@ -109,7 +109,7 @@ class ConsoleData:
     def _inspect_jobs(self):
         if os.name != 'nt':
             return {'available': False, 'items': [], 'checked_at': None, 'error': 'unsupported_platform'}
-        command = "$ErrorActionPreference='Stop'; Get-ScheduledTask -TaskName 'SNIPER*','RUG DESK*','NEON*' | Where-Object { $_.TaskName -in @('SNIPER Exploratory Paper','SNIPER Paper Research','SNIPER Telegram Monitor','SNIPER Automatic Executor Shadow','RUG DESK Watch','RUG DESK Scan','RUG DESK Report','RUG DESK Console','NEON Paper Signals','NEON Paper Watch') } | ForEach-Object { $i=$_ | Get-ScheduledTaskInfo; [pscustomobject]@{name=$_.TaskName;state=[string]$_.State;last_result=$i.LastTaskResult;last_run=$i.LastRunTime.ToUniversalTime().ToString('o');next_run=$i.NextRunTime.ToUniversalTime().ToString('o')} } | ConvertTo-Json -Compress"
+        command = "$ErrorActionPreference='Stop'; Get-ScheduledTask -TaskName 'SNIPER*','RUG DESK*','NEON*','Pump Jev*' | Where-Object { $_.TaskName -in @('SNIPER Exploratory Paper','SNIPER Paper Research','SNIPER Telegram Monitor','SNIPER Automatic Executor Shadow','RUG DESK Watch','RUG DESK Scan','RUG DESK Report','RUG DESK Console','NEON Paper Signals','NEON Paper Watch','Pump Jev Shadow Review') } | ForEach-Object { $i=$_ | Get-ScheduledTaskInfo; [pscustomobject]@{name=$_.TaskName;state=[string]$_.State;last_result=$i.LastTaskResult;last_run=$i.LastRunTime.ToUniversalTime().ToString('o');next_run=$i.NextRunTime.ToUniversalTime().ToString('o')} } | ConvertTo-Json -Compress"
         result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', command], capture_output=True, timeout=25, creationflags=subprocess.CREATE_NO_WINDOW)
         if result.returncode:
             raise ValueError('Task inspection unavailable')
@@ -159,10 +159,13 @@ class ConsoleData:
             return value
 
     def state(self, bot='robinhood'):
-        if bot not in ('robinhood', 'solana', 'neon'):
+        if bot not in ('robinhood', 'solana', 'neon', 'jev'):
             raise ValueError('Unknown bot')
         def load():
-            if bot == 'neon':
+            if bot == 'jev':
+                from .jev_review import view
+                data = view(self.root)
+            elif bot == 'neon':
                 from .neon_console import view
                 data = view(self.root)
             else:
@@ -172,13 +175,22 @@ class ConsoleData:
                          'execution_target': 'automatic', 'live_execution_ready': False,
                          'jobs': self.jobs()})
             from .switchover import inventory
-            if bot!='neon':
+            if bot not in ('neon','jev'):
                 data['switchover'] = inventory(self.root, 'evm' if bot=='robinhood' else 'solana')
             if bot=='robinhood':
                 try:
                     executor=read_json(self.root/'runtime/executor/status.json')
                     data['executor']=selected(executor,('mode','finished_at','health','observed_candidates','signer_loaded','signing_calls','broadcast_calls','blockers','real_money_enabled'))
                 except (OSError,ValueError):data['executor']={'mode':'UNAVAILABLE'}
+            if bot in ('solana','neon'):
+                from .jev_review import links
+                try:
+                    linked = links(self.root, data['account_id'])
+                except (OSError, ValueError, sqlite3.Error):
+                    linked = {}
+                    data['jev_link_status'] = 'UNAVAILABLE'
+                for decision in data.get('decisions',[]):
+                    decision['jev'] = linked.get(decision.get('asset_id'))
             return data
         return self.cached(('state', bot), 3, load)
 
@@ -449,6 +461,9 @@ def make_server(root, host='127.0.0.1', port=8765):
                     self.send(200, data.wallet_csv(), 'text/csv; charset=utf-8', 'wallet-evidence.csv')
                 elif url.path == '/api/health':
                     self.send(200, json_text({'service':'RUG DESK Console','version':__version__,'read_only':True,'at':int(time.time())}).encode())
+                elif url.path == '/api/jev-assessment':
+                    from .jev_review import detail
+                    self.send(200, json_text(detail(data.root, params.get('id',[''])[0])).encode())
                 else:
                     self.send(404, b'{"error":"Not found"}')
             except ValueError:
