@@ -116,6 +116,10 @@ validating the permitted verdict, finite confidence, distinct eligible leaders
 and evidence fields. No model-supplied statistics replace screened history.
 The regression test reproduces the former failure through the actual `Judge`
 client with an offline transport and verifies completed publication after repair.
+The recheck also corrected the separate Neon research reader's v1 RPC
+compatibility: unsupported v1 receipts are recorded and skipped without blocking
+later legacy/v0 observations. This does not broaden the supported buy-event or
+signing formats; see [Neon source coverage](NEON_BOT.md).
 
 The existing RUG DESK account's ACTIVE PAPER Jev filter also applies to leader
 buys through the same `check` and final `Book` transaction. Integration tests

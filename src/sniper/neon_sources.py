@@ -51,6 +51,9 @@ def decode_swap(receipt, signature, wallet, name, now):
     """Require a paid-for direct swap; incoming gifts are never buy signals."""
     if not isinstance(receipt, dict) or type(receipt.get('slot')) is not int:
         raise ValueError('Transaction unavailable')
+    version=receipt.get('version')
+    if version!='legacy' and (type(version) is not int or version!=0):
+        raise ValueError('Unsupported or missing transaction version; no swap inferred')
     meta, tx = receipt['meta'], receipt['transaction']
     if not meta or meta.get('err') is not None or type(meta.get('fee')) is not int:
         raise ValueError('Failed or incomplete transaction')
@@ -218,19 +221,22 @@ class Research:
             signature=item['signature'];event=None
             prior=self.db.execute('SELECT 1 FROM neon_observations WHERE signature=? AND wallet=?',(signature,wallet)).fetchone()
             if not prior:
-                receipt=self.rpc.rpc('getTransaction',[signature,{'encoding':'json','commitment':'finalized','maxSupportedTransactionVersion':0}])
+                # Read current-format receipts so an unsupported v1 does not
+                # wedge every later signature. decode_swap still admits only
+                # legacy/v0; this is not a signing or strategy coverage upgrade.
+                receipt=self.rpc.rpc('getTransaction',[signature,{'encoding':'json','commitment':'finalized','maxSupportedTransactionVersion':1}])
                 if receipt is None:raise ValueError('Finalized transaction temporarily unavailable; checkpoint retained')
                 proof={'source_id':self.source_id,'receipt_sha256':digest(receipt),'checked_at':now,'signature':signature,'wallet':wallet}
                 try:
                     if not name:raise ValueError('No linked handle')
                     event=decode_swap(receipt,signature,wallet,name,now)
                     if item.get('slot')!=event['slot'] or item.get('confirmationStatus')!='finalized':raise ValueError('Finality/slot mismatch')
-                    block=self.rpc.rpc('getBlock',[event['slot'],{'commitment':'finalized','transactionDetails':'signatures','rewards':False}])
+                    block=self.rpc.rpc('getBlock',[event['slot'],{'commitment':'finalized','transactionDetails':'signatures','rewards':False,'maxSupportedTransactionVersion':1}])
                     if not block or signature not in block.get('signatures',[]):raise RuntimeError('Canonical block proof unavailable')
                     proof.update(event=event,canonical_blockhash=validate_address(block['blockhash']))
                     status='SUPPORTED_SWAP'
                 except ValueError as exc:
-                    status='UNSUPPORTED';proof['reason']=str(exc)[:200];event=None
+                    status='UNSUPPORTED';proof['reason']=str(exc)[:200];proof['transaction_version']=receipt.get('version');event=None
                 with self.book.transaction():
                     self.db.execute('INSERT INTO neon_observations VALUES(?,?,?,?,?)',(signature,wallet,now,status,encode(proof)))
             pending=pending[1:]

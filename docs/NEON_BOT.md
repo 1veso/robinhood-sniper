@@ -56,11 +56,21 @@ research candidate. It uses documented Solana
 [signature history](https://solana.com/docs/rpc/http/getsignaturesforaddress),
 [transactions](https://solana.com/docs/rpc/http/gettransaction) and
 [block membership](https://solana.com/docs/rpc/http/getblock), at finalized
-commitment. Only a direct classic-SPL Raydium CP-Swap exact-input transaction with
+commitment. Only a legacy/v0 direct classic-SPL Raydium CP-Swap exact-input transaction with
 the watched wallet signing, verified owned token-balance changes and USDC/WSOL as
 one settlement leg is decoded. Multi-hop, aggregator, Token-2022 and unsupported
 instructions are recorded as unsupported. Transfers/gifts are never inferred buys.
 The observed pool must equal the pool that passes the existing token checks.
+
+The October 28 integration recheck observed RPC error `-32015` when the reader
+requested only transaction version 0. Per Solana's current
+[versioned-transaction contract](https://solana.com/docs/core/transactions/versioned-transactions),
+research now requests integer `maxSupportedTransactionVersion: 1` for receipt and
+block reads. A v1 receipt is journaled as `UNSUPPORTED`, including its receipt
+hash and transaction version, and cannot create a leader event. This prevents an
+unsupported transaction from wedging later supported receipts. Missing receipts
+and missing canonical block proof still retain pending work. No live signer,
+transaction compiler, fee model or strategy entry permission was changed.
 
 This restricted coverage can miss most of a trader's activity. It is not a
 complete trading history, a full-market sniper feed, or high-frequency execution.

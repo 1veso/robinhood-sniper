@@ -29,7 +29,7 @@ def receipt(signature=SIG):
     accounts=[key(77),key(90),key(91),key(2),key(92),key(93),key(94),key(95),cp.TOKEN,cp.TOKEN,USDC,key(1),key(96)]
     keys=list(dict.fromkeys(accounts+[cp.PROGRAM]))
     def bal(account,mint,amount):return {'accountIndex':keys.index(account),'mint':mint,'owner':key(77),'programId':cp.TOKEN,'uiTokenAmount':{'amount':str(amount),'decimals':6}}
-    return {'slot':100,'blockTime':NOW,'meta':{'err':None,'fee':5000,'preTokenBalances':[bal(key(92),USDC,1000)],
+    return {'version':0,'slot':100,'blockTime':NOW,'meta':{'err':None,'fee':5000,'preTokenBalances':[bal(key(92),USDC,1000)],
         'postTokenBalances':[bal(key(92),USDC,900),bal(key(93),key(1),200)]},
         'transaction':{'signatures':[signature],'message':{'header':{'numRequiredSignatures':1},'accountKeys':keys,
             'instructions':[{'programIdIndex':keys.index(cp.PROGRAM),'accounts':[keys.index(k) for k in accounts],
@@ -128,6 +128,39 @@ class NeonTests(unittest.TestCase):
         self.rpc.page=[{'signature':SIG,'slot':100,'confirmationStatus':'finalized'}]
         self.assertEqual(self.source._wallet(key(77),'replay_leader',NOW),[])
         self.assertEqual(self.book.db.execute('SELECT count(*) FROM neon_source_gaps').fetchone()[0],1)
+
+    def test_v1_receipt_is_recorded_unsupported_without_wedging_following_v0(self):
+        v1='4'*88;test=self
+        class MixedRPC(RPC):
+            def rpc(self,method,args):
+                if method in ('getTransaction','getBlock'):
+                    test.assertEqual(args[1]['maxSupportedTransactionVersion'],1)
+                result=super().rpc(method,args)
+                if method=='getTransaction' and args[0]==v1:result['version']=1
+                return result
+        rpc=MixedRPC();source=Research(self.book,self.app,rpc=rpc,clock=lambda:NOW)
+        old={'signature':'3'*88,'slot':99,'confirmationStatus':'finalized'}
+        rpc.page=[old];self.assertEqual(source._wallet(key(77),'replay_leader',NOW),[])
+        rpc.page=[{'signature':SIG,'slot':100,'confirmationStatus':'finalized'},
+            {'signature':v1,'slot':100,'confirmationStatus':'finalized'},old]
+        events=source._wallet(key(77),'replay_leader',NOW)
+        self.assertEqual([e['transaction_signature'] for e in events],[SIG])
+        row=self.book.db.execute('SELECT status,payload FROM neon_observations WHERE signature=?',(v1,)).fetchone()
+        self.assertEqual(row['status'],'UNSUPPORTED');self.assertEqual(json.loads(row['payload'])['transaction_version'],1)
+        self.assertFalse(json.loads(self.book.db.execute('SELECT pending FROM neon_cursors').fetchone()[0]))
+        self.book.close();self.book=NeonBook(self.app/'neon_bot')
+        source=Research(self.book,self.app,rpc=rpc,clock=lambda:NOW)
+        self.assertEqual(source._wallet(key(77),'replay_leader',NOW),[])
+        self.assertEqual(self.book.db.execute('SELECT count(*) FROM neon_observations').fetchone()[0],2)
+        self.assertEqual(self.book.fills(),[])
+
+    def test_unreviewed_transaction_versions_never_become_buy_events(self):
+        for version in (None,False,True,'0',1,2):
+            r=receipt();r['version']=version
+            with self.subTest(version=version),self.assertRaises(ValueError):
+                decode_swap(r,SIG,key(77),'replay_leader',NOW)
+        r=receipt();r['version']='legacy'
+        self.assertEqual(decode_swap(r,SIG,key(77),'replay_leader',NOW)['action'],'BUY')
     def test_unverified_canonical_block_retains_pending(self):
         self.rpc.page=[{'signature':'3'*88}];self.source._wallet(key(77),'replay_leader',NOW)
         self.rpc.page=[{'signature':SIG,'slot':100,'confirmationStatus':'finalized'},self.rpc.page[0]];self.rpc.block=False
