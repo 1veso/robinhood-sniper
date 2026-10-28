@@ -32,6 +32,13 @@ def validate_deployment(policy,root):
     require(isinstance(p.get('program_pins'),dict) and len(p['program_pins'])==3,'Reviewed deployment pins required')
     public=(root/'runtime/solana-trading-address.txt').read_text(encoding='utf-8-sig').strip()
     require(public==p['wallet'],'Saved public wallet differs from deployment')
+    if p.get('strategy_id')=='pump_jev_v1':
+        from .jev_admission import reviewed_live_binding
+        from .jev_lifecycle import current
+        state=current(root);reviewed_live_binding(p,state)
+        require(state['stage'] in ('LIVE_READY','LIVE') and state['paper_account_id']==p['paper_account_id']
+                and state['live_account_id']==p['account_id'],
+                'Bot 4 has not passed its separate Solana live readiness gate')
     return p
 
 
@@ -69,6 +76,8 @@ class SolanaGuardedBackend:
     def entry_evidence(self,intent):
         from rug_desk.market import check_limits
         from rug_desk.rugcheck import ORDER
+        from .jev_admission import live_guard
+        jev=live_guard(self.root,self.journal.policy,intent,int(self.clock()))
         answer=self.model_evidence(intent)
         facts=self.rugcheck.report(intent['token_out'])
         require(facts.get('failure') is None and facts.get('mint')==intent['token_out'] and facts.get('pool')==intent['pool']
@@ -79,7 +88,8 @@ class SolanaGuardedBackend:
         return {'mint':intent['token_out'],'pool':intent['pool'],'safety_passed':True,'required_provider_response':True,
                 'safety_at':int(self.clock()),'liquidity_usd':quote['liquidity'],'model_validated':True,
                 'model_at':answer['judged_at'],'model_request_id':answer['request_id'],'model_verdict':'BUY',
-                'confidence':answer['confidence'],'risk_digest':digest(facts)}
+                'confidence':answer['confidence'],'risk_digest':digest(facts),
+                **({'jev_assessment_id':jev['id']} if jev else {})}
 
     def risk_check(self,intent=None):
         """Conservative current USD risk marks; not invented historical USD P&L."""
@@ -101,10 +111,14 @@ class SolanaGuardedBackend:
 
     def sync_model_usage(self):
         path=self.root/'rug_desk/runtime/ai-budget.sqlite3'
-        if not path.exists():return
-        with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
-            if not db.execute("SELECT 1 FROM sqlite_master WHERE name='advisory_request_accounts'").fetchone():return
-            rows=list(db.execute('SELECT r.request_id,r.created_at,u.billed_usd,r.reserved_usd FROM advisory_reservations r JOIN advisory_request_accounts a USING(request_id) LEFT JOIN advisory_usage u USING(request_id) WHERE a.account_id=?',(self.journal.policy['account_id'],)))
+        rows=[]
+        if path.exists():
+            with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name='advisory_request_accounts'").fetchone():
+                    rows=list(db.execute('SELECT r.request_id,r.created_at,u.billed_usd,r.reserved_usd FROM advisory_reservations r JOIN advisory_request_accounts a USING(request_id) LEFT JOIN advisory_usage u USING(request_id) WHERE a.account_id=?',(self.journal.policy['account_id'],)))
+        if self.journal.policy.get('strategy_id')=='pump_jev_v1':
+            from .jev_admission import live_cost_rows
+            rows+=live_cost_rows(self.root,self.journal.policy['account_id'])
         with self.journal.transaction():
             for rid,at,billed,reserved in rows:
                 for value in (billed,reserved):
@@ -193,6 +207,12 @@ def collect_candidate(journal,backend):
             answer=backend.judge.ask(mint,facts,mark,execution_account_id=journal.policy['account_id'])
             require(answer.get('validated') is True and answer.get('verdict')=='BUY' and D(answer['confidence'])>=D('.70'),'Model did not approve entry')
             i['entry_evidence']={'model_request_id':answer['request_id']}
+            from .jev_admission import live_review
+            jev=live_review(backend.root,journal.policy,facts,mark,int(backend.clock()))
+            if jev is not None:
+                result['jev_assessment_id']=jev['id']
+                require(jev['status']=='COMPLETE' and jev['result']['proposed']=='BUY','Jev additional filter did not approve entry')
+                i['entry_evidence']['jev_assessment_id']=jev['id']
             i=backend.refresh_intent(i)
             journal.enqueue(i,int(backend.clock()));result.update(verdict='BUY',stage='QUEUED',order_id=i['id'],fill=False)
         except Exception as exc:result['error_type']=type(exc).__name__

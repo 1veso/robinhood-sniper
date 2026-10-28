@@ -74,7 +74,7 @@ class Journal:
         for k in ('dossier','baseline','result'): out[k] = json.loads(out[k])
         return out
 
-    def assess(self, dossier, baseline, *, now, client=None, reserve=None):
+    def assess(self, dossier, baseline, *, now, client=None, reserve=None, clock=time.time):
         identifier = digest({'dossier': dossier, 'policy': POLICY})
         candidate = dossier.get('candidate_id', 'invalid:' + identifier)
         self.db.execute('BEGIN IMMEDIATE')
@@ -153,7 +153,7 @@ class Journal:
         # Response cannot choose clocks, watch_count, identity, settings or orders.
         with self.db:
             self.db.execute('UPDATE assessments SET finished=?,status=?,result=? WHERE id=?',
-                (int(time.time()),status,encode(result),identifier))
+                (int(clock()),status,encode(result),identifier))
         return self.get(identifier)
 
 
@@ -237,7 +237,8 @@ def comparison(assessments, positions):
     """Matched-fill subset replay, no reinvestment and no hypothetical ledger writes."""
     records, exclusions = [], {'unassessed':0,'late_assessment':0,'open_position':0}
     for source, account, p in positions:
-        matches = [a for a in assessments if a['account_id']==account and a['baseline'].get('position_id')==p['id'] and a['status']=='COMPLETE']
+        linked=(p.get('judgment') or {}).get('jev_assessment_id')
+        matches = [a for a in assessments if a['account_id']==account and (a['baseline'].get('position_id')==p['id'] or a['id']==linked) and a['status']=='COMPLETE']
         if not matches: exclusions['unassessed']+=1; continue
         a = min(matches, key=lambda x:x['finished'])
         if a['finished'] > p['opened_at']:
@@ -289,7 +290,15 @@ def view(root):
     for item in items:
         summaries.append({k:item[k] for k in ('id','candidate_id','account_id','snapshot_at','started','finished','status','baseline','watch_count')} |
             {'result':{k:v for k,v in item['result'].items() if k!='request_state'}})
-    return {'name':'Pump / Jev Review','mode':'SHADOW','assets':[],'cadence_seconds':60,'account_id':'Linked baseline accounts; no fourth balance',
+    from .jev_lifecycle import current
+    state=current(root)
+    try:
+        from .jev_readiness import report
+        readiness=report(root)
+    except (OSError,ValueError,KeyError):
+        readiness={'stage':state['stage'],'entry_status':'BLOCKED','requirements':[], 'live_execution_ready':False}
+    return {'name':'Pump / Jev Review','mode':state['stage'],'promotion':state,'readiness':readiness,
+        'assets':[],'cadence_seconds':60,'account_id':state['paper_account_id'] or 'Linked baseline accounts; no fourth balance',
         'enabled':config['enabled'],'external_calls_enabled':config['enabled'] and config['paid_authorized'] and Decimal(config['daily_budget_usd'])>0 and (root/'runtime/typesafe-api-key.txt').is_file(),
         'model':MODEL,'policy':POLICY,'assessments':summaries,'counts':counts,'source_bindings':bindings,
         'runs':runs,'comparison':paired,'orders_created':0,

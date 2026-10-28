@@ -14,7 +14,8 @@ from sniper.adapters.solana import validate_address
 
 
 def check(book, mint, *, market=None, rugcheck=None, judge=None, clock=time.time,
-          entry_guard=None, entry_hook=None, signal_context=None, expected_pool=None):
+          entry_guard=None, entry_hook=None, signal_context=None, expected_pool=None,
+          jev_client=None, jev_enrich=None):
     mint = validate_address(mint)
     now = int(clock())
     if not book.claim(mint, now):
@@ -51,6 +52,16 @@ def check(book, mint, *, market=None, rugcheck=None, judge=None, clock=time.time
             result['reason'] = judgment.get('why', 'Judgment did not qualify')
             return result
         result['verdict'] = 'BUY'  # A signal is not yet an entry.
+        result['stage'] = 'jev'
+        from sniper.jev_admission import paper_review, paper_guard
+        review = paper_review(book, facts, quote, int(clock()), client=jev_client, enrich=jev_enrich, clock=clock)
+        if review is not None:
+            result['jev'] = {'assessment_id':review['id'],'status':review['status'],'proposed':review['result']['proposed']}
+            if review['status']!='COMPLETE' or review['result']['proposed']!='BUY':
+                result['reason']='Jev additional filter: '+review['status']+' / '+str(review['result']['reason'])
+                return result
+            judgment={**judgment,'jev_assessment_id':review['id'],'strategy_id':'pump_jev_v1'}
+            result['judgment']=judgment
         result['stage'] = 'refresh'
         fresh = market.quote(mint, facts['pool'])
         if fresh['pool'] != quote['pool'] or fresh['mint'] != mint:
@@ -61,8 +72,12 @@ def check(book, mint, *, market=None, rugcheck=None, judge=None, clock=time.time
             result['reason'] = reason
             return result
         result['stage'] = 'entry'
+        original_guard=entry_guard
+        def final_guard():
+            if original_guard: original_guard()
+            if review is not None: paper_guard(book,review['id'],mint,facts['pool'],int(clock()))
         position = book.open_paper(fresh, judgment, int(clock()),
-                                  entry_guard=entry_guard, entry_hook=entry_hook)
+                                  entry_guard=final_guard, entry_hook=entry_hook)
         result.update(entry=True, position_id=position['id'], reason='Paper entry recorded at refreshed indicative price')
         return result
     except Exception as exc:

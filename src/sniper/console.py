@@ -464,6 +464,9 @@ def make_server(root, host='127.0.0.1', port=8765):
                 elif url.path == '/api/jev-assessment':
                     from .jev_review import detail
                     self.send(200, json_text(detail(data.root, params.get('id',[''])[0])).encode())
+                elif url.path == '/api/jev-readiness':
+                    from .jev_readiness import report
+                    self.send(200,json_text(report(data.root)).encode(),filename='jev-readiness.json')
                 else:
                     self.send(404, b'{"error":"Not found"}')
             except ValueError:

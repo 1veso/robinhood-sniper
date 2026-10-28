@@ -25,9 +25,17 @@ def reader(root):
     return SolanaRpc(rpc_url=original.rpc_url,api_key=original.api_key,transport=original.transport)
 
 
-def wallet_validation(root,policy):
+def wallet_validation(root,policy,*,preparation=False):
     """Actual accounts, no overrides, signatures, funding or submission."""
-    p=validate_deployment(policy,root);adapter=SolanaExecutionAdapter(p,reader(root))
+    if preparation:
+        from sniper.execution_solana import validate_policy
+        from rug_desk.model_gate import strategy_binding
+        p=validate_policy(policy)
+        cp.require(not p['deployment_authorized'] and not p['acceptance_mode'],'Draft preparation grants no execution authority')
+        cp.require(p.get('strategy_binding')==strategy_binding(root/'rug_desk'),'Draft strategy binding differs')
+        cp.require(p['wallet']==(root/'runtime/solana-trading-address.txt').read_text(encoding='utf-8-sig').strip(),'Draft wallet differs')
+    else:p=validate_deployment(policy,root)
+    adapter=SolanaExecutionAdapter(p,reader(root))
     pair=p.get('validation_pair') or {}
     cp.require(all(k in pair for k in ('mint','pool','buy_input_raw','sell_input_raw')),'Explicit validation setup pair required')
     cp.require(0<int(pair['buy_input_raw'])<=p['max_order_raw'],'Validation buy amount exceeds policy')
@@ -43,6 +51,7 @@ def wallet_validation(root,policy):
     cp.require(accounts[p['wallet']]['lamports']>=p['max_gas_wei_day']+p['max_rent_lamports']*p['max_open_positions'],'Wallet native balance below fee/rent reserve')
     return {'validated':True,'policy_hash':p['policy_hash'],'wallet_sha256':hashlib.sha256(p['wallet'].encode()).hexdigest(),
             'tested_at':int(time.time()),'probes':results,'signing_calls':0,'broadcast_calls':0,
+            'preparation_only':preparation,
             'scope':'Wallet-specific setup-pair simulations only; each later trade must be screened and simulated again'}
 
 
@@ -71,6 +80,7 @@ def main():
         if command=='run':p.add_argument('--interval',type=int,default=10)
     init=sub.add_parser('initialize-live');init.add_argument('--policy',type=Path,required=True);init.add_argument('--initial-deployment-authorized',action='store_true')
     check=sub.add_parser('validate-wallet');check.add_argument('--policy',type=Path,required=True)
+    check.add_argument('--read-only-draft',action='store_true',help='Read-only preparation before deployment approval; never loads a signer')
     halt=sub.add_parser('halt');halt.add_argument('--kind',choices=['entries','all'],required=True)
     args=parser.parse_args();root=args.app_root.resolve();folder=root/'runtime/executor/solana-live'
     if args.command=='status':
@@ -83,7 +93,7 @@ def main():
         wallet=(root/'runtime/solana-trading-address.txt').read_text(encoding='utf-8-sig').strip()
         result=probe(reader(root),wallet);atomic(root/'runtime/live-preparation/solana-cp-execution-probe.json',encode(result))
     elif args.command=='validate-wallet':
-        result=wallet_validation(root,json.loads(args.policy.read_text(encoding='utf-8-sig')))
+        result=wallet_validation(root,json.loads(args.policy.read_text(encoding='utf-8-sig')),preparation=args.read_only_draft)
         atomic(root/'runtime/live-preparation/solana-policy-wallet-validation.json',encode(result))
     elif args.command=='initialize-live':
         if not args.initial_deployment_authorized:parser.error('Explicit initial deployment authorization is required')

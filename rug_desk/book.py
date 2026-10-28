@@ -244,6 +244,10 @@ class Book:
         with self.transaction():
             if entry_guard:
                 entry_guard()
+            from sniper.jev_lifecycle import enabled_for
+            if enabled_for(self.root.parent,self.identity['account_id']):
+                from sniper.jev_admission import paper_guard
+                paper_guard(self,judgment.get('jev_assessment_id'),quote['mint'],quote['pool'],now)
             failure = self.limits(quote['mint'], now)
             if failure:
                 raise ValueError(failure)

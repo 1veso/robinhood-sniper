@@ -96,6 +96,10 @@ def summary(book, now):
                 usage=[r for r in usage if r['request_id'] not in live_requests]
         finally:
             db.close()
+    from sniper.jev_admission import live_cost_rows
+    usage.extend({'request_id':rid,'created_at':at,'billed_usd':billed,'reserved_usd':reserved,
+        'provider':'typesafe','payload':'Jev actual bill; unknown is not zero'}
+        for rid,at,billed,reserved in live_cost_rows(book.root.parent,book.identity['account_id']))
     from rug_desk.grok import Judge
     paid = Judge(book.root).recurring_enabled()
     from sniper.live_readiness import evaluate
@@ -134,7 +138,7 @@ def write_report(book, now):
     readiness = out['live_readiness']
     document += '<h2>Net performance and live preparation</h2><p>Net including open positions and API costs: $' + html.escape(str(readiness['net_including_open_positions_usd'])) + ' · After extra execution stress: $' + html.escape(str(readiness['net_after_extra_execution_stress_usd'])) + '</p>'
     document += '<p>Live trading: disabled. Performance ready for human review: ' + str(readiness['performance_ready_for_human_review']) + '. Rent is tracked as reserved capital, not a trading fee.</p>'
-    document += '<p>Required live workflow: automatic entries, exits and receipt reconciliation, without routine per-trade approval. The automatic live executor is not implemented; signing and submission remain disabled.</p>'
+    document += '<p>Required live workflow: automatic entries, exits and receipt reconciliation, without routine per-trade approval. A restricted direct classic-SPL Raydium CP-Swap executor is implemented and offline-tested. Independent review and wallet-specific chain execution remain unverified; live deployment remains disabled.</p>'
     document += '<p>' + html.escape(out['limitations']) + '</p><details><summary>Account, checks, runs and evidence</summary><pre>' + html.escape(json.dumps(out, indent=2)) + '</pre></details></html>'
     atomic(book.root / 'report.html', document)
     atomic(book.runtime / 'report.json', encode(out))
@@ -144,6 +148,11 @@ def write_report(book, now):
 def start_trial(book, now):
     """Explicit seven-day clock only after independent operational proof exists."""
     out = summary(book, now)
+    from sniper.jev_lifecycle import enabled_for
+    if enabled_for(book.root.parent,book.identity['account_id']):
+        from sniper.jev_readiness import report
+        if report(book.root.parent,now=now)['entry_status']!='READY':
+            raise ValueError('Complete prospective Jev strategy inputs and model authorization required before trial clock')
     if not out['paid_ai_enabled']:
         raise ValueError('Funded inference and X Search tests plus paid authorization are required')
     preflight_path = book.runtime / 'preflight.json'

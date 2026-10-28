@@ -1,4 +1,6 @@
-# Pump / Jev Review — shadow specialist
+# Pump / Jev Review — specialist integration
+
+**Version 0.1.22:** [Promotion and prospective paper operation](JEV_PROMOTION.md) supersedes the shadow-only behavior described below. The user selected the existing RUG DESK paper account. Paid calls remain disabled.
 
 Release 0.1.21 adds a fourth board seat, not a fourth trading account. The user explicitly chose to keep Jev calls disabled. Existing trading configuration is authoritative. Neither a Jev BUY nor installation authorizes entries, paid Grok, signing, funding or live deployment.
 
