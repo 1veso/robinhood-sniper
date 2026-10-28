@@ -8,6 +8,8 @@ $owner = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $action = New-ScheduledTaskAction -Execute $python -Argument ('"' + (Join-Path $project 'executor.py') + '" once --mode shadow') -WorkingDirectory $project
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+# Keep the read-only shadow import from starving at the scheduler default.
+$settings.Priority = 4
 $principal = New-ScheduledTaskPrincipal -UserId $owner -LogonType Interactive -RunLevel Limited
 Register-ScheduledTask -TaskName 'SNIPER Automatic Executor Shadow' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'Automatic executor shadow observation only. Reads candidate inputs; no keys, signing, submission, artificial fills or paid inference.' -Force | Out-Null
 Start-ScheduledTask -TaskName 'SNIPER Automatic Executor Shadow'
