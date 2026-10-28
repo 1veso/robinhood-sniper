@@ -58,6 +58,23 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(len(actual['fills']), 1)
         self.assertEqual(actual['snapshot']['positions'][0]['mark_status'], 'missing_quote')
 
+    def test_old_asset_safety_uses_latest_evidence_without_per_asset_json_scans(self):
+        asset='eip155:4663:token1'
+        self.ledger.record_event('older-risk','rug_screen',{'asset_id':asset,'checks':{'fresh':False},'source':'old'},NOW-4)
+        self.ledger.record_event('latest-risk','rug_screen',{'asset_id':asset,'checks':{'fresh':True},'source':'latest'},NOW-3)
+        for n in range(180):
+            self.ledger.record_event('other-risk-'+str(n),'rug_screen',{'asset_id':'other-'+str(n),'checks':{},'source':'fixture'},NOW+n)
+        queries=[]
+        from contextlib import contextmanager
+        @contextmanager
+        def observed(path):
+            with reader(path) as db:
+                db.set_trace_callback(queries.append);yield db
+        with patch('sniper.console.reader',observed):actual=self.data.robinhood()
+        self.assertEqual(actual['screens'][asset]['checks'],{'fresh':True})
+        self.assertEqual(actual['screens'][asset]['observed_at'],NOW-3)
+        self.assertFalse(any("json_extract(payload,'$.asset_id')" in q for q in queries))
+
     def test_read_connection_cannot_modify_or_initialize_accounts(self):
         with reader(self.folder / 'ledger.sqlite3') as c:
             with self.assertRaises(sqlite3.OperationalError):

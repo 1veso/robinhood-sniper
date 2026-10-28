@@ -238,15 +238,25 @@ class ConsoleData:
                     screens[asset] = {'observed_at': r['observed_at'], 'checks': p.get('checks', {}), 'source': p.get('source', '')}
             # A quiet held coin can fall outside the recent candidate-screen window.
             # Read its latest actual evidence, including the original entry payload.
-            for asset in assets:
-                if asset not in screens:
-                    row = c.execute("SELECT payload FROM events WHERE kind='rug_screen' AND json_extract(payload,'$.asset_id')=? ORDER BY observed_at DESC LIMIT 1", (asset,)).fetchone()
-                    p = json.loads(row[0]) if row else None
-                    if p is None:
-                        row = c.execute('SELECT payload FROM decisions WHERE asset_id=? ORDER BY observed_at DESC LIMIT 1', (asset,)).fetchone()
-                        p = (json.loads(row[0]).get('candidate', {}).get('safety') or {}) if row else {}
-                    if p.get('asset_id'):
-                        screens[asset] = selected(p, ('observed_at','checks','source'))
+            missing = set(assets) - set(screens)
+            if missing:
+                # One shared historical scan, rather than an expensive JSON
+                # predicate/full-table scan for every old traded asset.
+                # Sort only small row keys; sorting raw provider payloads can
+                # spill large temporary files onto a space-constrained drive.
+                keys = rows(c, "SELECT rowid AS event_rowid,observed_at FROM events WHERE kind='rug_screen' ORDER BY observed_at DESC")
+                for r in keys:
+                    payload = c.execute('SELECT payload FROM events WHERE rowid=?',(r['event_rowid'],)).fetchone()[0]
+                    p = json.loads(payload); asset = p.get('asset_id')
+                    if asset in missing:
+                        screens[asset] = {'observed_at':r['observed_at'],'checks':p.get('checks',{}),'source':p.get('source','')}
+                        missing.remove(asset)
+                        if not missing:break
+            for asset in missing:
+                row = c.execute('SELECT payload FROM decisions WHERE asset_id=? ORDER BY observed_at DESC LIMIT 1', (asset,)).fetchone()
+                p = (json.loads(row[0]).get('candidate', {}).get('safety') or {}) if row else {}
+                if p.get('asset_id'):
+                    screens[asset] = selected(p, ('observed_at','checks','source'))
             repairs = []
             for r in rows(c, "SELECT observed_at,payload FROM events WHERE kind='operational_repair' ORDER BY observed_at"):
                 p = json.loads(r['payload'])
