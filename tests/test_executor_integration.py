@@ -116,7 +116,8 @@ class ExecutorIntegrationTests(unittest.TestCase):
 
     def test_initializer_wallet_balance_failure_creates_no_live_account(self):
         path = self.root / 'policy.json'
-        path.write_text(json.dumps(policy(deployment_authorized=True)))
+        path.write_text(json.dumps(policy(deployment_authorized=True,
+            max_finality_lag_seconds=60, finality_review_reference='offline-test-review')))
         runtime = self.root / 'runtime'
         runtime.mkdir()
         (runtime / 'quote-rpc-url.txt').write_text('https://invalid.example/read-only-test')
@@ -130,6 +131,7 @@ class ExecutorIntegrationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'base balance'):
                 CLI.initialize_live(self.root, path)
         self.assertNotIn('broadcast_enabled', rpc.call_args.kwargs)
+        adapter.check_finality_latency.assert_called_once()
         signer.assert_not_called()
         events.assert_not_called()
         self.assertFalse((runtime / 'executor/live').exists())

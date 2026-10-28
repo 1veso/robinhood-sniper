@@ -84,6 +84,7 @@ class ConsoleData:
         self.root = Path(root)
         self._cache = {}
         self._lock = threading.RLock()
+        self._load_locks = {}
         self._jobs_refreshing = False
         self._jobs_thread = None
 
@@ -92,8 +93,17 @@ class ConsoleData:
             cached = self._cache.get(key)
             if cached and time.monotonic() - cached[0] < lifetime:
                 return cached[1]
+            load_lock = self._load_locks.setdefault(key, threading.Lock())
+        # Coalesce the same view, but never hold the global cache lock while
+        # reading SQLite or exports. A slow chart must not block another bot.
+        with load_lock:
+            with self._lock:
+                cached = self._cache.get(key)
+                if cached and time.monotonic() - cached[0] < lifetime:
+                    return cached[1]
             value = load()
-            self._cache[key] = (time.monotonic(), value)
+            with self._lock:
+                self._cache[key] = (time.monotonic(), value)
             return value
 
     def _inspect_jobs(self):
@@ -157,6 +167,8 @@ class ConsoleData:
                          'refresh_seconds': 5, 'read_only': True, 'real_money_enabled': False,
                          'execution_target': 'automatic', 'live_execution_ready': False,
                          'jobs': self.jobs()})
+            from .switchover import inventory
+            data['switchover'] = inventory(self.root, 'evm' if bot=='robinhood' else 'solana')
             if bot=='robinhood':
                 try:
                     executor=read_json(self.root/'runtime/executor/status.json')

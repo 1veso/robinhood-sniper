@@ -1,5 +1,9 @@
 # Execution costs and automatic live preparation — 0.1.12
 
+Version 0.1.18 adds repeatable free checks, unsigned Metis builds and a measured
+EVM finality gate. See [LIVE_SWITCHOVER.md](LIVE_SWITCHOVER.md) for current evidence
+and the explicitly unfinished Solana automatic executor.
+
 The user's 2026-10-27 request authorizes adding execution costs and preparing later live execution. Existing trading thresholds, exits, wallet rules and `rug_desk/config.py` remain unchanged. The Solana account gets an explicitly versioned cost model before its first strategy fill. The existing Robinhood paper engine already includes same-block V3 pool fees/impact, 100 bps adverse execution stress, and conservative gas: twice the larger quoter estimate plus 100,000 gas units, valued at the current gas/ETH price. That is still a paper estimate, not a wallet-specific executed transaction.
 
 **Latest execution requirement:** the user requires automatic trading, with no routine per-trade approval or manual signing. [Automatic execution requirements](AUTOMATED_EXECUTION.md) supersede the article’s manual workflow. The current preparation reader is not a live executor; the Solana signing/instruction-validation path remains unimplemented. The separate Robinhood executor is documented in [Executor operations](EXECUTOR_OPERATIONS.md) and stays disabled for real funds.

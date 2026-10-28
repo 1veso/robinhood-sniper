@@ -320,6 +320,33 @@ class EvmExecutionAdapter:
         if hash32(header['hash']) != anchor['block_hash']:
             raise ExecutionRejected('Execution anchor reorganized')
 
+    def check_finality_latency(self):
+        """Entry/deployment gate only. Never disable reconciliation or exits."""
+        maximum = self.policy.get('max_finality_lag_seconds')
+        if type(maximum) is not int or not 1 <= maximum <= 3600:
+            raise ExecutionRejected('Reviewed finality-latency limit is required')
+        if quantity(self.rpc.call('eth_chainId')) != CHAIN_ID:
+            raise ExecutionRejected('Wrong chain for finality observation')
+        if hash32(self.rpc.call('eth_getBlockByNumber', ['0x0', False])['hash']) != self.policy['genesis_hash']:
+            raise ExecutionRejected('Wrong genesis for finality observation')
+        latest = self.rpc.call('eth_getBlockByNumber', ['latest', False])
+        finalized = self.rpc.call('eth_getBlockByNumber', ['finalized', False])
+        if not latest or not finalized:
+            raise ExecutionRejected('Finality observation unavailable')
+        newest, settled = quantity(latest['number']), quantity(finalized['number'])
+        latest_time, settled_time = quantity(latest['timestamp']), quantity(finalized['timestamp'])
+        if newest < settled or latest_time < settled_time or not 0 <= int(self.clock()) - latest_time <= 30:
+            raise ExecutionRejected('Invalid or stale finality snapshot')
+        for header in (latest, finalized):
+            canonical_header = self.rpc.call('eth_getBlockByNumber', [header['number'], False])
+            if not canonical_header or hash32(canonical_header['hash']) != hash32(header['hash']):
+                raise ExecutionRejected('Finality snapshot changed')
+        lag = latest_time - settled_time
+        if lag > maximum:
+            raise ExecutionRejected('Finality latency exceeds the reviewed entry limit')
+        return {'observed_at': int(self.clock()), 'lag_seconds': lag, 'lag_blocks': newest - settled,
+                'maximum_seconds': maximum, 'scope': 'Canonical snapshot, not a guaranteed exit time'}
+
     def _route(self, token_in, token_out, pool, anchor):
         token_in, token_out, pool = address(token_in), address(token_out), address(pool)
         if token_in == token_out or self.base not in (token_in, token_out):

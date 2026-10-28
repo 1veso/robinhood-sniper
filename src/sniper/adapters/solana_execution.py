@@ -133,7 +133,8 @@ def order_evidence(raw, *, mint, pool, side, amount_raw, wallet, now, max_slippa
 
 
 class SolanaExecutionReader:
-    ALLOWED_RPC = {'getGenesisHash', 'getBalance', 'getTransaction', 'getSignatureStatuses', 'simulateTransaction', 'getBlockHeight'}
+    ALLOWED_RPC = {'getGenesisHash', 'getBalance', 'getTransaction', 'getSignatureStatuses', 'simulateTransaction', 'getBlockHeight',
+                   'getAccountInfo', 'getLatestBlockhash', 'getFeeForMessage'}
 
     def __init__(self, *, api_key=None, rpc_url='https://api.mainnet-beta.solana.com', transport=request_json):
         parsed = urlsplit(rpc_url)

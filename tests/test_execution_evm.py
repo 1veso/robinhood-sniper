@@ -99,6 +99,30 @@ class EvmExecutorTests(unittest.TestCase):
         self.assertEqual(prepared['tx']['value'],0)
         self.assertEqual(self.rpc.writes,[])
 
+    def test_finality_latency_requires_policy_and_rejects_long_delay(self):
+        with self.assertRaises(ExecutionRejected): self.backend.check_finality_latency()
+        self.backend.policy['max_finality_lag_seconds']=60
+        original=self.rpc.call
+        def observed(method, params=None):
+            if method=='eth_getBlockByNumber' and params[0] in ('latest','finalized','0x64','0x5a'):
+                final=params[0] in ('finalized','0x5a')
+                return {'number':hex(90 if final else 100),'hash':BLOCK,
+                        'timestamp':hex(NOW-self.lag if final else NOW)}
+            return original(method,params)
+        self.rpc.call=observed
+        self.lag=978
+        with self.assertRaises(ExecutionRejected): self.backend.check_finality_latency()
+        self.lag=20
+        self.assertEqual(self.backend.check_finality_latency()['lag_seconds'],20)
+        self.lag=-1
+        with self.assertRaises(ExecutionRejected): self.backend.check_finality_latency()
+
+    def test_finality_entry_limit_does_not_disable_exit_quote(self):
+        self.backend.policy['max_finality_lag_seconds']=None
+        with self.assertRaises(ExecutionRejected): self.backend.check_finality_latency()
+        result=self.backend.quote_swap(TOKEN,USDG,POOL,'25000000')
+        self.assertEqual(result['token_in'],TOKEN)
+
     def test_router02_exact_single_call_deadline_wrapper(self):
         profile=policy();profile['router_abi']='uniswap_v3_swaprouter02'
         backend=EvmExecutionAdapter(profile,self.rpc,clock=lambda:NOW)

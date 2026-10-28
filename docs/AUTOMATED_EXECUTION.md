@@ -49,6 +49,11 @@ Solana automatic signing/submission is therefore **unsupported**, not silently r
 
 ## Deployment boundary and current validation
 
+Version 0.1.18 adds `solana_wire.py` (bounded v0 compilation/decoding and RPC lookup
+checks) and `solana_preflight.py` (unsigned Metis build/simulation). These resolve
+preparation components, not full instruction semantics or automatic signing and
+submission. `signable=false` remains unconditional. See [LIVE_SWITCHOVER.md](LIVE_SWITCHOVER.md).
+
 A finalized-only settlement policy and one unresolved wallet transaction at a time prioritize conservative recovery. Settlement delay can postpone later orders, including exits; this is not a high-frequency or guaranteed-stop execution service. Receipt finality policy and operational latency require review before live deployment.
 
 The first installed mode must be **shadow**, with no signing authority, no broadcasts and no real fills. Offline acceptance tests use a separate disposable account and a controlled transport. They exercise software behavior; they do not prove a mainnet deployment, wallet balance, profitable strategy or completed live execution.

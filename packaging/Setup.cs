@@ -61,7 +61,7 @@ class Setup {
             string script="$s=(New-Object -ComObject WScript.Shell).CreateShortcut('"+shortcut.Replace("'","''")+"');$s.TargetPath='"+escapedExe+"';$s.Arguments='"+escapedArgs+"';$s.WorkingDirectory='"+destination.Replace("'","''")+"';$s.Save()";
             Run("powershell.exe","-NoProfile -NonInteractive -Command "+Q(script));
             using(var key=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\RugDeskPaper")){
-                key.SetValue("DisplayName","RUG DESK Paper");key.SetValue("DisplayVersion","0.1.17");key.SetValue("Publisher","RUG DESK local build");key.SetValue("InstallLocation",destination);key.SetValue("UninstallString",Q(exe)+" "+launcherArgs+" --uninstall");key.SetValue("NoModify",1);key.SetValue("NoRepair",1);
+                key.SetValue("DisplayName","RUG DESK Paper");key.SetValue("DisplayVersion","0.1.18");key.SetValue("Publisher","RUG DESK local build");key.SetValue("InstallLocation",destination);key.SetValue("UninstallString",Q(exe)+" "+launcherArgs+" --uninstall");key.SetValue("NoModify",1);key.SetValue("NoRepair",1);
             }
             Process.Start(new ProcessStartInfo(exe,launcherArgs){UseShellExecute=true});return 0;
         }catch(Exception e){

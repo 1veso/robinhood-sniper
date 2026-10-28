@@ -132,6 +132,35 @@ class ConsoleTests(unittest.TestCase):
     def test_public_bind_is_refused(self):
         with self.assertRaises(ValueError):make_server(self.root,host='0.0.0.0')
 
+    def test_slow_view_does_not_block_other_views_and_same_view_loads_once(self):
+        entered, release = threading.Event(), threading.Event()
+        def slow():
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError('Fixture was not released')
+            return {'chart': 'complete'}
+        with patch.object(self.data, '_inspect_jobs', return_value={'available': False, 'items': []}):
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                with patch.object(self.data, 'chart', side_effect=slow) as loader:
+                    first = pool.submit(self.data.cached, 'slow-chart', 5, self.data.chart)
+                    self.assertTrue(entered.wait(2))
+                    second = pool.submit(self.data.cached, 'slow-chart', 5, self.data.chart)
+                    try:
+                        other = pool.submit(self.data.state, 'robinhood')
+                        self.assertEqual(other.result(timeout=2)['account_id'], self.identity)
+                        self.assertFalse(first.done())
+                        self.assertFalse(second.done())
+                    finally:
+                        release.set()
+                    self.assertEqual(first.result(timeout=2), second.result(timeout=2))
+                    loader.assert_called_once()
+
+    def test_failed_cached_load_is_not_published_and_can_recover(self):
+        with self.assertRaises(ValueError):
+            self.data.cached('broken', 5, lambda: (_ for _ in ()).throw(ValueError('unavailable')))
+        self.assertNotIn('broken', self.data._cache)
+        self.assertEqual(self.data.cached('broken', 5, lambda: 'recovered'), 'recovered')
+
     def test_slow_task_inspection_is_single_flight_and_does_not_block_account_or_chart(self):
         entered, release = threading.Event(), threading.Event()
         def inspect():

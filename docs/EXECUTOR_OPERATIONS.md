@@ -57,3 +57,10 @@ For an initialized live account, `python executor.py halt --kind entries` stops 
 Before restoring a failed worker, preserve its database and evidence. Never erase the journal to get a green status. Never reuse an acceptance account as a live account, and never count acceptance fills as market-strategy performance.
 
 The detailed architecture and reviewed primary sources are in [AUTOMATED_EXECUTION.md](AUTOMATED_EXECUTION.md).
+
+Version 0.1.18 adds a required finality-latency deployment review and fresh
+entry-only latency check. Set `max_finality_lag_seconds` and
+`finality_review_reference` only under an explicitly reviewed execution policy.
+The example leaves them unapproved. An October 28 snapshot measured 978 seconds
+of finalized lag; serialized settlement can delay exits. See
+[live switchover preparation](LIVE_SWITCHOVER.md) for evidence and remaining work.

@@ -33,6 +33,8 @@
   "max_evidence_age_seconds": 300,
   "confirmations": 12,
   "require_finalized": true,
+  "max_finality_lag_seconds": null,
+  "finality_review_reference": "",
   "minimum_buyers": 2,
   "buyer_window_seconds": 900,
   "min_liquidity_usd": "30000",

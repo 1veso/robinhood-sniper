@@ -30,6 +30,7 @@ def initialize_live(root, policy_path):
     validate_deployment(policy)
     rpc=ExecutionRpcClient((root/'runtime/quote-rpc-url.txt').read_text(encoding='utf-8-sig').strip(),timeout=8,max_retries=1)
     adapter=EvmExecutionAdapter(policy,rpc)
+    adapter.check_finality_latency()
     anchor=adapter._anchor();tag=hex(anchor['block_number']) if 'block_number' in anchor else hex(anchor['number'])
     if adapter._balance(policy['base_token'],tag)<int(policy['capital_raw']):raise ValueError('Wallet base balance is below approved allocation')
     if adapter._uint(policy['base_token'],'0x313ce567',tag)!=policy['base_decimals']:raise ValueError('Base precision differs from approved policy')

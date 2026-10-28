@@ -109,6 +109,7 @@ class GuardedBackend:
         from .confirmation_book import ConfirmationBook
         from .exploration import pool_adjusted_screen, observed_pool_screen, observe_creator_balance
         from .rug_screen import enhance_rug_screen
+        self.adapter.check_finality_latency()
         now = int(self.clock())
         with closing(sqlite3.connect(self.source_path.resolve().as_uri()+'?mode=ro',uri=True)) as source:
             source.row_factory = sqlite3.Row;source.execute('PRAGMA query_only=ON');source.execute('BEGIN')
@@ -280,7 +281,7 @@ def validate_deployment(policy):
     """No profitability flag or paper metadata can grant initial live authority."""
     if policy.get('deployment_authorized') is not True or policy.get('acceptance_mode') is True:
         raise ValueError('Explicit initial live deployment is required')
-    required=('user_approval_reference','independent_review_reference','observation_source_id','keystore_path')
+    required=('user_approval_reference','independent_review_reference','observation_source_id','keystore_path','finality_review_reference')
     if any(not isinstance(policy.get(k),str) or not policy[k].strip() for k in required):
         raise ValueError('Deployment review, observation identity and local signer must be bound')
     if policy.get('chain_id')!=4663 or policy.get('execution_target')!='automatic':raise ValueError('Unsupported execution deployment')
@@ -297,6 +298,9 @@ def validate_deployment(policy):
     if policy.get('max_quote_age_seconds',30)>30 or policy.get('buyer_window_seconds',900)>900:
         raise ValueError('Deployment weakens evidence freshness')
     if policy.get('require_finalized') is not True:raise ValueError('Finalized receipt reconciliation is required')
+    maximum=policy.get('max_finality_lag_seconds')
+    if type(maximum) is not int or not 1 <= maximum <= 3600:
+        raise ValueError('Initial deployment requires an explicitly reviewed finality-latency bound')
     return policy
 
 
