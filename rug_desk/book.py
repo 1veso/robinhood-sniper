@@ -131,6 +131,8 @@ class Book:
         except Exception:
             self.db.close()
             raise
+        from sniper.paper_events import install
+        install(self)
 
     def close(self):
         self.db.close()
@@ -195,8 +197,22 @@ class Book:
 
     def claim(self, mint, now):
         with self.transaction():
-            return bool(self.db.execute('INSERT OR IGNORE INTO checks VALUES (?,?,?,?,?,?)',
+            claimed = bool(self.db.execute('INSERT OR IGNORE INTO checks VALUES (?,?,?,?,?,?)',
                 (mint, now, 'interrupted', 'SKIP', 'Attempt claimed; completion not recorded', '{}')).rowcount)
+            if claimed:
+                from sniper.paper_events import stage
+                stage(self,mint,now,'claim','STARTED')
+            return claimed
+
+    def stage(self, mint, now, name, status):
+        from sniper.paper_events import stage
+        with self.transaction():
+            stage(self,mint,now,name,status)
+
+    def record_quote(self, quote, now, source):
+        from sniper.paper_events import market
+        with self.transaction():
+            market(self,quote,now,source)
 
     def checked(self, mint):
         return self.db.execute('SELECT 1 FROM checks WHERE mint=?', (mint,)).fetchone() is not None
@@ -205,9 +221,15 @@ class Book:
         with self.transaction():
             self.db.execute('UPDATE checks SET at=?,stage=?,verdict=?,reason=?,payload=? WHERE mint=?',
                             (now, stage, verdict, reason, encode(payload), mint))
+            from sniper.paper_events import stage as observed_stage
+            observed_stage(self,mint,now,stage,'COMPLETED',verdict=verdict,reason=reason,entry=payload.get('entry',False))
 
     def _save(self, p):
         self.db.execute('INSERT OR REPLACE INTO positions VALUES (?,?,?)', (p['id'], p['mint'], encode(p)))
+        from sniper.paper_events import emit
+        state={k:p.get(k) for k in ('id','mint','pool','remaining','remaining_cost_basis_usd','realized_pnl','steps','peak','opened_at','closed_at','last_observed_at','last_error_at','feed_error')}
+        at=max(p.get(k) or 0 for k in ('opened_at','closed_at','last_observed_at','last_error_at'))
+        emit(self,'position:'+hashlib.sha256(encode(state).encode()).hexdigest(),'position_changed',at,state)
 
     def _event(self, event_id, now, message):
         self.db.execute('INSERT OR IGNORE INTO events VALUES (?,?,?)', (event_id, now, message[:3800]))
@@ -219,6 +241,9 @@ class Book:
     def _fill(self, fill):
         self.db.execute('INSERT INTO fills VALUES (?,?,?,?,?)',
                         (fill['id'], fill['at'], day(fill['at']), fill['kind'], encode(fill)))
+        from sniper.paper_events import emit
+        emit(self,'fill:'+fill['id'],'paper_fill',fill['at'],
+             {k:fill.get(k) for k in ('id','position_id','mint','pool','kind','at','quantity','price','fee','pnl','reason')})
         self._event('fill:' + fill['id'], fill['at'],
             f"RUG DESK {self.identity['mode'].upper()} {fill['kind'].upper()}\n"
             f"Mint: {fill['mint']}\nPool: {fill['pool']}\nQuantity: {fill['quantity']}\n"
@@ -359,6 +384,8 @@ class Book:
     def export(self):
         # Serializes exporters, preventing a late stale snapshot replacing a newer view.
         with self.transaction():
+            from sniper.paper_events import observe
+            observe(self,int(time.time()))
             atomic(self.root / config.POSITIONS, encode({'identity': self.identity, 'positions': self.positions()}))
             for name, rows, fields in (
                 (config.TRADES, [{**f, 'execution_costs': encode(f.get('execution_costs'))} for f in self.fills()], ['id', 'position_id', 'mint', 'pool', 'kind', 'at', 'quantity', 'price', 'fee', 'pnl', 'reason', 'execution_costs']),
@@ -374,6 +401,8 @@ class Book:
         run_id, started = uuid.uuid4().hex, int(time.time()) if now is None else now
         with self.transaction():
             self.db.execute('INSERT INTO runs VALUES (?,?,?,?,?,?)', (run_id, job, started, None, 'running', '{}'))
+            from sniper.paper_events import emit
+            emit(self,'run:'+run_id+':started','worker_state',started,{'run_id':run_id,'job':job,'status':'running'})
         detail = {}
         try:
             yield detail
@@ -387,6 +416,8 @@ class Book:
             with self.transaction():
                 self.db.execute('UPDATE runs SET finished=?,status=?,detail=? WHERE id=?',
                     (int(time.time()), locals().get('status', 'interrupted'), encode(detail), run_id))
+                emit(self,'run:'+run_id+':finished','worker_state',int(time.time()),
+                     {'run_id':run_id,'job':job,'status':locals().get('status','interrupted')})
 
 
 def main():

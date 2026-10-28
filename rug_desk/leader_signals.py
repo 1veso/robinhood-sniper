@@ -61,6 +61,12 @@ def record_decision(store, identity, result, now, *, finish=True):
     # Caller owns the book transaction, so an entry observation and fill commit together.
     store.db.execute('INSERT INTO leader_decisions(event_id,at,verdict,stage,reason,payload) VALUES (?,?,?,?,?,?)',
         (identity, now, result['verdict'], result.get('stage', 'leader'), result['reason'], encode(result)))
+    from sniper.paper_events import stage
+    row=store.db.execute('SELECT payload FROM leader_events WHERE id=?',(identity,)).fetchone()
+    source=json.loads(row[0]) if row else {}
+    mint=source.get('mint','unknown') if isinstance(source,dict) else 'unknown'
+    stage(store.book,str(mint),now,result.get('stage','leader'),'COMPLETED',
+          verdict=result['verdict'],reason=result['reason'],entry=result.get('entry',False),event_id=identity)
     if finish:
         store.db.execute('UPDATE leader_events SET status=?,result=? WHERE id=?',
             ('PAPER_FILLED' if result.get('entry') else 'SKIP' if result['verdict']=='SKIP' else 'NO_FILL', encode(result), identity))

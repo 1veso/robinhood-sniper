@@ -291,7 +291,7 @@ class ConsoleData:
             collector = selected(read_json(self.root / 'runtime/status.json'), ('finished_at','health','collector_lag_blocks'))
         except (OSError, ValueError):
             collector = None
-        return {'account_id': identity, 'name': 'Robinhood Â· Wallet follower', 'chain': 'Robinhood Chain Â· 4663',
+        return {'account_id': identity, 'name': 'Robinhood Ã‚Â· Wallet follower', 'chain': 'Robinhood Chain Ã‚Â· 4663',
                 'status': selected(status, ('started_at','finished_at','trial_state','entry_halt','collection')),
                 'error_count': len(status.get('errors', [])), 'trial': selected(trial, ('started_at','ends_at','revision_started_at','policy_version')),
                 'snapshot': snapshot, 'policy': policy, 'assets': list(assets.values()), 'fills': fills, 'closed': closed,
@@ -303,28 +303,8 @@ class ConsoleData:
                 'blocker': None, 'setup_blocked': False}
 
     def solana(self):
-        folder = self.root / 'rug_desk/runtime'
-        report = read_json(folder / 'report.json')
-        with reader(folder / 'book.sqlite3') as c:
-            identity = json.loads(c.execute("SELECT value FROM metadata WHERE key='identity'").fetchone()[0])
-            if identity.get('mode') != 'paper':
-                raise ValueError('Unexpected Solana account mode')
-            runs = rows(c, 'SELECT job,started,finished,status FROM runs ORDER BY started DESC LIMIT 24')
-            checks = rows(c, 'SELECT mint,at,stage,verdict,reason FROM checks ORDER BY at DESC LIMIT 80')
-            counts = rows(c, 'SELECT verdict,reason,COUNT(*) count FROM checks GROUP BY verdict,reason ORDER BY count DESC')
-            fill_count = c.execute('SELECT COUNT(*) FROM fills').fetchone()[0]
-            open_count = c.execute('SELECT COUNT(*) FROM positions').fetchone()[0]
-        # A blocked, empty desk has no invented bankroll/equity curve. A future active desk
-        # needs its own ledger adapter before exposing position-level financial analytics.
-        return {'account_id': identity['account_id'], 'name': 'Solana Â· RUG DESK', 'chain': 'Solana Mainnet',
-                'status': {'finished_at': max((x['finished'] or 0 for x in runs), default=0), 'trial_state': report.get('trial_status')},
-                'snapshot': {'open_positions': open_count, 'positions': [], 'realized_pnl': report.get('realized_pnl_total'), 'as_of': report.get('generated_at')},
-                'trial': {}, 'policy': {}, 'assets': [], 'fills': [], 'closed': [], 'equity_history': [], 'screens': {},
-                'decisions': [{'asset_id': r['mint'], 'observed_at': r['at'], 'symbol': r['mint'][:8], 'verdict': r['verdict'], 'reason': r['reason'], 'stage': r['stage']} for r in checks],
-                'reasons': counts, 'runs': runs, 'event_counts': {}, 'gaps': [], 'policy_revisions': [], 'market': [],
-                'notifications': {'trades': queue(folder / 'notifications.sqlite3')}, 'cadence_seconds': 600,
-                'fill_count': fill_count, 'setup_blocked': True, 'blocker': 'Grok / X gate is unfunded and disabled. The Solana trial has not started.' if not fill_count and not open_count else 'Solana ledger activity requires a position adapter; this view does not value those holdings.',
-                'fill_model': report.get('execution_model'), 'paid_ai_enabled': report.get('paid_ai_enabled', False)}
+        from .solana_console import view
+        return view(self.root, 'solana')
 
     def wallets(self):
         """Public generated evidence only; unrelated runtime files are never exposed."""
@@ -384,9 +364,9 @@ class ConsoleData:
         return path.read_bytes()
 
     def chart(self, bot, asset, pool):
-        if bot == 'neon':
-            from .neon_console import chart
-            return self.cached(('chart', bot, asset, pool), 5, lambda: chart(self.root,asset,pool))
+        if bot in ('solana','neon'):
+            from .solana_console import chart
+            return self.cached(('chart', bot, asset, pool), 5, lambda: chart(self.root,bot,asset,pool))
         if bot != 'robinhood' or not asset or not pool or len(asset) > 160 or len(pool) > 100:
             raise ValueError('Unknown chart')
         def load():
@@ -450,6 +430,21 @@ def make_server(root, host='127.0.0.1', port=8765):
                     self.send(200, (static / name).read_bytes(), mime)
                 elif url.path == '/api/state':
                     self.send(200, json_text(data.state(params.get('bot', ['robinhood'])[0])).encode())
+                elif url.path == '/api/events':
+                    from .solana_console import events
+                    page=events(data.root,params.get('bot',['solana'])[0],
+                        self.headers.get('Last-Event-ID') or params.get('after',[''])[0],
+                        int(params.get('limit',['200'])[0]))
+                    if 'text/event-stream' in self.headers.get('Accept','') or params.get('format')==['sse']:
+                        # Bounded catch-up batches release SQLite immediately. EventSource
+                        # reconnects with Last-Event-ID; no worker/provider calls occur here.
+                        chunks=['retry: 3000\n\n']
+                        for event in page['events']:
+                            chunks.append('id: '+event['id']+'\nevent: observation\ndata: '+json_text(event)+'\n\n')
+                        chunks.append('event: cursor\ndata: '+json_text({k:v for k,v in page.items() if k!='events'})+'\n\n')
+                        self.send(200,''.join(chunks).encode(),'text/event-stream; charset=utf-8')
+                    else:
+                        self.send(200,json_text(page).encode())
                 elif url.path == '/api/chart':
                     self.send(200, json_text(data.chart(params.get('bot', ['robinhood'])[0], params.get('asset', [''])[0], params.get('pool', [''])[0])).encode())
                 elif url.path == '/api/wallets':
@@ -460,7 +455,10 @@ def make_server(root, host='127.0.0.1', port=8765):
                 elif url.path == '/api/wallet-export.csv':
                     self.send(200, data.wallet_csv(), 'text/csv; charset=utf-8', 'wallet-evidence.csv')
                 elif url.path == '/api/health':
-                    self.send(200, json_text({'service':'TENDIES TRACKER Observation Console','version':__version__,'read_only':True,'at':int(time.time())}).encode())
+                    from .solana_console import discover
+                    self.send(200, json_text({'service':'TENDIES TRACKER Observation Console','version':__version__,'read_only':True,'at':int(time.time()),
+                        'paper_views':['robinhood','solana','neon','jev'],'event_stream_version':1,
+                        'event_stream_bots':['solana','neon'],'accounts':discover(data.root)}).encode())
                 elif url.path == '/api/jev-assessment':
                     from .jev_review import detail
                     self.send(200, json_text(detail(data.root, params.get('id',[''])[0])).encode())

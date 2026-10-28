@@ -1,5 +1,10 @@
 # Neon bot — Evidence-Gated Solana Leader Following
 
+The later foundation audit confirmed this bot already exists. Its shared Solana
+adapter and durable UI event stream are documented in
+[NEON_EVENT_CONTRACT.md](NEON_EVENT_CONTRACT.md). This integration preserves the
+existing account, policy, baseline, original workers and paper execution path.
+
 Neon is a third, isolated **paper-only** bot. It reuses the existing trader screen,
 Grok integration, strict Rugcheck facts, pinned Market quotes, Book ledger,
 execution-cost model, portfolio controls, independent exit watcher and Telegram

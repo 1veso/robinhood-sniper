@@ -101,8 +101,12 @@ function render(){
   $('strategy-note').textContent=neon?'Evidence-Gated Solana Leader Following · finalized leader swaps → token checks → Grok / X → paper':sol?'Rugcheck → pinned pool → Grok / X → refreshed market → paper entry':`${number(p.min_liquidity_usd,0)} USD liquidity · ${p.min_independent_wallets} buying recipients / ${Number(p.max_confirmation_age_seconds)/60} min · current GoPlus response required`;
   const unresolved=s.unresolved_positions||0;
   const halt=s.entry_halt||state.status.entry_halt||(state.daily?.halted_at?state.daily.halt_reason:'');
-  html('metrics',sol?
-    metric('Account','Setup blocked','No Solana trial clock','warning')+metric('Realized P&L',signed(s.realized_pnl),'Separate Solana account',tone(s.realized_pnl))+metric('Open positions',String(s.open_positions),'From persistent book')+metric('Paper fills',String(state.fill_count),'Acceptance tests excluded')+metric('Paid Grok / X','Disabled','No paid requests authorized','warning'):
+  html('metrics',(sol||neon)&&!s.capital_baseline_supported?
+    metric('Account',esc(state.readiness.state),'Observed worker readiness',state.readiness.entry_enabled===false?'warning':'')+
+    metric('Net paper P&L',signed(s.net_pnl),s.api_costs_known?'After modeled execution and model costs':'Model bill incomplete',tone(s.net_pnl))+
+    metric('Realized P&L',signed(s.realized_pnl),'Separate authoritative book',tone(s.realized_pnl))+
+    metric('Open positions',String(s.open_positions),'Positive remaining quantity')+
+    metric('Paper fills',String(state.fill_count),'Acceptance tests excluded'):
     metric(unresolved?'Conservative equity':'Net equity',usd(s.equity),`${usd(s.starting_cash)} starting cash${unresolved?' · '+unresolved+' unresolved':''}`)+
     metric('Net P&L',signed(s.net_pnl),`${pct(s.return_pct)} since trial start`,tone(s.net_pnl))+
     metric('Realized P&L',signed(s.realized_pnl),`${s.closed_positions} completed position${s.closed_positions===1?'':'s'}`,tone(s.realized_pnl))+
@@ -112,13 +116,13 @@ function render(){
   html('asset-select',state.assets.length?state.assets.map(a=>`<option value="${esc(a.asset_id)}"${a.asset_id===selectedAsset?' selected':''}>${esc(a.symbol)} / USD</option>`).join(''):'<option value="">No traded coins</option>');
   $('asset-select').disabled=!state.assets.length;
   const a=state.assets.find(a=>a.asset_id===selectedAsset);$('instrument-state').textContent=a? a.state.toUpperCase()+' · PAPER':'NO POSITIONS';
-  html('guardrails',(sol||neon)?key('Liquidity floor','$30,000')+key('LP locked / burned','≥ 90%')+key('Top ten / creator','≤ 30% / ≤ 5%')+key('Ticket / max positions','$25 / 4')+key('Stop / trailing','−35% / −30%')+key('X gate',state.paid_ai_enabled?'Validated':'Disabled · required',state.paid_ai_enabled?'positive':'warning'):
+  html('guardrails',(sol||neon)?key('Liquidity floor',usd(p.FACTS.min_liquidity_usd))+key('LP locked / burned','>= '+p.FACTS.min_lp_locked_pct+'%')+key('Top ten / creator','<= '+p.FACTS.max_top10_pct+'% / <= '+p.FACTS.max_dev_pct+'%')+key('Ticket / max positions',usd(p.TICKET_USD)+' / '+p.MAX_OPEN)+key('Stop / trailing',p.EXIT.stop_pct+'% / -'+p.EXIT.trail_pct+'%')+key('X gate',state.paid_ai_enabled?'Enabled in worker evidence':'Blocked / unverified',state.paid_ai_enabled?'positive':'warning'):
     key('Liquidity floor',usd(p.min_liquidity_usd))+key('Buying recipients',`${p.min_independent_wallets} / ${p.max_confirmation_age_seconds/60} min`)+key('Position / account risk',`${p.per_position_risk_pct}% / ${p.max_account_risk_pct}%`)+key('Positions / entries per day',`${p.max_open_positions} / ${p.max_entries_per_day}`)+key('New entries',halt?'Halted':Date.now()/1000>=state.trial.ends_at?'Trial entry window ended':'Gated by current evidence',halt?'warning':'muted')+key('Stop / TP / trailing',`−${p.stop_loss_pct}% / +${p.take_profit_pct}% / −${p.trailing_stop_pct}%`));
   $('trial-return').textContent=pct(s.return_pct);$('trial-return').className=tone(s.return_pct);
-  html('trial-detail',neon?`${state.status.trial_state==='SETUP_BLOCKED'?'Seven-day clock has not started.':esc(state.status.trial_state)}<br>${state.fill_count} strategy fills · ${usd(s.fees_paid)} modeled execution costs · ${usd(s.api_cost_usd)} model spending<br>Tests are excluded; rent remains reserved capital.`:sol?'The seven-day Solana trial has not started.':`${s.closed_positions} closed · ${s.open_positions} open · ${usd(s.fees_paid)} modeled costs<br>Max recorded drawdown ${number(s.max_drawdown_pct)}% · sample too small to establish an edge`);
-  html('health-mini',key('Trade alerts',ack(state.notifications.trades))+(!sol&&!neon?key('Market alerts',ack(state.notifications.market))+key('Recorded monitoring gaps',`${state.gaps.length}`,state.gaps.length?'warning':''):key('Trial readiness',state.setup_blocked?'Blocked':'Trial active',state.setup_blocked?'warning':'positive')));
+  html('trial-detail',(sol||neon)?`${state.status.trial_state==='SETUP_BLOCKED'?'Seven-day clock has not started.':esc(state.status.trial_state)}<br>${state.fill_count} strategy fills · ${usd(s.fees_paid)} modeled execution costs · ${usd(s.api_cost_usd)} model spending<br>Tests are excluded; rent remains reserved capital.`:`${s.closed_positions} closed · ${s.open_positions} open · ${usd(s.fees_paid)} modeled costs<br>Max recorded drawdown ${number(s.max_drawdown_pct)}% · sample too small to establish an edge`);
+  html('health-mini',key('Trade alerts',ack(state.notifications.trades))+(!sol&&!neon?key('Market alerts',ack(state.notifications.market))+key('Recorded monitoring gaps',`${state.gaps.length}`,state.gaps.length?'warning':''):key('Trial readiness',esc(state.readiness?.state||'UNKNOWN'),state.readiness?.entry_enabled===false?'warning':'')));
   $('open-count').textContent=s.open_positions;$('fill-count').textContent=sol?state.fill_count:state.fills.length;
-  $('footer-id').textContent=`Account ${state.account_id} · ${neon?'Neon · separate paper account':sol?'Solana setup':state.trial.policy_version}`;
+  $('footer-id').textContent=`Account ${state.account_id} · ${neon?'Neon · separate paper account':sol?'Solana paper':state.trial.policy_version}`;
   renderActivity();renderEvidence();renderReasons();drawEquity();freshness();
 }
 function freshness(){
@@ -201,7 +205,7 @@ function walletDetailHTML(){
 function renderEvidence(){
   const a=state.assets.find(a=>a.asset_id===selectedAsset),p=state.snapshot.positions?.find(p=>p.asset_id===selectedAsset),screen=state.screens[selectedAsset];
   $('evidence-state').textContent=screen?'RECORDED SCREEN':'NO CURRENT SCREEN';
-  if(!a){html('evidence',`<p class="compact muted">${state.setup_blocked?'The Solana desk has no active strategy holdings. Rugcheck rejection reasons appear alongside.':'Choose a traded coin to inspect its pool and recorded safety evidence.'}</p>`);return;}
+  if(!a){html('evidence',`<p class="compact muted">${'Choose a traded coin to inspect its pool and recorded safety evidence; screening reasons appear alongside.'}</p>`);return;}
   const checks=screen?.checks||{};
   html('evidence',`<div class="evidence-address">Token ${esc(a.asset_id.split(':').at(-1))}<br>Pinned pool ${esc(a.pool_id||'Unavailable')}</div><div class="checks">${Object.entries(checks).map(([k,v])=>`<span class="check ${v===true?'positive':v===false?'negative':'warning'}">${esc(pretty(k))}: ${v===true?'observed pass':v===false?'failed':'unknown'}</span>`).join('')||'<span class="check warning">Safety evidence unavailable</span>'}</div><p class="compact muted">${screen?'Screen recorded '+stamp(screen.observed_at,true)+' · '+age(screen.observed_at)+' ago. ':''}Historical checks are not a current safety guarantee. Entries require a fresh provider response and size-bounded route.</p>${p?key('Current observed liquidity',usd(p.mark_liquidity))+key('Stop / take-profit thresholds',`${price(p.stop_price)} / ${price(p.take_price)}`)+key('Trailing status',p.tp_done?price(p.trailing_price):'Arms after first take profit')+key('Time exit eligibility',stamp(p.opened_at+Number(state.policy.time_stop_seconds),true)+' if gain < '+state.policy.time_stop_min_gain_pct+'%'): '<p class="compact muted">No open position in this coin.</p>'}`);
 }
@@ -225,7 +229,7 @@ function technical(points){
 }
 function drawChart(){
   const {ctx,w,h}=clearCanvas($('price-chart'));plot=null;
-  if(!chart?.points.length){$('chart-empty').hidden=false;$('chart-empty').textContent=state?.setup_blocked?'No market positions in this account. Screening continues; the paid X gate is disabled.':'No recorded prices for this selected pool yet.';$('quote-price').textContent='—';$('quote-age').textContent='No quote';$('quote-change').textContent='No recorded market series';html('ta','<span>RSI 14 <b>—</b></span><span>EMA 9 <b>—</b></span><span>EMA 21 <b>—</b></span><span>Samples <b>0</b></span>');return;}
+  if(!chart?.points.length){$('chart-empty').hidden=false;$('chart-empty').textContent='No recorded prices for this selected pool yet. See readiness for current gates.';$('quote-price').textContent='—';$('quote-age').textContent='No quote';$('quote-change').textContent='No recorded market series';html('ta','<span>RSI 14 <b>—</b></span><span>EMA 9 <b>—</b></span><span>EMA 21 <b>—</b></span><span>Samples <b>0</b></span>');return;}
   $('chart-empty').hidden=true;
   const all=chart.points.map(p=>({...p,price:Number(p.price)}));const end=Math.max(all.at(-1).at,...chart.fills.map(f=>f.observed_at)),start=range?end-range:Math.min(all[0].at,...chart.fills.map(f=>f.observed_at));
   const visibleFills=chart.fills.filter(f=>f.observed_at>=start&&f.observed_at<=end);
@@ -254,7 +258,9 @@ function drawChart(){
 }
 function drawEquity(){
   if(bot==='jev')return;
-  const {ctx,w,h}=canvasContext($('equity-chart')),points=state.equity_history;if(points.length<2){ctx.fillStyle='#9baaa6';ctx.font='11px Segoe UI';ctx.fillText('No trial equity series',4,h/2);return;}
+  const pnlMode=state.snapshot.capital_baseline_supported===false;
+  document.querySelector('.equity-label span').textContent=pnlMode?'Net paper P&L - recorded observations':'Equity - recorded valuations';
+  const {ctx,w,h}=canvasContext($('equity-chart')),points=pnlMode?(state.pnl_history||[]).filter(p=>p.net_pnl!==null).map(p=>({...p,equity:p.net_pnl})):state.equity_history;if(points.length<2){ctx.fillStyle='#9baaa6';ctx.font='11px Segoe UI';ctx.fillText(pnlMode?'No recorded net P&L series':'No recorded equity series',4,h/2);return;}
   let low=Math.min(...points.map(p=>Number(p.equity))),high=Math.max(...points.map(p=>Number(p.equity)));if(high===low)high=low+1;
   const first=points[0].observed_at,last=points.at(-1).observed_at;
   ctx.strokeStyle='#8cdeb3';ctx.lineWidth=1.5;ctx.beginPath();let previous=null;

@@ -30,8 +30,9 @@ def meta(book,key,default=None):
     return json.loads(row[0]) if row else default
 
 
-def paper_snapshot(fills,positions,now,api_cost='0',api_known=True):
-    cash=D(POLICY['starting_cash_usd'])-D(api_cost);rent=D(0);realized=-D(api_cost)
+def paper_snapshot(fills,positions,now,api_cost='0',api_known=True,*,starting_cash=POLICY['starting_cash_usd']):
+    baseline=D(starting_cash) if starting_cash is not None else D(0)
+    cash=baseline-D(api_cost);rent=D(0);realized=-D(api_cost)
     for f in fills:
         costs=f.get('execution_costs') or {}
         amount=D(f['quantity'])*D(f['price']);fee=D(f['fee'])
@@ -54,8 +55,9 @@ def paper_snapshot(fills,positions,now,api_cost='0',api_known=True):
             'last_quote_at':p.get('last_observed_at'),'opened_at':p['opened_at'],'remaining':p['remaining'],
             'quote_unavailable':not valid,'steps':p['steps'],'peak':p['peak']})
     equity=cash+rent+liquidation
-    return {'starting_cash':POLICY['starting_cash_usd'],'cash':str(cash),'equity':str(equity),
-        'net_pnl':str(equity-D(POLICY['starting_cash_usd'])),'return_pct':str((equity/D(POLICY['starting_cash_usd'])-1)*100),
+    return {'starting_cash':str(baseline) if starting_cash is not None else None,
+        'cash':str(cash) if starting_cash is not None else None,'equity':str(equity) if starting_cash is not None else None,
+        'net_pnl':str(equity-baseline),'return_pct':str((equity/baseline-1)*100) if baseline>0 else None,
         'realized_pnl':str(realized),'unrealized_pnl':str(liquidation-basis),'position_basis':str(basis),
         'rent_reserved_usd':str(rent),'api_cost_usd':str(api_cost),'api_costs_known':api_known,
         'open_positions':len(opened),'closed_positions':sum(p.get('closed_at') is not None for p in positions),

@@ -44,6 +44,8 @@ def apply_quote(book, position_id, quote, now):
             raise ValueError('Watcher pool mismatch')
         if now < p['opened_at']:
             raise ValueError('Watcher predates entry')
+        from sniper.paper_events import market as record_market
+        record_market(book,quote,now,'position_watch')
         p['peak'] = str(max(number(p['peak']), number(quote['price'])))
         p['last_observed_at'] = now
         p['feed_error'] = False

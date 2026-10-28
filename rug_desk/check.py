@@ -22,12 +22,17 @@ def check(book, mint, *, market=None, rugcheck=None, judge=None, clock=time.time
         return {'mint': mint, 'stage': 'seen_once', 'verdict': 'SKIP', 'reason': 'Mint was already checked', 'entry': False}
     market, rugcheck, judge = market or Market(costs=bool(book.cost_policy())), rugcheck or Rugcheck(), judge or Judge(book.root)
     result = {'mint': mint, 'stage': 'limits', 'verdict': 'SKIP', 'entry': False}
+    def advance(name):
+        book.stage(mint,int(clock()),result['stage'],'PASSED')
+        result['stage']=name
+        book.stage(mint,int(clock()),name,'STARTED')
     try:
+        book.stage(mint,now,'limits','STARTED')
         reason = book.limits(mint, now)
         if reason:
             result['reason'] = reason
             return result
-        result['stage'] = 'facts'
+        advance('facts')
         facts = rugcheck.report(mint)
         result['facts'] = facts
         if facts['failure']:
@@ -36,14 +41,15 @@ def check(book, mint, *, market=None, rugcheck=None, judge=None, clock=time.time
         if expected_pool is not None and facts['pool'] != expected_pool:
             result['reason'] = 'Observed leader pool differs from screened pool'
             return result
-        result['stage'] = 'pool'
+        advance('pool')
         quote = market.quote(mint, facts['pool'])
+        book.record_quote(quote,int(clock()),'candidate_pool')
         result['pool'] = quote
         reason = check_limits(quote, int(clock()))
         if reason:
             result['reason'] = reason
             return result
-        result['stage'] = 'judge'
+        advance('judge')
         judgment = judge.ask(mint, facts, quote)
         if signal_context is not None:
             judgment = {**judgment, 'leader_signal': signal_context}
@@ -52,7 +58,7 @@ def check(book, mint, *, market=None, rugcheck=None, judge=None, clock=time.time
             result['reason'] = judgment.get('why', 'Judgment did not qualify')
             return result
         result['verdict'] = 'BUY'  # A signal is not yet an entry.
-        result['stage'] = 'jev'
+        advance('jev')
         from sniper.jev_admission import paper_review, paper_guard
         review = paper_review(book, facts, quote, int(clock()), client=jev_client, enrich=jev_enrich, clock=clock)
         if review is not None:
@@ -62,16 +68,17 @@ def check(book, mint, *, market=None, rugcheck=None, judge=None, clock=time.time
                 return result
             judgment={**judgment,'jev_assessment_id':review['id'],'strategy_id':'pump_jev_v1'}
             result['judgment']=judgment
-        result['stage'] = 'refresh'
+        advance('refresh')
         fresh = market.quote(mint, facts['pool'])
         if fresh['pool'] != quote['pool'] or fresh['mint'] != mint:
             raise ValueError('Pool changed during judgment')
+        book.record_quote(fresh,int(clock()),'candidate_refresh')
         result['refreshed_pool'] = fresh
         reason = check_limits(fresh, int(clock()))
         if reason:
             result['reason'] = reason
             return result
-        result['stage'] = 'entry'
+        advance('entry')
         original_guard=entry_guard
         def final_guard():
             if original_guard: original_guard()
