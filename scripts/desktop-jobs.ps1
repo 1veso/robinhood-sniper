@@ -48,6 +48,9 @@ foreach ($key in $names.Keys) {
         $definition.Settings.StartWhenAvailable = $true
         $definition.Settings.DisallowStartIfOnBatteries = $false
         $definition.Settings.StopIfGoingOnBatteries = $false
+        # The console serves interactive reads; default BelowNormal can starve
+        # them under load. Existing jobs are left untouched by this installer.
+        if ($key -eq 'console') { $definition.Settings.Priority = 4 }
         if ($key.StartsWith('neon-')) {
             $definition.Settings.RestartCount = 3
             $definition.Settings.RestartInterval = 'PT1M'

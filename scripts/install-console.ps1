@@ -15,6 +15,9 @@ $action = New-ScheduledTaskAction -Execute $python -Argument $arguments -Working
 $loginTrigger = New-ScheduledTaskTrigger -AtLogOn -User $owner
 $recoveryTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) -RepetitionInterval (New-TimeSpan -Minutes 5)
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+# Normal priority keeps interactive reads responsive during background research.
+# This changes only the read-only console, never trading worker scheduling.
+$settings.Priority = 4
 $principal = New-ScheduledTaskPrincipal -UserId $owner -LogonType Interactive -RunLevel Limited
 $task = New-ScheduledTask -Action $action -Trigger @($loginTrigger,$recoveryTrigger) -Settings $settings -Principal $principal -Description 'Local read-only paper observation console. Binds only to 127.0.0.1. Does not trade, sign, send alerts or alter accounts.'
 Register-ScheduledTask -TaskName 'RUG DESK Console' -InputObject $task -Force | Out-Null

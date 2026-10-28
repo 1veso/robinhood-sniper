@@ -8,6 +8,8 @@ Open **http://127.0.0.1:8765/** on the execution PC. This is a live view of the 
 
 The Windows **RUG DESK Console** task runs the installed `console_server.py`, starts at sign-in, restarts after failure and has a five-minute recovery trigger. `IgnoreNew` prevents overlapping service instances. The PC must remain awake, connected and signed in for the paper workers. Closing the browser does not stop those workers. The service binds only to loopback; it is not remotely hosted.
 
+The console uses Windows Normal process priority (Task Scheduler priority 4). Its previous default BelowNormal priority caused repeated HTTP timeouts under the observed host load; raising only this process restored responses. This setting affects interactive read-only service responsiveness, not trading-worker priorities, polling cadences, risk limits or execution latency. The desktop installer sets it for newly created console tasks and preserves existing task definitions. For an existing installation, update only the console task's priority while preserving its action, triggers and other settings.
+
 To run manually from an installed project with its existing runtime:
 
 ```powershell
