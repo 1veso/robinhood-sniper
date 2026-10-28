@@ -43,7 +43,7 @@ The existing Robinhood trial keeps its account/deadline and its own results. The
 
 Credentials stay in the parent application's `runtime` directory:
 
-- `jupiter-api-key.txt`: a free key from [Jupiter Developer Portal](https://developers.jup.ag/portal), recommended for operational rate limits. Keyless public quotes are available and were separately checked; this is not proof of wallet-specific execution.
+- `jupiter-server-api-key.txt`: the preferred backend key from [Jupiter Developer Portal](https://developers.jup.ag/portal), with Swap access. The reader uses this file whenever it exists; a malformed or rejected server key never silently falls back to another key. `jupiter-api-key.txt` remains a legacy fallback only when the server file is absent. Keyless public quotes are available; these are not proof of wallet-specific execution.
 - `solana-trading-address.txt`: only the public address of the intended separate trading wallet. No seed or private key.
 - Optional `solana-rpc-url.txt`: an HTTPS Solana mainnet RPC endpoint. Otherwise the public Solana mainnet endpoint is used. The Robinhood RPC URL is never reused as a Solana RPC.
 

@@ -215,3 +215,9 @@ dataset is provided. Paper P&L alone is not evidence that a strategy is viable.
 
 Detailed guides: [Operations](docs/OPERATIONS.md), [EVM adapter](docs/EVM.md),
 [Solana and AI adapters](docs/SOLANA.md), [Validation and remaining work](docs/VALIDATION.md).
+# Windows desktop installer
+
+The per-user Windows package bundles Python, a native launcher, background paper
+workers and the browser console. See [desktop setup](docs/DESKTOP.md). It preserves
+existing trials and ships without credentials or account data. Paid AI and live
+execution remain disabled; the installer does not bypass strategy gates.

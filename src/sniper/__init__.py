@@ -1,3 +1,3 @@
 """SNIPER: auditable market research and deterministic paper trading."""
 
-__version__ = "0.1.16"
+__version__ = "0.1.17"

@@ -18,8 +18,16 @@ from sniper.execution_costs import dec
 
 
 def local_reader(runtime):
-    key_path, rpc_path = runtime / 'jupiter-api-key.txt', runtime / 'solana-rpc-url.txt'
+    runtime = Path(runtime)
+    # Backend credentials take precedence. An invalid server key must never
+    # silently fall back to a different key and produce a misleading check.
+    key_path = runtime / 'jupiter-server-api-key.txt'
+    if not key_path.exists():
+        key_path = runtime / 'jupiter-api-key.txt'
+    rpc_path = runtime / 'solana-rpc-url.txt'
     key = key_path.read_text(encoding='utf-8-sig').strip() if key_path.exists() else None
+    if key_path.exists() and (not key or '\n' in key or '\r' in key):
+        raise ValueError('Jupiter credential must contain exactly one nonempty line')
     rpc = rpc_path.read_text(encoding='utf-8-sig').strip() if rpc_path.exists() else 'https://api.mainnet-beta.solana.com'
     return SolanaExecutionReader(api_key=key, rpc_url=rpc)
 
@@ -102,7 +110,9 @@ def main():
         book = Book(desk)
         try:
             result = summary(book, int(time.time()))['live_readiness']
-            result['local_inputs'] = {name: (runtime / name).is_file() for name in ('jupiter-api-key.txt', 'solana-trading-address.txt', 'solana-rpc-url.txt')}
+            result['local_inputs'] = {name: (runtime / name).is_file() for name in ('jupiter-server-api-key.txt', 'jupiter-api-key.txt', 'solana-trading-address.txt', 'solana-rpc-url.txt')}
+            result['jupiter_key_source'] = ('jupiter-server-api-key.txt' if result['local_inputs']['jupiter-server-api-key.txt']
+                else 'jupiter-api-key.txt' if result['local_inputs']['jupiter-api-key.txt'] else None)
             result['public_rpc_fallback'] = not result['local_inputs']['solana-rpc-url.txt']
             atomic(folder / 'readiness.json', encode(result))
             print(encode(result))
@@ -112,6 +122,8 @@ def main():
     reader = local_reader(runtime)
     if args.command == 'doctor':
         result = {'solana_mainnet_rpc_verified': False, 'jupiter_key_present': bool(reader.api_key),
+                  'jupiter_key_source': 'jupiter-server-api-key.txt' if (runtime / 'jupiter-server-api-key.txt').exists() else 'jupiter-api-key.txt' if reader.api_key else None,
+                  'observed_at': int(time.time()),
                   'real_money_enabled': False, 'signing_or_broadcast_requested': False}
         try:
             reader.verify_chain()

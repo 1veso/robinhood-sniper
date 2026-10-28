@@ -16,7 +16,7 @@ from rug_desk.report import report_event_id
 from sniper.execution_costs import DEFAULT_POLICY, simulate
 from sniper.live_readiness import evaluate
 from sniper.adapters.solana_execution import USDC, SolanaExecutionReader, order_evidence, reconcile_receipt, signature_bytes
-from prepare_live import record_reconciled, verify_preparation_screen
+from prepare_live import local_reader, record_reconciled, verify_preparation_screen
 
 WALLET, SIGNATURE = key(3), '5' * 88
 
@@ -138,6 +138,18 @@ class CostTests(unittest.TestCase):
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_server_key_precedence_and_invalid_server_never_falls_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'jupiter-api-key.txt').write_text('legacy-fixture')
+            self.assertEqual(local_reader(root).api_key, 'legacy-fixture')
+            (root / 'jupiter-server-api-key.txt').write_text('server-fixture\n')
+            self.assertEqual(local_reader(root).api_key, 'server-fixture')
+            for value in ('', 'first\nsecond'):
+                (root / 'jupiter-server-api-key.txt').write_text(value)
+                with self.assertRaises(ValueError):
+                    local_reader(root)
+
     def test_safety_failure_blocks_entry_but_does_not_strand_exit_preparation(self):
         safety = {'failure': 'not_rugged: rejected', 'pool': POOL}
         with self.assertRaises(ValueError):

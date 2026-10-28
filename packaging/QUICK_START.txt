@@ -1,0 +1,49 @@
+RUG DESK Paper - Windows x64
+
+Run RUG-DESK-Setup-0.1.17-win-x64.exe. No separate Python installation is needed.
+This local build is unsigned; Windows may show an unknown-publisher warning.
+Verify the accompanying SHA-256 before installing a transferred copy.
+
+Existing PC
+The installer detects the existing RUG DESK Console task and opens that account.
+It does not copy, reset, replace or start another trial. Use Open console to watch
+the existing workers. Closing the launcher or browser does not stop them.
+
+New PC
+1. Import a dedicated Telegram bot token file. Never reuse a bot polled by another
+   running installation. Send SNIPER SETUP in your own private chat with that bot.
+2. Enter the bot username and click Pair Telegram + test. Check the delivered test.
+3. Import your own optional provider credentials/public addresses. Use the
+   server Jupiter key; NEVER import private wallet keys or seed phrases.
+4. Click Start / continue paper. This creates a new $1,000 Robinhood paper ledger
+   using the approved two-wallet/$30,000 profile, installs background jobs and
+   opens http://127.0.0.1:8765/. The initial run can take a few minutes.
+5. Keep Windows awake, online and signed in. Jobs resume at sign-in. They do not
+   run while the PC is off, sleeping or logged out. Each PC has a separate trial.
+
+Paper cash is ledger accounting, NOT funds in MetaMask or a Solana mainnet wallet.
+Prices and eligibility come from real markets, but fills/costs remain simulations.
+Testnet/fork tokens test software execution separately and cannot validate the
+profitability of mainnet memecoin routes. Never combine test fills with trial P&L.
+
+Solana's book and watcher/scanner are installed with the approved cost model.
+Its paid Grok/X gate remains disabled. Its seven-day trial does not start until
+funded model/X tests, paid authorization and operational preflight all pass.
+The desktop package does not bypass this gate or enable live execution.
+
+Background jobs: paper every 2m; research every 1m; alerts every 2m; shadow every
+1m; Solana watcher every 10m; scanner every 30m. A timezone-aware minute check
+delivers the Solana report once at/after 21:30 Europe/Berlin during that hour.
+Console recovery every 5m. Workers have independent process locks and journals.
+Existing installations keep their already approved schedules and actions.
+
+Runtime data stays under the selected app folder. Installer distribution contains
+no accounts, credentials, Telegram recipients, private endpoints or fills.
+An account is never topped up/reset by reinstalling. Existing configuration is
+preserved. No trial result automatically authorizes a switch to real money.
+
+Apps & Features > RUG DESK Paper disables the owned jobs after confirmation.
+Uninstall preserves program files, credentials and all account data intentionally.
+Archive those files before any later manual removal. Disabling jobs stops exits.
+
+See app/docs/DESKTOP.md and app/docs/LIVE_PREPARATION.md for limitations and checks.
