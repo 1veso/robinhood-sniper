@@ -81,6 +81,55 @@ class PromotionTests(unittest.TestCase):
         out=self.run_candidate();self.assertFalse(out['entry']);self.assertEqual(out['jev']['status'],'TIMEOUT')
         self.assertEqual(self.book.fills(),[]);self.assertNotIn('private',encode(out))
 
+    def select_fixture_leader(self):
+        from rug_desk.trader_acceptance import trader,ReplayJudge
+        from rug_desk.traders import Selections
+        with self.book.transaction():
+            self.book.db.execute("INSERT INTO metadata VALUES('trader_replay_account','1')")
+        selected=Selections(self.book).select([trader(NOW)],judge=ReplayJudge(),clock=lambda:NOW)
+        self.assertTrue(selected['entry_enabled'])
+
+    def test_leader_buy_obeys_jev_and_restart_dedup_then_original_exit(self):
+        from rug_desk.trader_acceptance import event
+        from rug_desk.leader_signals import process_event
+        from rug_desk.traders import Selections
+        from sniper.jev_admission import paper_review
+        self.promote();self.select_fixture_leader();signal=event(NOW,mint=MINT)
+        def injected_review(*args,**kwargs):
+            # Supply only offline evidence/client fixtures; real admission and
+            # final Book transaction guards still run unchanged.
+            kwargs.update(client=self.client,enrich=enrich)
+            return paper_review(*args,**kwargs)
+        deps=dict(clock=lambda:NOW,market=self.market,rugcheck=self.rug,judge=self.judge)
+        with patch('sniper.jev_admission.paper_review',side_effect=injected_review):
+            out=process_event(self.book,signal,**deps)
+            self.assertTrue(out['entry'],out)
+            self.assertEqual(self.book.positions()[0]['judgment']['jev_assessment_id'],out['jev']['assessment_id'])
+            self.book.close();self.book=Book(self.root/'rug_desk')
+            self.assertFalse(process_event(self.book,signal,**deps)['entry'])
+        self.assertEqual(len(self.book.fills()),1);self.client.ask.assert_called_once()
+        self.assertTrue(Selections(self.book).select([],clock=lambda:NOW)['empty_selection'])
+        self.market.quote.side_effect=TimeoutError()
+        watch(self.book,market=self.market,clock=lambda:NOW+1)
+        self.assertEqual(len(self.book.fills()),1)
+        p=self.book.positions()[0]
+        apply_quote(self.book,p['id'],{**quote(price='.4',now=NOW+2),'sol_usd':'200','sol_observed_at':NOW+2},NOW+2)
+        self.assertEqual(len(self.book.fills()),2);self.assertFalse(self.book.positions())
+
+    def test_leader_buy_cannot_bypass_disabled_jev_calls(self):
+        from rug_desk.trader_acceptance import event
+        from rug_desk.leader_signals import process_event
+        from sniper.jev_admission import paper_review
+        self.promote();self.select_fixture_leader()
+        def evidence_only(*args,**kwargs):
+            kwargs.update(enrich=enrich)
+            return paper_review(*args,**kwargs)
+        with patch('sniper.jev_admission.paper_review',side_effect=evidence_only):
+            out=process_event(self.book,event(NOW,mint=MINT),clock=lambda:NOW,
+                market=self.market,rugcheck=self.rug,judge=self.judge)
+        self.assertFalse(out['entry'],out);self.assertEqual(out['jev']['status'],'DISABLED')
+        self.assertEqual(self.book.fills(),[]);self.client.ask.assert_not_called()
+
     def test_invalid_response_failure_closed(self):
         self.promote();self.client.ask.return_value={'action':'BUY','orders':['override risk']}
         out=self.run_candidate();self.assertFalse(out['entry']);self.assertEqual(out['jev']['status'],'MALFORMED_RESPONSE')

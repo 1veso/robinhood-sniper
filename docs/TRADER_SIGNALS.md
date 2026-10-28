@@ -89,7 +89,7 @@ From C:\Users\User\Downloads\sniper-v0.1.0, using the existing executor test env
 
 select reuses the current model integration. A failed selection returns exit code 2 and clears admission immediately. Paid usage remains disabled: eligible records cannot obtain a funded model selection until the separately required authorization and xAI validation exist. No paid test is run during this integration. Empty numerical cohorts publish COMPLETE with leaders=[] without a model call.
 
-The importer is a manual/replay input boundary, not the intended final automatic live workflow. No recurring event watcher is installed because no supported upstream machine connection has been established. Existing scan/watch/report schedules continue unchanged.
+The RUG DESK importer is a manual/replay input boundary, not the intended final automatic live workflow. No recurring CopyFomo importer is installed because no supported upstream machine connection has been established. The separate [Neon worker](NEON_BOT.md) now collects a restricted set of finalized, direct classic-SPL Raydium CP-Swap events automatically; it is not a CopyFomo bridge or complete trader history. Existing scan/watch/report schedules continue unchanged.
 
 ## Selection, event and fill integrity
 
@@ -104,3 +104,30 @@ Events deduplicate by Solana transaction signature, wallet, mint and action, ind
 runtime/leaders.json shows selection validity. runtime/leader-decisions.json contains the latest 200 leader decisions; complete history remains in SQLite. Existing checks.csv records token checks, while trades.csv and the fills table record simulated fills separately. BUY can exist without a fill if refreshed market data or final limits reject entry. Export failures after a committed entry never erase or relabel that fill.
 
 The isolated acceptance demonstrates a numerical leader buy reaching the existing cost-aware paper engine, risk/leader rejections, durable duplicate prevention, explicit empty selection, separate decisions/fills and unchanged partial/trailing exits after leader removal. It makes no network calls, paid model requests, real fills or Telegram sends and does not start or reset any strategy trial.
+
+## October 28 integration recheck
+
+The numerical screen, ranking, signal admission and paper execution were already
+implemented; the repeated article does not require another bot or risk manager.
+One integration defect was found after the model-readiness upgrade: `Judge`
+returns `judged_at` and `binding` audit fields, but selection rejected that updated
+envelope. Selection now retains those two fields while still independently
+validating the permitted verdict, finite confidence, distinct eligible leaders
+and evidence fields. No model-supplied statistics replace screened history.
+The regression test reproduces the former failure through the actual `Judge`
+client with an offline transport and verifies completed publication after repair.
+
+The existing RUG DESK account's ACTIVE PAPER Jev filter also applies to leader
+buys through the same `check` and final `Book` transaction. Integration tests
+verify an isolated leader event with a prospective Jev assessment, restart-safe
+deduplication, disabled Jev calls blocking entry, and original exits after leader
+removal. Neon retains its separate account and does not inherit that promotion.
+
+CopyFomo's [official manual](https://www.copyfomo.com/docs), rechecked on October
+28, describes Telegram watch alerts, its own automatic copying and fill/sell
+notifications. No supported external machine event feed, per-purchase approval
+callback, approved-order submission or reconciled-fill API was verified. A
+Telegram notification is not such a connection. The independent
+[Fomo API](https://www.fomo-api.com/docs) documents a public ten-row leaderboard;
+its wallet/trade endpoints require a server API key and do not establish a
+CopyFomo execution bridge or complete cost/account-ownership evidence.

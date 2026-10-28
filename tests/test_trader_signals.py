@@ -205,5 +205,12 @@ class TraderTests(unittest.TestCase):
         self.assertEqual(payload['model'],config.MODEL);self.assertNotIn('tools',payload)
         self.assertTrue((self.book.runtime/'ai-budget.sqlite3').exists())
         self.assertEqual(len(list((self.book.runtime/'x-responses').glob('*.json'))),1)
+        # Exercise the actual client envelope through publication, not only its
+        # standalone validator. Audit metadata must survive without becoming stats.
+        selected=self.choose(judge=Judge(self.root,enabled=True,transport=transport,clock=self.clock))
+        self.assertTrue(selected['entry_enabled'],selected)
+        self.assertEqual(selected['ranking']['judged_at'],NOW)
+        self.assertEqual(selected['ranking']['binding']['account_id'],self.book.identity['account_id'])
+        self.assertEqual(selected['leaders'][0]['metrics'],candidates[0]['metrics'])
 
 if __name__=='__main__':unittest.main()

@@ -210,7 +210,7 @@ class Selections:
                 from rug_desk.grok import Judge
                 ranking = (judge or Judge(self.book.root)).rank_traders(payload['eligible'])
                 if (not isinstance(ranking, dict) or ranking.get('validated') is not True
-                        or set(ranking)-{'verdict','confidence','leaders','validated','request_id','model'}):
+                        or set(ranking)-{'verdict','confidence','leaders','validated','request_id','model','judged_at','binding'}):
                     raise ValueError('Unvalidated ranking response')
                 # Revalidate even a custom model adapter; never merge its statistics.
                 out = validate_rank({'status': 'completed', 'output_text': encode({k: ranking[k] for k in ('verdict','confidence','leaders')})}, payload['eligible'])
