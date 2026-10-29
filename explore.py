@@ -18,7 +18,7 @@ from sniper.adapters.evm_store import EvmStore
 from sniper.adapters.goplus import GoPlusClient
 from sniper.adapters.crius import supplement_from_runtime
 from sniper.adapters.solana import DexScreenerClient, SourceError
-from sniper.adapters.v3_route import V3RouteClient
+from sniper.adapters.v3_route import V3RouteClient, RouteUnavailable
 from sniper.exploration import ExploratoryEngine, exploratory_policy, pool_adjusted_screen, observed_pool_screen, observe_creator_balance
 from sniper.exploratory_source import ExploratorySource, signal_id
 from sniper.exploratory_alerts import notify_fills
@@ -44,12 +44,18 @@ RULES_V2 = {**RULES, 'revision': 'two-wallet-30k', 'minimum_observed_wallets': 2
             'candidate_pool_followup': 'up to eight recently observed pools; up to 16 hash-sampled swap legs per pool per cycle',
             'quorum_scope': 'same token and pool; distinct recipients and transactions in 900 seconds; independence unestablished'}
 
+RULES_V3 = {**RULES_V2, 'revision': 'two-wallet-30k-reentry',
+            'position_count_cap': None, 'daily_entry_count_cap': None,
+            'reentry': 'Only after full close; two distinct buying recipients in different transactions observed strictly after the close. Fresh current safety, route, cash and risk checks remain required.'}
+
 
 def profile_settings(profile):
     if profile == 'legacy':
         return exploratory_policy(RiskPolicy.from_file(ROOT / 'config' / 'paper.toml')), RULES, 'exploration'
     if profile == 'two-wallet-30k':
         return RiskPolicy.from_file(ROOT / 'config' / 'exploration-v2.toml'), RULES_V2, 'exploration'
+    if profile == 'two-wallet-30k-reentry':
+        return RiskPolicy.from_file(ROOT / 'config' / 'exploration-v3.toml'), RULES_V3, 'exploration'
     raise ValueError('Unknown paper profile')
 
 
@@ -60,7 +66,7 @@ def active_profile(runtime):
         if (runtime / 'exploration' / 'retired.json').exists() or (runtime / 'exploration-v2' / 'trial.json').exists():
             raise ValueError('Active profile selector missing; restore it before restarting')
         manifest_path = runtime / 'exploration' / 'trial.json'
-        if manifest_path.exists() and json.loads(manifest_path.read_text(encoding='utf-8')).get('rules', {}).get('revision') == 'two-wallet-30k':
+        if manifest_path.exists() and json.loads(manifest_path.read_text(encoding='utf-8')).get('rules', {}).get('revision') in ('two-wallet-30k', 'two-wallet-30k-reentry'):
             raise ValueError('Active profile selector missing; rerun the authorized activation to recover it')
         return 'legacy'
     value = json.loads(path.read_text(encoding='utf-8'))
@@ -130,6 +136,57 @@ def activate_v2(runtime):
     return selector
 
 
+def activate_reentry(runtime):
+    """Explicit entry-only revision of the existing v2 account, crash-recoverable.
+
+    Caller holds exploration-controller.lock. Never creates an account or changes
+    cash, source identity, old fills, risk amounts, costs, exits or the deadline.
+    """
+    policy, rules, name = profile_settings('two-wallet-30k-reentry')
+    folder = runtime / name
+    if any(not (folder / f).is_file() for f in ('trial.json', 'ledger.sqlite3', 'events.sqlite3')):
+        raise ValueError('This revision requires the established paper account')
+    ledger = Ledger(folder / 'ledger.sqlite3', policy.starting_cash_usd, require_existing=True)
+    store = EvmStore(folder / 'events.sqlite3')
+    try:
+        manifest = json.loads(ledger._get('trial_manifest'))
+        disk = json.loads((folder / 'trial.json').read_text(encoding='utf-8'))
+        revision_id = 'policy-revision:two-wallet-30k-reentry'
+        previous = ledger.conn.execute('SELECT payload FROM events WHERE event_id=?', (revision_id,)).fetchone()
+        old_manifest = json.loads(previous['payload'])['previous_trial'] if previous else None
+        if disk != manifest and disk != old_manifest:
+            raise ValueError('Unrecorded trial manifest change')
+        if manifest['account_id'] != ledger._get('account_id') or manifest['source_id'] != store.identity:
+            raise ValueError('Account/source identity changed')
+        if manifest['rules'] != rules:
+            if manifest['rules'] != RULES_V2 or previous:
+                raise ValueError('Re-entry revision requires the existing two-wallet policy')
+            before, after = json.loads(ledger._get('policy')), policy.as_dict()
+            changes = {k for k in set(before) | set(after) if before.get(k) != after.get(k)}
+            allowed = {'max_open_positions', 'max_entries_per_day', 'cooldown_seconds'}
+            if changes != allowed or any(after[k] != 0 for k in allowed):
+                raise ValueError('Revision cannot change monetary risk, costs, safety or existing exits')
+            now = int(time.time())
+            updated = {**manifest, 'rules': rules, 'policy_version': policy.version, 'revision_started_at': now}
+            atomic_json(folder / 'trial-before-reentry.json', manifest)
+            with ledger.transaction():
+                ledger.record_event(revision_id, 'policy_revision', {'previous_trial': manifest, 'new_trial': updated,
+                    'previous_policy': before, 'new_policy': after,
+                    'reason': 'User authorized removing position/daily-entry count caps and fresh-condition re-entry; monetary risk, exits, account and deadline preserved'}, now)
+                ledger._set('policy_version', policy.version)
+                ledger._set('policy', json_text(after))
+                ledger._set('trial_manifest', json.dumps(updated, sort_keys=True))
+            manifest = updated
+        ExploratoryEngine(ledger, policy)
+        atomic_json(folder / 'trial.json', manifest)
+        selector = {'profile': 'two-wallet-30k-reentry', 'account_id': manifest['account_id'],
+                    'activated_at': manifest['revision_started_at'], 'previous_profile': 'two-wallet-30k'}
+        atomic_json(runtime / 'active-exploration.json', selector)
+        return selector
+    finally:
+        ledger.close(); store.close()
+
+
 def open_trial(folder, policy, *, start=False, now=None, rules=None):
     rules = RULES if rules is None else rules
     now = int(time.time()) if now is None else now
@@ -169,36 +226,74 @@ def open_trial(folder, policy, *, start=False, now=None, rules=None):
 def run_cycle(folder, runtime, *, start=False, profile='legacy'):
     policy, rules, _ = profile_settings(profile)
     ledger, store, engine, trial = open_trial(folder, policy, start=start, rules=rules)
-    book = ConfirmationBook(store) if profile == 'two-wallet-30k' else None
+    book = ConfirmationBook(store) if profile in ('two-wallet-30k', 'two-wallet-30k-reentry') else None
     started = int(time.time())
     previous = json.loads((folder / 'status.json').read_text(encoding='utf-8')) if (folder / 'status.json').exists() else {}
-    status = {'mode': 'EXPLORATORY_PAPER', 'started_at': started, 'errors': [], 'decisions': [],
+    status = {'mode': 'EXPLORATORY_PAPER', 'started_at': started, 'errors': [], 'cycle_issues': [], 'decisions': [],
               'trial': trial, 'profile': profile, 'entry_rules': {'minimum_liquidity_usd': str(policy.min_liquidity_usd),
               'distinct_buyers_required': policy.min_independent_wallets, 'buyer_window_seconds': policy.max_confirmation_age_seconds},
               'rug_screens': [], 'real_money_enabled': False, 'strict_strategy_result': False}
+    for key in ('source_retry_at', 'quote_retry_at'):
+        value = previous.get(key, 0)
+        status[key] = value if type(value) is int and value > started else 0
     endpoint_file = runtime / 'observation-rpc-url.txt'
     endpoint = endpoint_file.read_text(encoding='utf-8-sig').strip() if endpoint_file.exists() else DEFAULT_RPC
     quote_endpoint_file = runtime / 'quote-rpc-url.txt'
     quote_endpoint = quote_endpoint_file.read_text(encoding='utf-8-sig').strip() if quote_endpoint_file.exists() else endpoint
     def error(exc):
         return (type(exc).__name__ + ': ' + str(exc).replace(quote_endpoint, '[QUOTE RPC]').replace(endpoint, '[RPC]'))[:400]
+    def rate_limited(exc):
+        return isinstance(exc, RpcError) and 'HTTP failure (429)' in str(exc)
+    def source_error(exc):
+        if rate_limited(exc):
+            status['source_retry_at'] = int(time.time()) + 60
+            status['errors'].append('Collection RPC HTTP 429; pending observations retained; retry on a scheduled cycle after backoff')
+        else:
+            status['errors'].append(error(exc))
     def route(token, pool, quantity=Decimal(0)):
         client = V3RouteClient(RpcClient(quote_endpoint, timeout=8, max_retries=1), DexScreenerClient(chain_id='robinhood'))
-        quote = client.quote(token, pool, max_notional=policy.ticket_usd, sell_quantity=quantity)
+        kwargs = {'exit_only': True} if quantity > 0 else {}
+        quote = client.quote(token, pool, max_notional=policy.ticket_usd, sell_quantity=quantity, **kwargs)
         return quote, client.last_evidence
+    quote_cache, failed_until, issues = {}, {}, {}
+    def route_issue(exc, stage, asset, pool):
+        unavailable = isinstance(exc, RouteUnavailable)
+        if rate_limited(exc):
+            status['quote_retry_at'] = int(time.time()) + 60
+        code = 'route_unavailable' if unavailable else 'provider_or_route_error'
+        key = (stage, asset, pool, code)
+        if key not in issues:
+            issues[key] = {'stage': stage, 'asset_id': asset, 'pool_id': pool, 'code': code,
+                'severity': 'warning' if unavailable else 'error', 'message': error(exc), 'attempts': 0}
+            status['cycle_issues'].append(issues[key])
+            if not unavailable:
+                status['errors'].append(f'{stage} {asset} {pool}: {error(exc)}')
+        issues[key].update(attempts=issues[key]['attempts'] + 1, observed_at=int(time.time()),
+                           evidence=getattr(exc, 'details', None))
+        ledger.record_event(f'cycle-route:{started}:{stage}:{asset}:{pool}:{issues[key]["attempts"]}',
+                            'route_observation_failure', issues[key], int(time.time()))
     def watch():
         positions = ledger.snapshot()['positions']
         quotes = {}
         if positions:
             with ThreadPoolExecutor(max_workers=4) as executor:
-                futures = [(p, executor.submit(route, p['asset_id'].split(':')[-1], p['pool_id'], p['qty'])) for p in positions]
-                for p, future in futures:
+                futures = []
+                for p in positions:
+                    key = (p['asset_id'], p['pool_id'], str(p['qty']))
+                    cached = quote_cache.get(key)
+                    if cached is not None and 0 <= time.time() - cached.observed_at <= min(25, policy.max_quote_age_seconds):
+                        quotes[p['asset_id']] = cached
+                    elif time.time() >= max(failed_until.get(key, 0), status['quote_retry_at']):
+                        futures.append((p, key, executor.submit(route, p['asset_id'].split(':')[-1], p['pool_id'], p['qty'])))
+                for p, key, future in futures:
                     try:
                         q, evidence = future.result()
                         quotes[p['asset_id']] = q
+                        quote_cache[key] = q
                         ledger.record_event('route:' + p['position_id'] + ':' + str(q.observed_at), 'exploratory_exit_route', evidence, int(time.time()))
                     except Exception as exc:
-                        status['errors'].append(error(exc))
+                        failed_until[key] = time.time() + 30
+                        route_issue(exc, 'position_exit', p['asset_id'], p['pool_id'])
         return engine.watch(quotes, int(time.time()))
     try:
         last = previous.get('finished_at', started)
@@ -214,18 +309,22 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
         # real paper holdings and continue receiving exit quotes.
         if int(time.time()) < trial['ends_at']:
             try:
-                with rpc.budget(45):
-                    status['collection'] = source.collect(watch_pools=book.watched_pools(int(time.time()), policy.max_confirmation_age_seconds)) if book else source.collect()
+                if time.time() >= status['source_retry_at']:
+                    with rpc.budget(45):
+                        status['collection'] = source.collect(watch_pools=book.watched_pools(int(time.time()), policy.max_confirmation_age_seconds)) if book else source.collect()
+                else:
+                    status['collection'] = {'status': 'RATE_LIMIT_BACKOFF', 'retry_at': status['source_retry_at'], 'pending_retained': True}
                 if store.reorgs(CHAIN_ID):
                     with ledger.transaction():
                         ledger._set('entry_halt', 'source_reorganization_requires_review')
             except Exception as exc:
-                status['errors'].append(error(exc))
+                source_error(exc)
                 if isinstance(exc, ReorgError):
                     with ledger.transaction():
                         ledger._set('entry_halt', 'source_reorganization_requires_review')
-            for swap in source.pending():
-                if time.time() - started > 125 or int(time.time()) >= trial['ends_at'] or ledger._get('entry_halt'):
+            for swap in source.pending() if time.time() >= status['source_retry_at'] else []:
+                if (time.time() - started > 125 or int(time.time()) >= trial['ends_at'] or ledger._get('entry_halt')
+                        or time.time() < status['quote_retry_at']):
                     break
                 event_id = signal_id(swap)
                 existing = ledger.conn.execute('SELECT verdict,reason FROM decisions WHERE event_id=?', (event_id,)).fetchone()
@@ -243,8 +342,10 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                     ledger.record_event(event_id + ':proof', 'exploratory_wallet_buy', proof, int(time.time()))
                     if book:
                         book.record(event_id, proof)
+                        closed = ledger.conn.execute('SELECT MAX(closed_at) FROM closed_positions WHERE asset_id=?', (asset,)).fetchone()[0]
                         cohort = book.recent(token, pool, now=int(time.time()), age=policy.max_confirmation_age_seconds,
-                                             minimum_spend=policy.min_wallet_spend_usd)
+                                             minimum_spend=policy.min_wallet_spend_usd,
+                                             observed_after=closed if policy.cooldown_seconds == 0 else None)
                         if len(cohort) < policy.min_independent_wallets:
                             waiting = {'verdict': 'WAIT', 'reason': 'waiting_for_distinct_buyers', 'asset_id': asset,
                                        'observed_wallets': len(cohort), 'required_wallets': policy.min_independent_wallets}
@@ -285,7 +386,15 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                     else:
                         # Keep marks fresh before another entry risk decision.
                         status['exits'].extend(watch())
-                        quote, evidence = route(token, pool)
+                        if time.time() < status['quote_retry_at']:
+                            break  # Pending source event retained; exits keep retrying independently.
+                        try:
+                            quote, evidence = route(token, pool)
+                        except RpcError as exc:
+                            if rate_limited(exc):
+                                route_issue(exc, 'candidate_entry', asset, pool)
+                                break  # Quote provider backoff; retain the pending candidate.
+                            raise
                         ledger.record_event(event_id + ':route', 'exploratory_entry_route', evidence, int(time.time()))
                     now = int(time.time())
                     if now >= trial['ends_at']:
@@ -331,7 +440,16 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                         source.finish(swap, {'reason': 'pool_not_covered_by_market_feed'})
                     else:
                         status['errors'].append(error(exc))
+                except RouteUnavailable as exc:
+                    route_issue(exc, 'candidate_entry', asset, pool)
+                    rejected = {'verdict': 'SKIP', 'reason': 'route_unavailable', 'event_id': event_id,
+                                'asset_id': asset, 'pool_id': pool, 'side': exc.details['side']}
+                    source.finish(swap, rejected)
+                    status['decisions'].append(rejected)
                 except RpcError as exc:
+                    if rate_limited(exc):
+                        source_error(exc)
+                        break  # Do not classify or consume unverified pending observations.
                     if 'eth_call returned error 3;' in str(exc):
                         rejected = {'verdict': 'SKIP', 'reason': 'contract_or_route_call_reverted', 'event_id': event_id}
                         source.finish(swap, rejected)
@@ -364,7 +482,8 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
             status['market_telegram'] = notify_market(ledger, folder, runtime)
         except Exception as exc:
             status['errors'].append('Market Telegram notification: ' + type(exc).__name__)
-        status['health'] = 'DEGRADED' if status['errors'] else 'OK'
+        status['health'] = 'DEGRADED' if (status['errors'] or snapshot['unresolved_positions']
+            or max(status['source_retry_at'], status['quote_retry_at']) > now) else 'OK'
         ledger.export_csv(folder / 'trades.csv')
         atomic_json(folder / 'status.json', json_safe(status))
         write_html(status, folder / 'report.html', data_mode='EXPLORATORY_PAPER / LIVE MARKET DATA')
@@ -379,6 +498,7 @@ def main():
     parser.add_argument('--start', action='store_true', help='Initialize a new seven-day paper trial; never resets an existing trial')
     parser.add_argument('--runtime', type=Path, default=ROOT / 'runtime')
     parser.add_argument('--activate-v2', action='store_true', help='Explicitly activate the user-requested $30k/two-buyer revision; preserves previous records')
+    parser.add_argument('--activate-reentry', action='store_true', help='Authorized entry-only revision: no count caps; fresh post-close quorum re-entry')
     args = parser.parse_args()
     args.runtime.mkdir(parents=True, exist_ok=True)
     folder = args.runtime
@@ -386,6 +506,8 @@ def main():
         with instance_lock(args.runtime / 'exploration-controller.lock'):
             if args.activate_v2:
                 activate_v2(args.runtime)
+            if args.activate_reentry:
+                activate_reentry(args.runtime)
             profile = active_profile(args.runtime)
             _, _, name = profile_settings(profile)
             folder = args.runtime / name

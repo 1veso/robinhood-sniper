@@ -18,7 +18,7 @@ HOURLY_LIMIT = 3
 def record_market_signal(ledger, candidate, quote, result, now):
     """Retain a two-recipient observation backed by the worker's saved proof."""
     if (ledger._get('engine_mode') != 'exploratory_paper_v1'
-            or candidate.metadata.get('profile') != 'two-wallet-30k'
+            or candidate.metadata.get('profile') not in ('two-wallet-30k', 'two-wallet-30k-reentry')
             or ledger._get('entry_halt') or quote is None
             or quote.asset_id != candidate.asset_id or not quote.executable
             or quote.liquidity_usd < Decimal(30000)

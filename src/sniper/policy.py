@@ -50,8 +50,9 @@ class RiskPolicy:
             if isinstance(f.default, Decimal):
                 object.__setattr__(self, f.name, decimal(value, f.name, minimum=Decimal(0)))
             elif type(f.default) is int:
-                if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-                    raise ValueError(f"{f.name} must be a positive integer")
+                zero_allowed = f.name in {'max_open_positions', 'max_entries_per_day', 'cooldown_seconds'}
+                if isinstance(value, bool) or not isinstance(value, int) or value < (0 if zero_allowed else 1):
+                    raise ValueError(f"{f.name} must be a {'nonnegative' if zero_allowed else 'positive'} integer")
         if self.starting_cash_usd <= 0 or self.ticket_usd <= 0 or self.min_liquidity_usd <= 0:
             raise ValueError("Starting cash, ticket and liquidity must be positive")
         for name in ("max_account_risk_pct", "per_position_risk_pct", "daily_loss_halt_pct", "stop_loss_pct", "trailing_stop_pct"):

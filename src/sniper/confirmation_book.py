@@ -34,7 +34,7 @@ class ConfirmationBook:
             (event_id, address(proof['token_address']), address(proof['pool']), proof['observed_at'],
              hash32(proof['tx_hash']), proof['log_index'], hash32(proof['block_hash']), json.dumps(proof)))
 
-    def recent(self, token, pool, *, now, age, minimum_spend):
+    def recent(self, token, pool, *, now, age, minimum_spend, observed_after=None):
         rows = self.store.db.execute('''SELECT p.payload FROM paper_confirmations p
             JOIN evm_events e ON e.chain_id=? AND e.tx_hash=p.tx_hash AND e.log_index=p.log_index
              AND e.block_hash=p.block_hash AND e.kind='sampled_swap' AND e.canonical=1
@@ -43,6 +43,8 @@ class ConfirmationBook:
         choices = {}
         for row in rows:
             proof = json.loads(row['payload'])
+            if observed_after is not None and proof['observed_at'] <= observed_after:
+                continue
             wallet, tx = address(proof['wallet']), hash32(proof['tx_hash'])
             if Decimal(proof['spent_usd']) < minimum_spend:
                 continue

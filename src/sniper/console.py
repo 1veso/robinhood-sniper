@@ -309,8 +309,9 @@ class ConsoleData:
         except (OSError, ValueError):
             collector = None
         return {'account_id': identity, 'name': 'Robinhood Ã‚Â· Wallet follower', 'chain': 'Robinhood Chain Ã‚Â· 4663',
-                'status': selected(status, ('started_at','finished_at','trial_state','entry_halt','collection')),
+                'status': selected(status, ('started_at','finished_at','trial_state','entry_halt','collection','source_retry_at','quote_retry_at')),
                 'error_count': len(status.get('errors', [])), 'trial': selected(trial, ('started_at','ends_at','revision_started_at','policy_version')),
+                'cycle_issues': [selected(i, ('stage','asset_id','pool_id','code','severity','attempts','observed_at')) for i in status.get('cycle_issues', [])],
                 'snapshot': snapshot, 'policy': policy, 'assets': list(assets.values()), 'fills': fills, 'closed': closed,
                 'decisions': decisions, 'reasons': reasons, 'equity_history': equity, 'screens': screens,
                 'market': market, 'event_counts': event_counts, 'gaps': gaps, 'policy_revisions': revisions,

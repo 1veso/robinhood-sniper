@@ -11,16 +11,26 @@ QUOTER = "0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7"
 D = Decimal
 
 
+class RouteUnavailable(RpcError):
+    """A verified pinned route rejected the exact requested quote; not a fill."""
+    def __init__(self, *, side, token, pool, block, block_hash, amount_raw):
+        super().__init__(f'Pinned V3 {side} quote reverted; route unavailable')
+        self.details = dict(side=side, token=token, pool=pool, block=block,
+                            block_hash=block_hash, input_raw=str(amount_raw))
+
+
 class V3RouteClient:
     def __init__(self, rpc, market, *, clock=time.time):
         self.rpc, self.market, self.clock = rpc, market, clock
         self.last_evidence = None
 
-    def quote(self, token, pool, *, max_notional, sell_quantity=D(0)):
+    def quote(self, token, pool, *, max_notional, sell_quantity=D(0), exit_only=False):
         token, pool = address(token), address(pool)
         max_notional, sell_quantity = D(max_notional), D(sell_quantity)
         if not max_notional.is_finite() or not 0 < max_notional <= 1000 or not sell_quantity.is_finite() or sell_quantity < 0:
             raise ValueError("Invalid bounded paper route size")
+        if type(exit_only) is not bool or (exit_only and sell_quantity <= 0):
+            raise ValueError('Exit-only route requires a positive holding quantity')
         rpc = self.rpc
         with rpc.budget(25):
             rpc.verify_chain()
@@ -86,19 +96,31 @@ class V3RouteClient:
                 raise RpcError("Route input rounds to zero")
             def simulate(source, destination, amount):
                 data = "0xc6a5026a" + source[2:].zfill(64) + destination[2:].zfill(64) + f"{amount:064x}{fee:064x}" + "0" * 64
-                words = _words(call(QUOTER, data), 4)
+                try:
+                    words = _words(call(QUOTER, data), 4)
+                except RpcError as exc:
+                    if 'eth_call returned error 3;' in str(exc):
+                        raise RouteUnavailable(side='sell' if source == token else 'buy', token=token,
+                            pool=pool, block=block, block_hash=anchor, amount_raw=amount) from None
+                    raise
                 output, gas = int(words[0], 16), int(words[3], 16)
                 if output <= 0 or gas <= 0:
                     raise RpcError("Route produced no output or gas estimate")
                 return output, gas
-            buy_raw, buy_gas = simulate(base, token, amount_in)
-            buy_qty = token_units(buy_raw, decimals[token])
-            covered_sell_raw = max(buy_raw, int((sell_quantity * D(10) ** decimals[token]).to_integral_value(rounding=ROUND_UP)))
+            holding_raw = int((sell_quantity * D(10) ** decimals[token]).to_integral_value(rounding=ROUND_UP))
+            if exit_only:
+                # A new buy must not be a prerequisite for selling a holding.
+                buy_raw, buy_gas, buy_qty = None, 0, None
+                covered_sell_raw = holding_raw
+            else:
+                buy_raw, buy_gas = simulate(base, token, amount_in)
+                buy_qty = token_units(buy_raw, decimals[token])
+                covered_sell_raw = max(buy_raw, holding_raw)
             sell_raw, sell_gas = simulate(token, base, covered_sell_raw)
             covered_sell_qty = token_units(covered_sell_raw, decimals[token])
             buy_value = token_units(amount_in, decimals[base]) * base_quote.price_usd
             sell_value = token_units(sell_raw, decimals[base]) * base_quote.price_usd
-            buy_loss = max(D(0), buy_value / (buy_qty * price) - 1)
+            buy_loss = D(0) if exit_only else max(D(0), buy_value / (buy_qty * price) - 1)
             sell_loss = max(D(0), 1 - sell_value / (covered_sell_qty * price))
             fee_fraction = D(fee) / 1_000_000
             price_impact = max(D(0), (1 + buy_loss) * (1 - fee_fraction) - 1,
@@ -114,12 +136,13 @@ class V3RouteClient:
             observed = int(self.clock())
             self.last_evidence = {"block": block, "block_hash": anchor, "observed_at": observed,
                 "pool": pool, "token": token, "base": base, "quoter": QUOTER, "fee": fee,
-                "buy_input_raw": str(amount_in), "buy_output_raw": str(buy_raw),
+                "route_side": 'sell' if exit_only else 'both',
+                "buy_input_raw": None if exit_only else str(amount_in), "buy_output_raw": None if exit_only else str(buy_raw),
                 "sell_input_raw": str(covered_sell_raw), "sell_output_raw": str(sell_raw),
                 "liquidity_usd": str(liquidity), "liquidity_source": liquidity_source,
                 "gas_assumption": "2x (quoter gas + 100000) at current gas price; not a signed transaction estimate",
-                "scope": "Two independent same-block quoter calls, not an executed round trip. No wallet, approvals or future sell guarantee."}
+                "scope": ("Position-sized sell-only quote; cannot admit entries. " if exit_only else "Two independent same-block quoter calls, not an executed round trip. ") + "No wallet, approvals or future sell guarantee."}
             return MarketQuote(f"eip155:4663/erc20:{token}", pool, observed, price, liquidity,
                 buy_bps, sell_bps, gas_usd, True, f"paper:v3-quoter:{block}:{anchor}",
-                route_max_notional_usd=buy_qty * price, route_max_sell_quantity=covered_sell_qty,
-                route_impact_bps=price_impact * 10000)
+                route_max_notional_usd=(covered_sell_qty if exit_only else buy_qty) * price, route_max_sell_quantity=covered_sell_qty,
+                route_impact_bps=price_impact * 10000, route_side='sell' if exit_only else 'both')

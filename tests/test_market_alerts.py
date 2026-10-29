@@ -79,6 +79,14 @@ class MarketAlertsTests(unittest.TestCase):
                 self.assertFalse(self.record(bad,price))
         self.assertEqual(self.notify()['sent'],0)
 
+    def test_reentry_profile_retains_observation_alerts_without_fills_or_duplicate_sends(self):
+        c,q=self.observation()
+        c=replace(c,metadata={**c.metadata,'profile':'two-wallet-30k-reentry'})
+        self.assertTrue(self.record(c,q));self.assertFalse(self.record(c,q))
+        self.assertEqual(self.notify()['sent'],1);self.assertEqual(self.notify()['sent'],0)
+        self.assertEqual(self.ledger.conn.execute('SELECT COUNT(*) FROM fills').fetchone()[0],0)
+        self.assertIn('controller independence are unverified',self.messages[0])
+
     def test_expired_and_reorg_halted_signals_are_suppressed(self):
         c,q=self.observation(); self.record(c,q)
         class Offline(self.Client):

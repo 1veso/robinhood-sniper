@@ -92,6 +92,7 @@ class MarketQuote:
     route_max_notional_usd: Decimal | None = None
     route_max_sell_quantity: Decimal | None = None
     route_impact_bps: Decimal | None = None
+    route_side: str = 'both'
 
     def __post_init__(self) -> None:
         for name in ("price_usd", "liquidity_usd", "buy_cost_bps", "sell_cost_bps", "gas_usd"):
@@ -108,6 +109,10 @@ class MarketQuote:
         timestamp(self.observed_at)
         if not isinstance(self.executable, bool):
             raise ValueError("executable must be boolean")
+        if self.route_side not in ('both', 'sell'):
+            raise ValueError("route_side must be both or sell")
+        if self.route_side == 'sell' and self.route_max_sell_quantity is None:
+            raise ValueError("Sell-only quotes require explicit quantity coverage")
         for name in ("price_usd", "liquidity_usd", "buy_cost_bps", "sell_cost_bps", "gas_usd"):
             decimal(getattr(self, name), name, minimum=Decimal(0))
         if self.buy_cost_bps > 10000 or self.sell_cost_bps > 10000:

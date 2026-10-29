@@ -105,11 +105,13 @@ class PaperEngine:
         self.ledger._record_equity(now, result["reason"])
         return result
 
-    def _confirmations(self, candidate: Candidate, now: int) -> tuple[int, str | None]:
+    def _confirmations(self, candidate: Candidate, now: int, *, observed_after: int | None = None) -> tuple[int, str | None]:
         clusters: set[str] = set()
         wallets: set[str] = set()
         transactions: set[str] = set()
         for confirmation in candidate.confirmations:
+            if observed_after is not None and confirmation.observed_at <= observed_after:
+                continue
             if not confirmation.verified_swap or (not confirmation.qualified and not self.allow_unqualified_wallets):
                 continue
             if confirmation.observed_at > now:
@@ -245,6 +247,8 @@ class PaperEngine:
             problem = self._quote_problem(quote, candidate.asset_id, now, decision_at)
             if problem:
                 return reject(problem)
+            if quote.route_side != 'both':
+                return reject('quote_not_entry_route')
             report_pool_id = candidate.safety.details.get("report_pool_id")
             if report_pool_id is not None and normalize_wallet(str(report_pool_id)) != normalize_wallet(quote.pool_id):
                 return reject("safety_pool_mismatch")
@@ -253,15 +257,22 @@ class PaperEngine:
             snapshot = self.ledger._snapshot()
             if any(p["asset_id"] == candidate.asset_id for p in snapshot["positions"]):
                 return reject("already_open")
-            if snapshot["open_positions"] >= self.policy.max_open_positions:
+            if self.policy.max_open_positions and snapshot["open_positions"] >= self.policy.max_open_positions:
                 return reject("max_open_positions")
             day_start = int(datetime.fromtimestamp(now, timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
             count = self.ledger.conn.execute("SELECT COUNT(*) FROM fills WHERE action='OPEN' AND observed_at>=? AND observed_at<=?", (day_start, now)).fetchone()[0]
-            if count >= self.policy.max_entries_per_day:
+            if self.policy.max_entries_per_day and count >= self.policy.max_entries_per_day:
                 return reject("max_entries_per_day")
             closed = self.ledger.conn.execute("SELECT MAX(closed_at) FROM closed_positions WHERE asset_id=?", (candidate.asset_id,)).fetchone()[0]
             if closed is not None and now - closed < self.policy.cooldown_seconds:
                 return reject("cooldown")
+            if closed is not None and self.policy.cooldown_seconds == 0:
+                fresh, error = self._confirmations(candidate, now, observed_after=closed)
+                if error:
+                    return reject(error)
+                if fresh < self.policy.min_independent_wallets:
+                    return reject("reentry_requires_new_buyers_after_close", observed_buyers_after_close=fresh,
+                                  required_buyers=self.policy.min_independent_wallets, last_closed_at=closed)
             amounts = self._size(quote, snapshot)
             if amounts is None:
                 return reject("risk_or_cash_budget_exhausted")
