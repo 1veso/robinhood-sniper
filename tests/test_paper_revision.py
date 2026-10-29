@@ -222,7 +222,12 @@ class WorkerQuorumTests(unittest.TestCase):
         class Route:
             last_evidence={'scope':'offline fixture only'}
             def __init__(self,*a):pass
-            def quote(self,*a,**kw):return quote(asset=asset,now=tick[0],pool_id=POOL,liquidity_usd=D(30000))
+            def quote(self,*a,**kw):
+                amount=D(kw['max_notional'])
+                self.last_evidence={'scope':'offline fixture only','buy_input_usd':str(amount)}
+                covered=max(amount,kw.get('sell_quantity',D(0)))
+                return quote(asset=asset,now=tick[0],pool_id=POOL,liquidity_usd=D(30000),
+                             route_max_notional_usd=covered,route_max_sell_quantity=covered,route_impact_bps=D(0))
         def screen(token):
             if outage and tick[0]==NOW+60:raise RuntimeError('fixture provider outage')
             return SafetyEvidence(asset,tick[0],{'contract_controls':True,'sellability':True,'holder_distribution':True,

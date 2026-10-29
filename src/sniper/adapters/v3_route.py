@@ -138,6 +138,8 @@ class V3RouteClient:
                 "pool": pool, "token": token, "base": base, "quoter": QUOTER, "fee": fee,
                 "route_side": 'sell' if exit_only else 'both',
                 "buy_input_raw": None if exit_only else str(amount_in), "buy_output_raw": None if exit_only else str(buy_raw),
+                "buy_input_usd": None if exit_only else str(buy_value),
+                "requested_input_usd": None if exit_only else str(max_notional),
                 "sell_input_raw": str(covered_sell_raw), "sell_output_raw": str(sell_raw),
                 "liquidity_usd": str(liquidity), "liquidity_source": liquidity_source,
                 "gas_assumption": "2x (quoter gas + 100000) at current gas price; not a signed transaction estimate",

@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
-from decimal import Decimal
+from dataclasses import replace
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 import json
 import os
 from pathlib import Path
@@ -223,6 +224,80 @@ def open_trial(folder, policy, *, start=False, now=None, rules=None):
         raise
 
 
+class EntrySizingUnavailable(RpcError):
+    """A bounded sizing pass could not produce a current entry-sized route."""
+    def __init__(self, reason, evidence):
+        super().__init__(reason)
+        self.reason, self.details = reason, evidence
+
+
+def sized_entry_quote(engine, request_quote, *, clock=None, deadline=None):
+    """Quote the affordable base input, then refine using the unchanged risk model.
+
+    ``request_quote(input_usd, deadline=...)`` returns a V3 quote and evidence. The V3
+    input is settlement-asset spend; the engine's notional is output token spot
+    value. Their conversion uses recorded buy input and quoted output coverage,
+    never adds modeled stress or gas to the quoter's swap amount. Final entry
+    admission still rechecks the original quote, costs and ledger transaction.
+    """
+    clock = time.time if clock is None else clock
+    started = clock()
+    end = min(started + 25, deadline) if deadline is not None else started + 25
+    policy = engine.policy
+    def snapshot():
+        with engine.ledger.transaction():
+            engine._expire_marks(int(clock()))
+            return engine.ledger._snapshot()
+    state = snapshot()
+    reference = max(Decimal(0), min(state['starting_cash'], state['equity']))
+    ceiling = max(Decimal(0), min(policy.ticket_usd, state['cash'],
+        reference * policy.per_position_risk_pct / 100,
+        reference * policy.max_account_risk_pct / 100 - state['stress_exposure']))
+    requested = ceiling.quantize(Decimal('0.00000001'), rounding=ROUND_DOWN)
+    audit = {'algorithm': 'affordable-entry-v1', 'started_at': int(started),
+             'policy_version': policy.version, 'initial_input_ceiling_usd': str(requested),
+             'maximum_quotes': 3, 'maximum_seconds': 25, 'maximum_input_excess_fraction': '0.001',
+             'attempts': []}
+    if requested < Decimal('0.01'):
+        raise EntrySizingUnavailable('risk_or_cash_budget_exhausted', audit)
+    for _ in range(3):
+        if clock() >= end:
+            raise EntrySizingUnavailable('entry_quote_sizing_deadline', audit)
+        quote, evidence = request_quote(requested, deadline=end)
+        problem = engine._quote_problem(quote, quote.asset_id, int(clock()))
+        if problem or quote.route_side != 'both' or quote.route_max_notional_usd is None:
+            raise EntrySizingUnavailable(problem or 'entry_quote_missing_buy_coverage', audit)
+        if clock() >= end:
+            raise EntrySizingUnavailable('entry_quote_sizing_deadline', audit)
+        try:
+            actual_input = Decimal(str(evidence.get('buy_input_usd')))
+        except (AttributeError, InvalidOperation, ValueError):
+            raise EntrySizingUnavailable('entry_quote_invalid_input_evidence', audit) from None
+        if not actual_input.is_finite() or not 0 < actual_input <= requested:
+            raise EntrySizingUnavailable('entry_quote_invalid_input_evidence', audit)
+        # An oversized first probe may fail impact. It may inform a smaller
+        # probe, but its impact is never removed from the quote used to enter.
+        sizing_quote = replace(quote, route_impact_bps=Decimal(0))
+        amounts = engine._size(sizing_quote, snapshot())
+        planned_input = (amounts['notional'] * actual_input / quote.route_max_notional_usd
+                         if amounts else None)
+        audit['attempts'].append({'requested_input_usd': str(requested),
+            'quoted_input_usd': str(actual_input), 'quote': quote.as_dict(), 'route': evidence,
+            'planned_notional_usd': str(amounts['notional']) if amounts else None,
+            'planned_swap_input_usd': str(planned_input) if planned_input is not None else None})
+        # This tolerance is quote precision (0.1%), not an admission/risk limit.
+        # The unmodified engine remains authoritative, including impact limits.
+        tolerance = max(Decimal('0.00000001'), actual_input * Decimal('0.001'))
+        if amounts is None or actual_input - planned_input <= tolerance:
+            audit.update(finished_at=int(clock()), converged=amounts is not None,
+                         status='SIZED' if amounts else 'NO_AFFORDABLE_SIZE')
+            return quote, {**evidence, 'entry_sizing': audit}
+        requested = planned_input.quantize(Decimal('0.00000001'), rounding=ROUND_DOWN)
+        if requested < Decimal('0.01'):
+            raise EntrySizingUnavailable('risk_or_cash_budget_exhausted', audit)
+    raise EntrySizingUnavailable('entry_quote_sizing_not_converged', audit)
+
+
 def run_cycle(folder, runtime, *, start=False, profile='legacy'):
     policy, rules, _ = profile_settings(profile)
     ledger, store, engine, trial = open_trial(folder, policy, start=start, rules=rules)
@@ -250,10 +325,25 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
             status['errors'].append('Collection RPC HTTP 429; pending observations retained; retry on a scheduled cycle after backoff')
         else:
             status['errors'].append(error(exc))
-    def route(token, pool, quantity=Decimal(0)):
-        client = V3RouteClient(RpcClient(quote_endpoint, timeout=8, max_retries=1), DexScreenerClient(chain_id='robinhood'))
+    def route(token, pool, quantity=Decimal(0), *, max_notional=None, deadline=None):
+        route_rpc = RpcClient(quote_endpoint, timeout=8, max_retries=1)
+        route_market = DexScreenerClient(chain_id='robinhood')
+        if deadline is not None:
+            original_transport = route_market.transport
+            def bounded_transport(method, url, payload, headers, timeout):
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    raise EntrySizingUnavailable('entry_quote_sizing_deadline', {})
+                return original_transport(method, url, payload, headers, min(timeout, remaining))
+            route_market.transport = bounded_transport
+        client = V3RouteClient(route_rpc, route_market)
         kwargs = {'exit_only': True} if quantity > 0 else {}
-        quote = client.quote(token, pool, max_notional=policy.ticket_usd, sell_quantity=quantity, **kwargs)
+        remaining = None if deadline is None else deadline - time.time()
+        if remaining is not None and remaining <= 0:
+            raise EntrySizingUnavailable('entry_quote_sizing_deadline', {})
+        with route_rpc.budget(remaining):
+            quote = client.quote(token, pool, max_notional=policy.ticket_usd if max_notional is None else max_notional,
+                                 sell_quantity=quantity, **kwargs)
         return quote, client.last_evidence
     quote_cache, failed_until, issues = {}, {}, {}
     def route_issue(exc, stage, asset, pool):
@@ -389,7 +479,9 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                         if time.time() < status['quote_retry_at']:
                             break  # Pending source event retained; exits keep retrying independently.
                         try:
-                            quote, evidence = route(token, pool)
+                            quote, evidence = sized_entry_quote(engine,
+                                lambda amount, deadline: route(token, pool, max_notional=amount, deadline=deadline),
+                                deadline=min(started + 125, trial['ends_at']))
                         except RpcError as exc:
                             if rate_limited(exc):
                                 route_issue(exc, 'candidate_entry', asset, pool)
@@ -440,6 +532,12 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                         source.finish(swap, {'reason': 'pool_not_covered_by_market_feed'})
                     else:
                         status['errors'].append(error(exc))
+                except EntrySizingUnavailable as exc:
+                    ledger.record_event(event_id + ':entry-sizing', 'entry_quote_sizing_unavailable', exc.details, int(time.time()))
+                    rejected = {'verdict': 'SKIP', 'reason': exc.reason, 'event_id': event_id,
+                                'asset_id': asset, 'pool_id': pool}
+                    source.finish(swap, rejected)
+                    status['decisions'].append(rejected)
                 except RouteUnavailable as exc:
                     route_issue(exc, 'candidate_entry', asset, pool)
                     rejected = {'verdict': 'SKIP', 'reason': 'route_unavailable', 'event_id': event_id,

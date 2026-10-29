@@ -326,12 +326,17 @@ class TrialTests(unittest.TestCase):
                 return {'token_address': TOKEN, 'pool': POOL, 'spent_usd': '100', 'wallet': WALLET,
                         'tx_hash': TX_SWAP, 'observed_at': NOW}
         class Market:
-            def __init__(self, **kwargs): pass
+            def __init__(self, **kwargs): self.transport = None  # Route fixture performs no HTTP.
             def quote(self, *args, **kwargs): return quote(asset=asset, now=tick[0], pool_id=POOL)
         class Route:
             last_evidence = {'scope': 'synthetic offline test only'}
             def __init__(self, rpc, *args): routes.append(rpc.url)
-            def quote(self, *args, **kwargs): return quote(asset=asset, now=tick[0], pool_id=POOL)
+            def quote(self, *args, **kwargs):
+                amount = D(kwargs['max_notional'])
+                self.last_evidence = {'scope': 'synthetic offline test only', 'buy_input_usd': str(amount)}
+                covered = max(amount, kwargs.get('sell_quantity', D(0)))
+                return quote(asset=asset, now=tick[0], pool_id=POOL, route_max_notional_usd=covered,
+                             route_max_sell_quantity=covered, route_impact_bps=D(0))
         with patch.object(worker.time, 'time', side_effect=lambda: tick[0]), patch.object(worker, 'ExploratorySource', Source), \
              patch.object(worker, 'DexScreenerClient', Market), patch.object(worker, 'V3RouteClient', Route), \
              patch.object(worker.GoPlusClient, 'screen', side_effect=lambda _: SafetyEvidence(asset, tick[0], {}, 'test')):
