@@ -1,5 +1,10 @@
 # Active paper strategy and recorded revisions
 
+The historical count caps and cooldown described below were superseded on
+October 29 by the authorized [re-entry revision](ROBINHOOD_PAPER_REENTRY.md).
+The [entry-size correction and isolated A/B comparison](PAPER_POLICY_COMPARISON.md)
+preserve monetary risk, active exits, account history and the original deadline.
+
 The user authorized revision **two-wallet-30k**: two distinct buying addresses and $30,000 minimum liquidity. It follows observed funded acquisitions; it does **not** claim to follow profitable or independent whales. The strict five-qualified-wallet configuration remains a research reference. The active paper account uses current observations and simulated execution only, with no signer, wallet key, order submission or automatic promotion to real money.
 
 Run `python explore.py --activate-v2` (Python 3.11+). Subsequent `python explore.py` calls resume the selected revision. Activation changes only entry thresholds and the rug-screen requirement, preserving account identity, simulated cash, open holdings, risk limits, existing exits and the original seven-day deadline. A transactional revision event retains the old and new policies, and `trial-before-v2.json` preserves the original manifest. Repeating activation recovers an interrupted file write without resetting capital or extending the trial. Run `scripts/install-exploration.ps1` to install a Windows task every two minutes. Keep the PC awake, connected and signed in. Process locks and Task Scheduler IgnoreNew prevent overlap; bounded failures retry later. The task uses pythonw to avoid console popups.

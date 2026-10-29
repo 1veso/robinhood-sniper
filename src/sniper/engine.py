@@ -273,6 +273,9 @@ class PaperEngine:
                 if fresh < self.policy.min_independent_wallets:
                     return reject("reentry_requires_new_buyers_after_close", observed_buyers_after_close=fresh,
                                   required_buyers=self.policy.min_independent_wallets, last_closed_at=closed)
+            additional = self._additional_entry_check(candidate, quote, now)
+            if additional:
+                return reject(**additional)
             amounts = self._size(quote, snapshot)
             if amounts is None:
                 return reject("risk_or_cash_budget_exhausted")
@@ -299,6 +302,7 @@ class PaperEngine:
             self._fill(position_id, candidate.event_id, candidate.asset_id, candidate.symbol, candidate.strategy,
                        "OPEN", now, amounts["quantity"], quote.price_usd, amounts["fill_price"],
                        amounts["notional"], amounts["friction"], quote.gas_usd, -amounts["entry_cost"], ZERO, "entry")
+            self._position_opened(p, quote, now)
             self._daily_halt(now)
             return self._finish_decision(candidate, now, {
                 "verdict": "PAPER_BUY", "reason": "eligible", "position_id": position_id,
@@ -311,6 +315,19 @@ class PaperEngine:
 
     def decision_context(self, candidate: Candidate) -> dict[str, Any]:
         return {}
+
+    def _additional_entry_check(self, candidate: Candidate, quote: MarketQuote, now: int) -> dict[str, Any] | None:
+        """Extension point for explicitly isolated paper comparisons only."""
+        return None
+
+    def _position_opened(self, position: dict[str, Any], quote: MarketQuote, now: int) -> None:
+        pass
+
+    def _position_closed(self, position: dict[str, Any], quote: MarketQuote, now: int, reason: str) -> None:
+        pass
+
+    def _additional_exit(self, position: dict[str, Any], quote: MarketQuote, now: int) -> tuple[Decimal, str] | None:
+        return None
 
     def _fill(self, position_id: str, event_id: str, asset_id: str, symbol: str, strategy: str,
               action: str, now: int, qty: Decimal, reference: Decimal, price: Decimal,
@@ -351,6 +368,7 @@ class PaperEngine:
                                        VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                                      (p["position_id"], p["asset_id"], p["symbol"], p["strategy"], p["opened_at"], now,
                                       str(p["total_entry_cost"]), str(total_proceeds), str(total_pnl), str(total_costs), reason))
+            self._position_closed(p, quote, now, reason)
             self.ledger.conn.execute("DELETE FROM positions WHERE position_id=?", (p["position_id"],))
         else:
             # A remaining position still needs one full gas payment to exit.
@@ -397,8 +415,11 @@ class PaperEngine:
                 gain = (quote.price_usd / p["entry_price"] - ONE) * HUNDRED
                 age = now - p["opened_at"]
                 qty, reason = ZERO, None
+                additional = self._additional_exit(p, quote, now)
                 if gain <= -self.policy.stop_loss_pct:
                     qty, reason = p["qty"], "stop_loss"
+                elif additional is not None:
+                    qty, reason = additional
                 elif p["tp_done"] and quote.price_usd <= peak * (ONE - self.policy.trailing_stop_pct / HUNDRED):
                     qty, reason = p["qty"], "trailing_stop"
                 elif not p["tp_done"] and gain >= self.policy.take_profit_pct:

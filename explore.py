@@ -31,6 +31,7 @@ from sniper.ledger import json_text
 from sniper.models import Candidate, SafetyEvidence, WalletConfirmation, json_safe
 from sniper.policy import RiskPolicy
 from sniper.reporting import write_html
+from sniper.paper_comparison import Comparison
 
 RULES = {'strategy': ExploratoryEngine.strategy_name, 'mode': ExploratoryEngine.engine_mode,
          'universe': 'Dynamic hash sample of funded buys and net recipient acquisitions in registered Robinhood V3 pools, including established pools',
@@ -346,6 +347,35 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                                  sell_quantity=quantity, **kwargs)
         return quote, client.last_evidence
     quote_cache, failed_until, issues = {}, {}, {}
+    comparison, comparison_failed, watch_sequence = None, False, 0
+    comparison_folder = runtime / 'paper-comparison'
+    comparison_gap_path = comparison_folder / 'pending-gap.json'
+    if (comparison_folder / 'manifest.json').is_file():
+        try:
+            comparison = Comparison(comparison_folder, source_account_id=trial['account_id'],
+                                    source_id=store.identity, policy_version=policy.version)
+            if comparison_gap_path.is_file():
+                pending_gap = json.loads(comparison_gap_path.read_text(encoding='utf-8'))
+                comparison.capture(f'capture-gap-recovery:{started}', 'gap', started,
+                                   {**pending_gap, 'recovered_at': started})
+                comparison_gap_path.unlink()
+        except Exception as exc:
+            comparison_failed = True
+            status['errors'].append('Paper comparison unavailable: ' + type(exc).__name__)
+    def comparison_capture(key, kind, now, payload):
+        nonlocal comparison_failed
+        if comparison is not None and not comparison_failed:
+            try:
+                comparison.capture(key, kind, now, payload)
+            except Exception as exc:
+                comparison_failed = True
+                status['errors'].append('Paper comparison observation gap: ' + type(exc).__name__)
+                try:
+                    atomic_json(comparison_gap_path, {'reason': 'comparison_capture_failure',
+                        'from': now, 'cycle': started, 'first_omitted_kind': kind,
+                        'error_type': type(exc).__name__, 'scope': 'Some source inputs in this cycle were not captured; no reconstruction'})
+                except Exception:
+                    status['errors'].append('Paper comparison gap marker could not be persisted')
     def route_issue(exc, stage, asset, pool):
         unavailable = isinstance(exc, RouteUnavailable)
         if rate_limited(exc):
@@ -363,6 +393,7 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
         ledger.record_event(f'cycle-route:{started}:{stage}:{asset}:{pool}:{issues[key]["attempts"]}',
                             'route_observation_failure', issues[key], int(time.time()))
     def watch():
+        nonlocal watch_sequence
         positions = ledger.snapshot()['positions']
         quotes = {}
         if positions:
@@ -384,12 +415,18 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                     except Exception as exc:
                         failed_until[key] = time.time() + 30
                         route_issue(exc, 'position_exit', p['asset_id'], p['pool_id'])
-        return engine.watch(quotes, int(time.time()))
+        now = int(time.time())
+        watch_sequence += 1
+        comparison_capture(f'watch:{started}:{watch_sequence}', 'watch', now,
+                           {'quotes': [q.as_dict() for q in quotes.values()], 'cycle': started})
+        return engine.watch(quotes, now)
     try:
         last = previous.get('finished_at', started)
         gap = max(0, started - last)
         if gap > 180:
             ledger.record_event('gap:' + str(started), 'monitoring_gap', {'seconds': gap, 'from': last, 'to': started}, started)
+            comparison_capture(f'gap:{started}', 'gap', started, {'reason': 'source_monitoring_gap', 'seconds': gap, 'from': last, 'to': started})
+        comparison_capture(f'control:{started}', 'control', started, {'entry_halt': ledger._get('entry_halt')})
         status['monitoring_gap_seconds'] = gap
         status['exits'] = watch()
         rpc = RpcClient(endpoint, timeout=8, max_retries=1)
@@ -512,6 +549,8 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                         'proof_event': event_id + ':proof', 'coverage': 'sampled funded acquisitions',
                         'spend_basis': proof.get('spend_basis'), 'proof_scope': proof.get('proof_scope'),
                         'profile': profile, 'quorum_transactions': [c.tx_hash for c in confirmations], 'strict_strategy_result': False})
+                    comparison_capture(f'candidate:{event_id}:{started}', 'candidate', now,
+                        {'candidate': candidate.as_dict(), 'quote': quote.as_dict() if quote is not None else None, 'cycle': started})
                     result = engine.consider(candidate, quote, now)
                     try:
                         record_market_signal(ledger, candidate, quote, result, now)
@@ -585,8 +624,49 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
         ledger.export_csv(folder / 'trades.csv')
         atomic_json(folder / 'status.json', json_safe(status))
         write_html(status, folder / 'report.html', data_mode='EXPLORATORY_PAPER / LIVE MARKET DATA')
+        # All primary trades, notifications and publication complete first.
+        # Comparisons are separate portfolios; failures cannot replay a source fill.
+        if comparison is not None:
+            try:
+                now = int(time.time())
+                comparison_capture(f'final-control:{started}', 'control', now, {'entry_halt': ledger._get('entry_halt')})
+                if comparison_failed:
+                    raise ValueError('Observation capture incomplete; comparison requires review')
+                comparison.process()
+                extra_quotes = []
+                for asset, pool, quantity in comparison.needed_quotes(now, limit=2):
+                    key = (asset, pool, str(quantity))
+                    if time.time() >= started + 150 or time.time() < max(status['quote_retry_at'], failed_until.get(key, 0)):
+                        comparison.capture(f'quote-deferred:{started}:{asset}:{pool}', 'gap', int(time.time()),
+                            {'reason': 'comparison_quote_deferred', 'asset_id': asset, 'pool_id': pool})
+                        continue
+                    try:
+                        q, _ = route(asset.split(':')[-1], pool, quantity, deadline=min(started + 180, time.time() + 15))
+                        extra_quotes.append(q)
+                    except Exception as exc:
+                        comparison.capture(f'quote-gap:{started}:{asset}:{pool}', 'gap', int(time.time()),
+                            {'reason': 'comparison_route_unavailable' if isinstance(exc, RouteUnavailable) else 'comparison_provider_error',
+                             'asset_id': asset, 'pool_id': pool, 'error_type': type(exc).__name__})
+                        if rate_limited(exc):
+                            status['quote_retry_at'] = int(time.time()) + 60
+                            break
+                now = int(time.time())
+                if extra_quotes:
+                    comparison.capture(f'extra-watch:{started}', 'watch', now,
+                                       {'quotes': [q.as_dict() for q in extra_quotes], 'supplemental': True, 'cycle': started})
+                comparison.process()
+                comparison.publish(now)
+                status['comparison'] = {'state': 'OBSERVING', 'completed_at': now,
+                    'comparison_id': comparison.manifest['comparison_id'], 'excluded_from_strategy': True}
+            except Exception as exc:
+                status['comparison'] = {'state': 'ERROR', 'at': int(time.time()), 'error_type': type(exc).__name__}
+                status['errors'].append('Isolated paper comparison: ' + type(exc).__name__)
+                status['health'] = 'DEGRADED'
+            atomic_json(folder / 'status.json', json_safe(status))
         return status
     finally:
+        if comparison is not None:
+            comparison.close()
         ledger.close()
         store.close()
 

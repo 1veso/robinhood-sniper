@@ -24,6 +24,11 @@ this is not a claim of high-frequency execution or guaranteed profitable trades.
 Paid models and real execution remain disabled. Solana, NEON, Jev and the strict
 reference account retain their existing policies.
 
+Entry quotes now refine the affordable actual input within the same monetary
+budgets. Separately accounted baseline/A/B comparisons can observe new positions
+without changing active exits or the deadline. See
+[paper policy comparison](PAPER_POLICY_COMPARISON.md) for bounds and evidence scope.
+
 `explore.activate_reentry(runtime)` requires the existing v2 account and is called
 while holding `exploration-controller.lock`. It allows exactly three policy-field
 changes, commits the new policy, manifest and `policy_revision` event together,
