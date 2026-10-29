@@ -6,8 +6,10 @@ from unittest.mock import Mock
 
 import explore
 from sniper.exploration import ExploratoryEngine
+from sniper.engine import PaperEngine
 from sniper.ledger import Ledger
-from test_engine import NOW, quote
+from sniper.policy import RiskPolicy
+from test_engine import NOW, quote, candidate
 from test_paper_reentry import eligible
 import test_live_evidence as live_fixture
 from sniper.adapters.evm import WETH
@@ -58,7 +60,11 @@ class EntryQuoteSizingTests(unittest.TestCase):
         self.calls.clear()
         q, _ = explore.sized_entry_quote(self.engine, request, clock=lambda: NOW)
         self.assertNotIn(D(25), self.calls)
-        self.assertEqual(self.engine.consider(eligible(), q, NOW)['verdict'], 'PAPER_BUY')
+        result = self.engine.consider(eligible(), q, NOW)
+        self.assertEqual(result['verdict'], 'PAPER_BUY')
+        self.assertLessEqual(result['notional_usd'], q.route_max_notional_usd)
+        self.assertLessEqual(result['quantity'], q.route_max_sell_quantity)
+        self.assertLessEqual(result['full_loss_risk_usd'], self.ledger.snapshot()['equity'] * D('.005'))
 
     def test_initial_probe_impact_can_inform_smaller_quote_but_never_enter(self):
         def request(amount, **kwargs):
@@ -75,8 +81,22 @@ class EntryQuoteSizingTests(unittest.TestCase):
             return replace(q, route_impact_bps=D(101)), ev
         q, _ = explore.sized_entry_quote(self.engine, request, clock=lambda: NOW)
         self.assertEqual(q.route_impact_bps, D(101))
-        self.assertEqual(self.engine.consider(eligible(), q, NOW)['reason'], 'risk_or_cash_budget_exhausted')
+        result = self.engine.consider(eligible(), q, NOW)
+        self.assertEqual(result['reason'], 'route_price_impact_exceeded')
+        self.assertEqual(result['observed_route_impact_bps'], D(101))
+        self.assertEqual(result['maximum_route_impact_bps'], D(100))
         self.assertEqual(self.ledger.snapshot()['open_positions'], 0)
+
+    def test_strict_reference_keeps_its_existing_diagnostic_and_rejection(self):
+        strict = Ledger(':memory:', D(1000))
+        try:
+            engine = PaperEngine(strict, RiskPolicy())
+            q = quote(route_max_notional_usd=D(25), route_max_sell_quantity=D(25), route_impact_bps=D(101))
+            result = engine.consider(candidate(), q, NOW)
+            self.assertEqual(result['reason'], 'risk_or_cash_budget_exhausted')
+            self.assertFalse(strict.positions())
+        finally:
+            strict.close()
 
     def test_no_money_budget_does_not_request_route_or_create_fill(self):
         with self.ledger.transaction():

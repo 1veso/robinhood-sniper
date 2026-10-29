@@ -195,6 +195,10 @@ class PaperEngine:
             return None
         return self._entry_calculation(notional, quote)
 
+    def _sizing_rejection(self, quote: MarketQuote) -> dict[str, Any]:
+        """Keep the reference account's historical diagnostic contract."""
+        return {"reason": "risk_or_cash_budget_exhausted"}
+
     def consider(self, candidate: Candidate, quote: MarketQuote, now: int) -> dict[str, Any]:
         timestamp(now)
         if not isinstance(candidate, Candidate):
@@ -278,7 +282,7 @@ class PaperEngine:
                 return reject(**additional)
             amounts = self._size(quote, snapshot)
             if amounts is None:
-                return reject("risk_or_cash_budget_exhausted")
+                return reject(**self._sizing_rejection(quote))
             position_id = "position:" + candidate.event_id
             p = {
                 "position_id": position_id, "asset_id": candidate.asset_id, "symbol": candidate.symbol,

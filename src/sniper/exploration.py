@@ -21,6 +21,13 @@ class ExploratoryEngine(PaperEngine):
     def __init__(self, ledger, policy):
         super().__init__(ledger, policy)
 
+    def _sizing_rejection(self, quote):
+        if quote.route_impact_bps is not None and quote.route_impact_bps > self.policy.max_price_impact_bps:
+            return {'reason': 'route_price_impact_exceeded',
+                    'observed_route_impact_bps': quote.route_impact_bps,
+                    'maximum_route_impact_bps': self.policy.max_price_impact_bps}
+        return super()._sizing_rejection(quote)
+
     def decision_context(self, candidate):
         return {"evaluation_mode": self.engine_mode,
                 "wallet_qualification": "unestablished", "wallet_independence": "unestablished",
