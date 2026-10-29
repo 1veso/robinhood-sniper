@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import uuid
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent
@@ -134,11 +135,30 @@ def discover(cache, state, *, blocks=2000, sample=12, evidence=None):
 def run_research(runtime: Path, *, max_calls=60, seconds=45):
     folder = runtime / 'research'
     folder.mkdir(exist_ok=True)
-    with closing(CandidateEvidence(folder / 'candidate-evidence.sqlite3')) as evidence:
-        return _run_research(runtime, evidence, max_calls=max_calls, seconds=seconds)
+    progress = {'run_id': uuid.uuid4().hex, 'pid': os.getpid(), 'started_at': int(time.time()),
+                'finished_at': None, 'status': 'RUNNING'}
+    if os.name == 'nt':
+        import ctypes
+        session = ctypes.c_ulong()
+        if ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(session)):
+            progress['windows_session_id'] = session.value
+    def phase(name):
+        progress.update(phase=name, updated_at=int(time.time()))
+        atomic_json(folder/'publication-status.json', progress)
+    try:
+        phase('OPEN_JOURNAL')
+        with closing(CandidateEvidence(folder / 'candidate-evidence.sqlite3')) as evidence:
+            result = _run_research(runtime, evidence, max_calls=max_calls, seconds=seconds, phase=phase)
+        progress.update(status='COMPLETE', finished_at=int(time.time()))
+        phase('COMPLETE')
+        return result
+    except Exception as exc:
+        progress.update(status='ERROR', finished_at=int(time.time()), error_type=type(exc).__name__)
+        phase(progress['phase'])
+        raise
 
 
-def _run_research(runtime: Path, evidence, *, max_calls=60, seconds=45):
+def _run_research(runtime: Path, evidence, *, max_calls=60, seconds=45, phase=lambda name: None):
     started = time.monotonic()
     folder = runtime / "research"
     folder.mkdir(exist_ok=True)
@@ -153,11 +173,13 @@ def _run_research(runtime: Path, evidence, *, max_calls=60, seconds=45):
                           max_calls=discovery_calls, seconds=discovery_seconds)
     path = folder / "discovery.json"
     state = json.loads(path.read_text()) if path.exists() else {}
+    phase('IMPORT')
     imported = sync_observed_evidence(runtime, state, evidence)
     if state.get('candidates'):
         atomic_json(path, state)
     pending = []
     discovery = {}
+    phase('DISCOVERY')
     try:
         # Discovery must not spend the history worker's budget. Once candidates
         # exist, a five-minute discovery cadence leaves time to finish histories.
@@ -186,6 +208,7 @@ def _run_research(runtime: Path, evidence, *, max_calls=60, seconds=45):
     # histories before they could finish; freshness is checked at qualification.
     cohort = folder / f"cohort-{snapshot['block']}" if snapshot else None
     snapshot_verified = False
+    phase('HISTORY')
     if not key:
         pending.append("BLOCKSCOUT_API_KEY_REQUIRED")
     elif candidates:
@@ -276,10 +299,12 @@ def _run_research(runtime: Path, evidence, *, max_calls=60, seconds=45):
                "controller_policy": "Automatic links merge suspected controllers. No observed link is not proof of independence; no automatic qualified:true assertion.",
                "reports": reports, "candidate_file": str(folder / "wallet-candidates.csv")}
     export_started = time.monotonic()
+    phase('EXPORT')
     summary['address_evidence'] = evidence.export(folder, state, reports, selected, snapshot, int(time.time()))
     summary['export_seconds'] = round(time.monotonic() - export_started, 3)
     summary['finished_at'] = int(time.time())
     summary['duration_seconds'] = round(time.monotonic() - started, 3)
+    phase('PUBLISH')
     atomic_json(folder / "wallet-research.json", summary)
     atomic_json(folder / "wallet-shortlist.json", shortlist)
     csv_path = folder / "wallet-candidates.csv"

@@ -50,7 +50,7 @@ foreach ($key in $names.Keys) {
         $definition.Settings.StopIfGoingOnBatteries = $false
         # Default BelowNormal can starve interactive reads and shadow imports
         # under load. Existing jobs are left untouched by this installer.
-        if ($key -in @('console','shadow')) { $definition.Settings.Priority = 4 }
+        if ($key -in @('console','shadow','research','jev-review')) { $definition.Settings.Priority = 4 }
         if ($key.StartsWith('neon-')) {
             $definition.Settings.RestartCount = 3
             $definition.Settings.RestartInterval = 'PT1M'

@@ -136,7 +136,13 @@ def worker(name, root=ROOT):
                 return 0
         if name in ('paper', 'research', 'shadow', 'monitor') and not (root / 'runtime/exploration/trial.json').exists():
             return 0
-        result = {'started_at': started, 'job': name, 'finished_at': None, 'exit_code': None}
+        result = {'started_at': started, 'job': name, 'finished_at': None, 'exit_code': None,
+                  'pid': os.getpid(), 'phase': 'STARTING_CHILD'}
+        if os.name == 'nt':
+            import ctypes
+            session = ctypes.c_ulong()
+            if ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(session)):
+                result['windows_session_id'] = session.value
         atomic(folder / (name + '.json'), encode(result))
         try:
             result['exit_code'] = child(JOBS[name][3], JOBS[name][2], root)
@@ -145,6 +151,8 @@ def worker(name, root=ROOT):
         except Exception as exc:
             result.update(exit_code=1, error=type(exc).__name__)
         result['finished_at'] = int(time.time())
+        result['phase'] = 'COMPLETE' if result['exit_code'] == 0 else 'FAILED'
+        result['duration_seconds'] = result['finished_at'] - started
         atomic(folder / (name + '.json'), encode(result))
         if name == 'report' and result['exit_code'] == 0:
             atomic(marker, encode({'day': date, 'completed_at': result['finished_at']}))

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from sniper.adapters.evm_store import EvmStore
 from sniper.candidate_evidence import CandidateEvidence
@@ -14,6 +15,24 @@ from test_engine import NOW
 
 
 class CandidateEvidenceTests(unittest.TestCase):
+    def test_failed_parallel_export_never_publishes_success_index(self):
+        from sniper import candidate_evidence as module
+        self.add(); self.import_rows()
+        folder = self.root/'exports'
+        self.journal.export(folder, self.state, [], {}, None, NOW)
+        index = (folder/'wallet-evidence-index.json').read_bytes()
+        atomic = module._atomic
+        def fail_address(path, content):
+            if Path(path).parent.name == 'addresses' and Path(path).suffix == '.json':
+                raise OSError('fixture write failure')
+            return atomic(path, content)
+        with patch.object(module, '_atomic', side_effect=fail_address):
+            with self.assertRaises(OSError):
+                self.journal.export(folder, self.state, [], {}, None, NOW+1)
+        self.assertEqual((folder/'wallet-evidence-index.json').read_bytes(), index)
+        self.journal.export(folder, self.state, [], {}, None, NOW+2)
+        self.assertEqual(json.loads((folder/'wallet-evidence-index.json').read_text())['generated_at'], NOW+2)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)

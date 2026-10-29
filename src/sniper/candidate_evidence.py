@@ -8,6 +8,7 @@ are deliberately different evidence scopes.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 import copy
 import csv
 from decimal import Decimal, InvalidOperation
@@ -61,6 +62,13 @@ def _cell(value):
     if isinstance(value, str) and value.lstrip(' \t\r\n').startswith(('=', '+', '-', '@')):
         return "'" + value
     return value
+
+
+def _write_address(job):
+    """Only independent public view files; SQLite stays on the calling thread."""
+    folder, summary, payload, evidence, fields = job
+    _atomic(folder/summary['json_path'], _json(payload)+'\n')
+    _csv(folder/summary['csv_path'], evidence, fields)
 
 
 def _public_proof(proof):
@@ -355,7 +363,7 @@ class CandidateEvidence:
             by_wallet[value['wallet']].append(value)
         candidates = {address(w): c for w,c in state.get('candidates',{}).items()}
         assessment = {address(r['wallet']):r for r in reports}
-        index = []
+        index, address_jobs = [], []
         fields = ['wallet','role','source_id','chain_id','tx_hash','log_index','block_number','block_hash','observed_at','pool','token','quote_address','amount_raw','spent_raw','spent_usd','transaction_sender','base_payers','canonical','canonical_scope','canonical_checked_at','raw_evidence_available','proof_digest','qualification','controller_independence','funding_ownership','proof_scope','source_proof_scope','source_spend_basis']
         for wallet in sorted(set(candidates) | set(by_wallet)):
             evidence = by_wallet[wallet]
@@ -424,9 +432,15 @@ class CandidateEvidence:
                 'legacy_reference':legacy,'history':history,'observations':evidence,
                 'raw_proof_location':self.path.name+' / proofs.digest',
                 'limitations':'Activity is candidate discovery, not evidence of profitable skill, independent control, current safety or executable routes. RPC samples are canonical only as checked at capture; source-backed rows reflect the last local-journal reconciliation.'}
-            _atomic(folder/summary['json_path'], _json(payload)+'\n')
-            _csv(folder/summary['csv_path'], evidence, fields)
+            address_jobs.append((folder, summary, payload, evidence, fields))
             index.append(summary)
+        # Thousands of sequential fsync/replaces exceeded the worker deadline on
+        # Windows. Bound disk concurrency and queue size; retain exact contents,
+        # fresh qualification checks and fsync. Publish the index only after ALL
+        # address files succeed. Exceptions propagate; no false completion.
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix='evidence-export') as pool:
+            for offset in range(0, len(address_jobs), 64):
+                list(pool.map(_write_address, address_jobs[offset:offset+64]))
         _csv(folder/'wallet-evidence.csv', observations, fields)
         _atomic(folder/'wallet-evidence.jsonl', ''.join(_json(row)+'\n' for row in observations))
         result = {'schema_version':1,'mode':'RESEARCH_ONLY','generated_at':now,'address_count':len(index),
