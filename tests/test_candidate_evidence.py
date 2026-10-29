@@ -121,18 +121,38 @@ class CandidateEvidenceTests(unittest.TestCase):
         self.source.db.execute("UPDATE evm_metadata SET value='00000000-0000-4000-8000-000000000000' WHERE key='identity'")
         with self.assertRaises(ValueError):self.import_rows()
 
-    def test_capacity_does_not_advance_past_an_unimported_candidate(self):
-        self.journal.capacity=1
+    def test_full_legacy_universe_imports_and_resumes_without_dropping_candidates(self):
+        legacy = {'0x'+f'{i:040x}':{'wallet':'0x'+f'{i:040x}', 'qualified':False}
+                  for i in range(1,5001)}
+        self.state['candidates'] = dict(legacy)
         self.add(index=1)
         self.add(index=2,wallet=OTHER)
-        result=self.import_rows()
-        self.assertTrue(result['capacity_blocked'])
+        result=self.import_rows(limit=1)
+        self.assertFalse(result['capacity_blocked'])
         self.assertEqual(result['last_rowid'],1)
         self.assertEqual(result['remaining'],1)
-        self.journal.capacity=2
+        self.assertEqual(len(self.state['candidates']),5001)
+        self.journal.close()
+        self.journal=CandidateEvidence(self.root/'evidence.sqlite3')
+        self.state={'candidates':dict(legacy)}  # Crash after journal commit, before JSON publication.
         result=self.import_rows()
-        self.assertEqual(result['added_candidates'],1)
+        self.assertEqual(result['added_candidates'],2)
         self.assertEqual(result['remaining'],0)
+        self.assertEqual(result['last_rowid'],2)
+        self.assertEqual(len(self.state['candidates']),5002)
+        self.assertEqual({w:self.state['candidates'][w] for w in legacy},
+                         {w:{**c,'observed_recipient_transactions':0} for w,c in legacy.items()})
+        self.assertFalse(any(c.get('qualified') for c in self.state['candidates'].values()))
+        self.assertEqual(self.import_rows()['imported_observations'],0)
+        self.source.db.execute('UPDATE evm_events SET canonical=0')
+        self.assertEqual(self.import_rows()['canonical_reconciled'],2)
+        self.assertFalse(self.state['candidates'][OTHER]['observed_recipient'])
+        self.assertEqual(len(self.state['candidates']),5002)
+
+    def test_import_batch_bound_remains_500_without_a_lifetime_universe_cap(self):
+        for limit in (501,5000,True):
+            with self.assertRaises(ValueError):self.import_rows(limit=limit)
+        self.assertIsNone(self.journal._get('confirmation_rowid'))
 
     def test_exports_distinguish_legacy_missing_history_and_private_raw_proof(self):
         p=proof();p.update(provider_url='https://private.invalid/API-SECRET',amount_raw='123',spent_raw='1000',

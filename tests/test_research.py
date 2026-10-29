@@ -54,6 +54,19 @@ class ResearchIntegrationTests(unittest.TestCase):
         self.assertEqual(state,before)
         evidence.add_sender_observations.assert_not_called()
 
+    def test_sender_discovery_crosses_legacy_capacity_with_same_bounded_sample(self):
+        from test_evm import bh, OTHER
+        candidates={'0x'+f'{i:040x}':{'wallet':'0x'+f'{i:040x}', 'qualified':False}
+                    for i in range(1,5001)}
+        state={'cursor':100,'cursor_hash':bh(100),'candidates':candidates}
+        evidence=Mock()
+        state,result=research.discover(self.sender_cache(),state,sample=3,evidence=evidence)
+        self.assertEqual(len(state['candidates']),5001)
+        self.assertEqual(result['new_candidates'],1)
+        self.assertEqual(result['sampled_transactions'],1)
+        self.assertFalse(state['candidates'][OTHER]['qualified'])
+        self.assertEqual(len(evidence.add_sender_observations.call_args.args[0]),1)
+
     def test_sender_discovery_requires_individual_canonical_block(self):
         from test_evm import bh
         state={'cursor':100,'cursor_hash':bh(100)}

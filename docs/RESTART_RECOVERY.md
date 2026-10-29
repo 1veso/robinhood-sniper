@@ -4,7 +4,7 @@ The October 29 repair keeps the existing books, account IDs, strategy settings,
 exits, costs, schedules and deadlines. It does not initialize accounts, enable
 paid AI, sign transactions or change paper execution.
 
-Research exports use four bounded file-writing threads (64 queued addresses per
+Research exports use eight bounded file-writing threads (64 queued addresses per
 batch). Database reads and qualification calculations stay on the main thread.
 Every file retains its existing content, observation/qualification timestamps,
 fsync and atomic replacement. The index publishes only after all address files

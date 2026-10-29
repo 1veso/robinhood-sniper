@@ -104,9 +104,9 @@ def discover(cache, state, *, blocks=2000, sample=12, evidence=None):
             raise ResearchPending('Discovery sampled block changed; interval will retry')
         observed_at = quantity(block_header['timestamp'])
         wallet = address(tx["from"])
+        # Provider/sample budgets bound each pass. A lifetime candidate cap would
+        # permanently wedge this contiguous cursor and the canonical buyer queue.
         if wallet not in candidates:
-            if len(candidates) >= 5000:
-                raise ResearchPending("Candidate capacity reached; review research universe")
             added += 1
             candidates[wallet] = {"wallet": wallet, "first_seen_at": int(time.time()), "sampled_transactions": 0,
                                   "example_transaction": tx_hash, "example_pool": swap["address"],

@@ -117,8 +117,6 @@ def _csv(path, values, fields):
 class CandidateEvidence:
     """A separate research journal; it never opens a paper account for writing."""
 
-    capacity = 5000
-
     def __init__(self, path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -198,9 +196,11 @@ class CandidateEvidence:
         Canonical status is reconciled from the same read snapshot on every run.
         Candidate JSON may lag a committed import; rebuilding recipient metadata
         from the journal makes that crash boundary idempotent.
+        The bound applies to this batch, not the lifetime candidate universe:
+        old candidates and their histories never need eviction to admit evidence.
         """
-        if type(limit) is not int or not 1 <= limit <= 5000:
-            raise ValueError('limit must be 1..5000')
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError('limit must be 1..500')
         path = Path(source_path)
         if not path.exists():
             return {'added_candidates': 0, 'imported_observations': 0, 'remaining': 0,
@@ -226,7 +226,6 @@ class CandidateEvidence:
             initial = set(candidates)
             now = int(time.time())
             imported = reconciled = 0
-            blocked = False
             source_rows = source.execute('''SELECT p.rowid AS source_rowid,p.tx_hash,p.log_index,p.block_hash,
                 e.canonical FROM paper_confirmations p LEFT JOIN evm_events e ON e.chain_id=?
                 AND e.tx_hash=p.tx_hash AND e.log_index=p.log_index AND e.block_hash=p.block_hash
@@ -258,9 +257,6 @@ class CandidateEvidence:
                         raise ValueError('Confirmation payload differs from source event')
                     active = canonical[row['source_rowid']]
                     if active and wallet not in candidates:
-                        if len(candidates) >= self.capacity:
-                            blocked = True
-                            break
                         candidates[wallet] = {'wallet': wallet, 'first_seen_at': now, 'sampled_transactions': 0,
                             'example_transaction': base['tx_hash'], 'example_pool': base['pool'], 'qualified': False,
                             'source': 'canonical funded recipient observation; historical qualification pending'}
@@ -291,9 +287,6 @@ class CandidateEvidence:
                 for row in recipient_rows:
                     wallet = row['wallet']
                     if wallet not in candidates:
-                        if len(candidates) >= self.capacity:
-                            blocked = True
-                            continue
                         example = self.db.execute('SELECT tx_hash,pool FROM observations WHERE source_id=? AND wallet=? AND role=? AND canonical=1 ORDER BY observed_at LIMIT 1', (identity,wallet,'funded_recipient')).fetchone()
                         candidates[wallet] = {'wallet':wallet, 'first_seen_at':now, 'sampled_transactions':0,
                             'example_transaction':example['tx_hash'], 'example_pool':example['pool'],
@@ -304,7 +297,8 @@ class CandidateEvidence:
             remaining = source.execute('SELECT COUNT(*) FROM paper_confirmations WHERE rowid>?', (checkpoint,)).fetchone()[0]
             return {'added_candidates':len(set(candidates)-initial), 'imported_observations':imported,
                     'remaining':remaining, 'source_id':identity, 'last_rowid':checkpoint,
-                    'canonical_reconciled':reconciled, 'capacity_blocked':blocked, 'source_available':True}
+                    'canonical_reconciled':reconciled, 'capacity_blocked':False, 'source_available':True,
+                    'import_limit':limit, 'candidate_limit':None}
         finally:
             source.close()
 
@@ -435,10 +429,11 @@ class CandidateEvidence:
             address_jobs.append((folder, summary, payload, evidence, fields))
             index.append(summary)
         # Thousands of sequential fsync/replaces exceeded the worker deadline on
-        # Windows. Bound disk concurrency and queue size; retain exact contents,
+        # Windows. Eight writers and 64 queued addresses bound disk concurrency;
+        # retain exact contents,
         # fresh qualification checks and fsync. Publish the index only after ALL
         # address files succeed. Exceptions propagate; no false completion.
-        with ThreadPoolExecutor(max_workers=4, thread_name_prefix='evidence-export') as pool:
+        with ThreadPoolExecutor(max_workers=8, thread_name_prefix='evidence-export') as pool:
             for offset in range(0, len(address_jobs), 64):
                 list(pool.map(_write_address, address_jobs[offset:offset+64]))
         _csv(folder/'wallet-evidence.csv', observations, fields)

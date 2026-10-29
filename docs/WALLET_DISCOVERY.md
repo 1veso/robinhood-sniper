@@ -79,6 +79,30 @@ they must not contribute as current canonical evidence merely because the
 address was discovered earlier. Local export refreshes use the collector's
 recorded canonical status, not a new independent RPC check of every old proof.
 
+## Growing the research universe
+
+The former 5,000-candidate lifetime limit could permanently block both historical
+sender discovery and the oldest-first funded-recipient import. The October 29
+capacity repair removes that lifetime limit; it does not evict old wallets,
+delete histories, skip queued source records or grant qualification.
+
+Each confirmation import remains limited to 500 source records. Discovery keeps
+its existing sample and RPC budgets, and history reconstruction retains the
+1,000-request UTC-day Blockscout limit, frozen snapshot, transaction checkpoints
+and three-batch rotation. `capacity_blocked` is retained as a compatibility field
+and is false after a successful import; `candidate_limit: null` means there is no
+lifetime count cap, while `import_limit` reports the bounded batch size.
+
+Exports use eight file writers with at most 64 queued addresses. They preserve
+the same evidence bytes, proof/qualification timestamps, fsync, atomic file
+replacement and index-after-success publication. The 240-second research child
+limit and scheduled task definitions are unchanged. Export cost still grows with
+preserved evidence: inspect `export_seconds`, actual completion timestamps and
+explicit timeout reports. More discovered candidates do not mean more funded
+history requests or qualified traders. The console's separately disclosed
+10,000-row display limit is not a research-admission limit; full CSV/JSONL exports
+retain the recorded evidence.
+
 ## Files to inspect or export
 
 All paths below are relative to the installed project.
