@@ -18,6 +18,18 @@ its bounded sample and skipped intervals explicitly. The exploratory log scan co
 1,200-block advance between two-minute runs; longer downtime remains a disclosed gap. A caught-up cursor is not a
 claim that every exchange and every wallet on the chain is covered.
 
+Radeon's `same-interval-pool-followup-v1` collection revision preserves the
+32-transaction global sample, eight candidate-pool slots and sixteen follow-up
+legs per pool. A newly verified first buyer can schedule follow-up of its saved
+original scan interval, including an unsampled second buyer. Progress lives in
+the existing source SQLite journal; canonical checks, receipt proofs, distinct
+recipients/transactions and the 900-second freshness window remain mandatory.
+Old intervals without saved metadata are not invented. Selected but unprocessed
+events survive bounded entry work and transient failures; expired work is
+explicitly recorded as unevaluated. See the [Radeon runner audit](EXPLORATORY_PAPER.md#bounded-evaluation-and-coverage-audit)
+for timing, completion evidence and remaining coverage limits. This changes
+exploratory collection behavior, not strict wallet qualification or entry policy.
+
 ## Supplemental safety evidence
 
 The existing GoPlus response and size-bounded V3 buy/sell quotes remain required

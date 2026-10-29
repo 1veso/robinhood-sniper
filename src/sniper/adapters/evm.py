@@ -18,6 +18,7 @@ from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 
 from .evm_store import EvmStore
+from .solana import read_bounded_response
 
 DEFAULT_RPC = "https://rpc.mainnet.chain.robinhood.com"
 CHAIN_ID = 4663
@@ -163,7 +164,7 @@ class RpcClient:
                                      headers={"Content-Type": "application/json", "User-Agent": "SNIPER-Paper/0.1"},
                                      method="POST")
         with urllib.request.urlopen(req, timeout=self.remaining()) as response:
-            raw = response.read(16_000_001)
+            raw = read_bounded_response(response, 16_000_001, self.remaining if self._deadline is not None else None)
         if len(raw) > 16_000_000:
             raise RpcError("RPC response exceeds 16 MB; reduce the block range")
         try:

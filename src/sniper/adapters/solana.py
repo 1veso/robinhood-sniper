@@ -4,6 +4,9 @@ from __future__ import annotations
 import json
 import re
 import urllib.request
+import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable
 
@@ -17,13 +20,64 @@ class SourceError(ValueError):
     """A source failed or returned unusable evidence."""
 
 
+class RequestBudgetExceeded(SourceError):
+    """The caller's optional HTTP work budget expired; evidence stays pending."""
+
+
+_REQUEST_DEADLINE = ContextVar('sniper_request_deadline', default=None)
+
+
+@contextmanager
+def request_budget(deadline, *, clock=time.time):
+    """Optional per-context deadline; other workers keep their existing behavior."""
+    prior = _REQUEST_DEADLINE.get()
+    if prior is not None:
+        deadline = min(deadline, prior[0])
+    token = _REQUEST_DEADLINE.set((deadline, clock))
+    try:
+        yield
+    finally:
+        _REQUEST_DEADLINE.reset(token)
+
+
+def _request_remaining(timeout):
+    value = _REQUEST_DEADLINE.get()
+    if value is None:
+        return timeout
+    left = value[0] - value[1]()
+    if left <= 0:
+        raise RequestBudgetExceeded('HTTP work budget expired')
+    return min(timeout, left)
+
+
+def read_bounded_response(response, limit, remaining=None):
+    """Bound each socket read when the caller supplies an absolute budget."""
+    if remaining is None:
+        return response.read(limit)
+    chunks, count = [], 0
+    while count < limit:
+        timeout = remaining()
+        sock = getattr(getattr(getattr(response, 'fp', None), 'raw', None), '_sock', None)
+        if sock is not None:
+            sock.settimeout(timeout)
+        reader = getattr(response, 'read1', response.read)
+        chunk = reader(min(65536, limit - count))
+        remaining()
+        if not chunk:
+            break
+        chunks.append(chunk); count += len(chunk)
+    return b''.join(chunks)
+
+
 def request_json(method: str, url: str, body: dict | None, headers: dict, timeout: float) -> Any:
     if method not in ("GET", "POST") or not url.startswith("https://"):
         raise SourceError("unsupported transport request")
     raw = None if body is None else json.dumps(body, allow_nan=False).encode()
     req = urllib.request.Request(url, data=raw, headers=headers, method=method)
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        data = response.read(3_000_001)
+    with urllib.request.urlopen(req, timeout=_request_remaining(timeout)) as response:
+        data = read_bounded_response(response, 3_000_001,
+            (lambda: _request_remaining(timeout)) if _REQUEST_DEADLINE.get() is not None else None)
+    _request_remaining(timeout)
     if len(data) > 3_000_000:
         raise SourceError("response exceeds size limit")
     return json.loads(data.decode("utf-8"), parse_float=Decimal, parse_constant=lambda x: (_ for _ in ()).throw(SourceError("non-finite JSON")))

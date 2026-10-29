@@ -117,6 +117,7 @@ class EvmStore:
         tip: dict[str, Any],
         *,
         expected_cursor: dict[str, Any] | None = None,
+        on_commit=None,
     ) -> int:
         inserted = 0
         with self.transaction():
@@ -159,6 +160,10 @@ class EvmStore:
                 "DO UPDATE SET block_number=excluded.block_number,block_hash=excluded.block_hash",
                 (chain_id, tip["number"], tip["hash"]),
             )
+            if on_commit is not None:
+                # Optional source-owned progress belongs to the same atomic
+                # observation/cursor commit. Strict collectors omit this hook.
+                on_commit(inserted)
         return inserted
 
     def rewind(self, chain_id: int, ancestor: dict[str, Any], observed_at: int) -> int:

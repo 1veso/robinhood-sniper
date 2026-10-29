@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
@@ -14,14 +15,14 @@ import time
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / 'src'))
 from supervise import atomic_json, instance_lock
-from sniper.adapters.evm import RpcClient, DEFAULT_RPC, CHAIN_ID, RpcError, ReorgError
+from sniper.adapters.evm import RpcClient, DEFAULT_RPC, CHAIN_ID, RpcError, ReorgError, RpcBudgetExceeded
 from sniper.adapters.evm_store import EvmStore
 from sniper.adapters.goplus import GoPlusClient
 from sniper.adapters.crius import supplement_from_runtime
-from sniper.adapters.solana import DexScreenerClient, SourceError
+from sniper.adapters.solana import DexScreenerClient, SourceError, RequestBudgetExceeded, request_budget
 from sniper.adapters.v3_route import V3RouteClient, RouteUnavailable
 from sniper.exploration import ExploratoryEngine, exploratory_policy, pool_adjusted_screen, observed_pool_screen, observe_creator_balance
-from sniper.exploratory_source import ExploratorySource, signal_id
+from sniper.exploratory_source import ExploratorySource, signal_id, COLLECTION_REVISION
 from sniper.exploratory_alerts import notify_fills
 from sniper.market_alerts import record_market_signal, notify_market
 from sniper.confirmation_book import ConfirmationBook
@@ -232,6 +233,51 @@ class EntrySizingUnavailable(RpcError):
         self.reason, self.details = reason, evidence
 
 
+class EntryWorkDeferred(RpcError):
+    """Entry allowance is spent; retain the original source event for retry."""
+
+
+ENTRY_WORK_SECONDS = 80
+EXIT_QUOTE_SECONDS = 25
+PUBLICATION_RESERVE_SECONDS = 15
+
+
+def affordable_input_ceiling(policy, state):
+    """The existing full-loss ceiling, before final quote-inclusive sizing."""
+    reference = max(Decimal(0), min(state['starting_cash'], state['equity']))
+    return max(Decimal(0), min(policy.ticket_usd, state['cash'],
+        reference * policy.per_position_risk_pct / 100,
+        reference * policy.max_account_risk_pct / 100 - state['stress_exposure']))
+
+
+def entry_account_blocker(engine, asset, now):
+    """Only definite account blockers; no replacement for final admission."""
+    ledger, policy = engine.ledger, engine.policy
+    with ledger.transaction():
+        engine._expire_marks(now)
+        if ledger._get('entry_halt'):
+            return 'manual_entry_halt'
+        if engine._daily_halt(now):
+            return 'daily_equity_loss'
+        state = ledger._snapshot()
+        if any(p['asset_id'] == asset for p in state['positions']):
+            return 'already_open'
+        if policy.max_open_positions and state['open_positions'] >= policy.max_open_positions:
+            return 'max_open_positions'
+        day_start = now - now % 86400
+        count = ledger.conn.execute("SELECT COUNT(*) FROM fills WHERE action='OPEN' AND observed_at BETWEEN ? AND ?", (day_start, now)).fetchone()[0]
+        if policy.max_entries_per_day and count >= policy.max_entries_per_day:
+            return 'max_entries_per_day'
+        closed = ledger.conn.execute('SELECT MAX(closed_at) FROM closed_positions WHERE asset_id=?', (asset,)).fetchone()[0]
+        if closed is not None and now - closed < policy.cooldown_seconds:
+            return 'cooldown'
+        # Missing/stale marks reduce equity, while stress exposure retains the
+        # holding's cost basis and reserve. It cannot invent free capacity.
+        if affordable_input_ceiling(policy, state) < Decimal('0.01'):
+            return 'risk_or_cash_budget_exhausted'
+        return None
+
+
 def sized_entry_quote(engine, request_quote, *, clock=None, deadline=None):
     """Quote the affordable base input, then refine using the unchanged risk model.
 
@@ -250,10 +296,7 @@ def sized_entry_quote(engine, request_quote, *, clock=None, deadline=None):
             engine._expire_marks(int(clock()))
             return engine.ledger._snapshot()
     state = snapshot()
-    reference = max(Decimal(0), min(state['starting_cash'], state['equity']))
-    ceiling = max(Decimal(0), min(policy.ticket_usd, state['cash'],
-        reference * policy.per_position_risk_pct / 100,
-        reference * policy.max_account_risk_pct / 100 - state['stress_exposure']))
+    ceiling = affordable_input_ceiling(policy, state)
     requested = ceiling.quantize(Decimal('0.00000001'), rounding=ROUND_DOWN)
     audit = {'algorithm': 'affordable-entry-v1', 'started_at': int(started),
              'policy_version': policy.version, 'initial_input_ceiling_usd': str(requested),
@@ -304,11 +347,17 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
     ledger, store, engine, trial = open_trial(folder, policy, start=start, rules=rules)
     book = ConfirmationBook(store) if profile in ('two-wallet-30k', 'two-wallet-30k-reentry') else None
     started = int(time.time())
+    entry_deadline = min(started + ENTRY_WORK_SECONDS, trial['ends_at'])
     previous = json.loads((folder / 'status.json').read_text(encoding='utf-8')) if (folder / 'status.json').exists() else {}
     status = {'mode': 'EXPLORATORY_PAPER', 'started_at': started, 'errors': [], 'cycle_issues': [], 'decisions': [],
               'trial': trial, 'profile': profile, 'entry_rules': {'minimum_liquidity_usd': str(policy.min_liquidity_usd),
               'distinct_buyers_required': policy.min_independent_wallets, 'buyer_window_seconds': policy.max_confirmation_age_seconds},
               'rug_screens': [], 'real_money_enabled': False, 'strict_strategy_result': False}
+    status['entry_work'] = {'deadline': entry_deadline, 'maximum_seconds_from_cycle_start': ENTRY_WORK_SECONDS,
+        'final_exit_quote_allowance_seconds': EXIT_QUOTE_SECONDS, 'publication_reserve_seconds': PUBLICATION_RESERVE_SECONDS,
+        'deferred': 0, 'cheap_rejections': {}, 'selected_attempts': 0, 'deadline_reached': False,
+        'scope': 'Cooperative absolute entry deadline; socket deadlines and final checks bound providers, not OS scheduling or DNS.'}
+    status['stage_seconds'] = {}
     for key in ('source_retry_at', 'quote_retry_at'):
         value = previous.get(key, 0)
         status[key] = value if type(value) is int and value > started else 0
@@ -326,6 +375,36 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
             status['errors'].append('Collection RPC HTTP 429; pending observations retained; retry on a scheduled cycle after backoff')
         else:
             status['errors'].append(error(exc))
+    def check_entry_time():
+        if time.time() >= entry_deadline:
+            status['entry_work']['deadline_reached'] = True
+            raise EntryWorkDeferred('Entry work deadline reached; original fresh events remain pending')
+    @contextmanager
+    def entry_phase(name, rpc=None, cap=None):
+        check_entry_time()
+        phase_started = time.time()
+        left = entry_deadline - phase_started
+        if cap is not None:
+            left = min(left, cap)
+        phase_deadline = phase_started + left
+        try:
+            with request_budget(phase_deadline, clock=time.time):
+                if rpc is None:
+                    yield
+                else:
+                    with rpc.budget(left):
+                        yield
+            check_entry_time()
+            if time.time() >= phase_deadline:
+                raise EntryWorkDeferred(name + ' allowance reached; unfinished observations remain pending')
+        finally:
+            status['stage_seconds'][name] = round(status['stage_seconds'].get(name, 0) + max(0, time.time() - phase_started), 6)
+    def defer(exc, event_id=None):
+        status['entry_work']['deferred'] += 1
+        status['entry_work']['deadline_reached'] = time.time() >= entry_deadline
+        ledger.record_event(f'entry-deferred:{started}:{event_id or "collection"}', 'entry_work_deferred',
+            {'event_id': event_id, 'error_type': type(exc).__name__, 'reason': 'entry_budget' if isinstance(exc, (EntryWorkDeferred, RpcBudgetExceeded, RequestBudgetExceeded)) else 'provider_unavailable',
+             'original_timestamp_preserved': True}, int(time.time()))
     def route(token, pool, quantity=Decimal(0), *, max_notional=None, deadline=None):
         route_rpc = RpcClient(quote_endpoint, timeout=8, max_retries=1)
         route_market = DexScreenerClient(chain_id='robinhood')
@@ -343,8 +422,13 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
         if remaining is not None and remaining <= 0:
             raise EntrySizingUnavailable('entry_quote_sizing_deadline', {})
         with route_rpc.budget(remaining):
-            quote = client.quote(token, pool, max_notional=policy.ticket_usd if max_notional is None else max_notional,
-                                 sell_quantity=quantity, **kwargs)
+            if deadline is None:
+                quote = client.quote(token, pool, max_notional=policy.ticket_usd if max_notional is None else max_notional,
+                                     sell_quantity=quantity, **kwargs)
+            else:
+                with request_budget(deadline, clock=time.time):
+                    quote = client.quote(token, pool, max_notional=policy.ticket_usd if max_notional is None else max_notional,
+                                         sell_quantity=quantity, **kwargs)
         return quote, client.last_evidence
     quote_cache, failed_until, issues = {}, {}, {}
     comparison, comparison_failed, watch_sequence = None, False, 0
@@ -392,8 +476,10 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                            evidence=getattr(exc, 'details', None))
         ledger.record_event(f'cycle-route:{started}:{stage}:{asset}:{pool}:{issues[key]["attempts"]}',
                             'route_observation_failure', issues[key], int(time.time()))
-    def watch():
+    def watch(deadline=None):
         nonlocal watch_sequence
+        watch_started = time.time()
+        watch_deadline = min(watch_started + EXIT_QUOTE_SECONDS, deadline) if deadline is not None else watch_started + EXIT_QUOTE_SECONDS
         positions = ledger.snapshot()['positions']
         quotes = {}
         if positions:
@@ -404,8 +490,8 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                     cached = quote_cache.get(key)
                     if cached is not None and 0 <= time.time() - cached.observed_at <= min(25, policy.max_quote_age_seconds):
                         quotes[p['asset_id']] = cached
-                    elif time.time() >= max(failed_until.get(key, 0), status['quote_retry_at']):
-                        futures.append((p, key, executor.submit(route, p['asset_id'].split(':')[-1], p['pool_id'], p['qty'])))
+                    elif time.time() < watch_deadline and time.time() >= max(failed_until.get(key, 0), status['quote_retry_at']):
+                        futures.append((p, key, executor.submit(route, p['asset_id'].split(':')[-1], p['pool_id'], p['qty'], deadline=watch_deadline)))
                 for p, key, future in futures:
                     try:
                         q, evidence = future.result()
@@ -419,8 +505,16 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
         watch_sequence += 1
         comparison_capture(f'watch:{started}:{watch_sequence}', 'watch', now,
                            {'quotes': [q.as_dict() for q in quotes.values()], 'cycle': started})
-        return engine.watch(quotes, now)
+        result = engine.watch(quotes, now)
+        status['stage_seconds']['position_watch'] = round(status['stage_seconds'].get('position_watch', 0) + max(0, time.time() - watch_started), 6)
+        return result
     try:
+        ledger.record_event('collection-behavior:' + COLLECTION_REVISION, 'collection_behavior_revision',
+            {'revision': COLLECTION_REVISION, 'source_id': store.identity,
+             'global_transactions': 32, 'followup_pools': 8, 'followup_legs_per_pool': 16,
+             'collection_window_blocks': 3000, 'signal_freshness_seconds': 900,
+             'same_interval_followup': True, 'historical_intervals_reconstructed': False,
+             'policy_version': policy.version, 'trading_rules_changed': False}, started)
         ledger.record_event('execution-model:affordable-entry-v1', 'execution_model_revision',
             {'component': 'entry_route_sizing', 'algorithm': 'affordable-entry-v1',
              'previous': 'route requested at maximum ticket before monetary risk sizing',
@@ -438,25 +532,68 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
         rpc = RpcClient(endpoint, timeout=8, max_retries=1)
         market = DexScreenerClient(chain_id='robinhood')
         source = ExploratorySource(rpc, store, market)
+        def pending_stats():
+            if callable(getattr(type(source), 'pending_summary', None)):
+                return source.pending_summary()
+            return {'fresh': None}
+        def recorded_outcome(event_id):
+            row = ledger.conn.execute('SELECT verdict,reason,observed_at FROM decisions WHERE event_id=?', (event_id,)).fetchone()
+            return None if row is None else {'verdict': row['verdict'], 'reason': row['reason'],
+                                            'decision_observed_at': row['observed_at']}
+        if callable(getattr(type(source), 'expire_pending', None)):
+            status['expired_pending_recorded'] = source.expire_pending(resolve_outcome=recorded_outcome)
+        status['pending_before'] = pending_stats()
+        status['collection'] = {'status': 'NOT_RUN_TRIAL_EXPIRED', 'sampled': 0}
+        def selected_work():
+            """Persisted fresh work gets priority over another collection pass."""
+            attempted, resumed, collected = set(), False, False
+            status['collection'] = {'status': 'DEFERRED_SELECTED_PENDING_PRIORITY', 'sampled': 0}
+            while time.time() < entry_deadline and not ledger._get('entry_halt'):
+                if time.time() < max(status['source_retry_at'], status['quote_retry_at']):
+                    status['collection'] = {'status': 'RATE_LIMIT_BACKOFF', 'sampled': 0,
+                        'retry_at': max(status['source_retry_at'], status['quote_retry_at'])}
+                    return
+                fresh = [swap for swap in source.pending() if signal_id(swap) not in attempted]
+                if fresh:
+                    swap = fresh[0]
+                    attempted.add(signal_id(swap))
+                    yield swap
+                    continue
+                try:
+                    if not resumed and book and callable(getattr(type(source), 'resume_followups', None)):
+                        resumed = True
+                        with entry_phase('followup_resume', rpc, 15):
+                            status['followup_resume'] = source.resume_followups()
+                        continue
+                    if collected:
+                        return
+                    collected = True
+                    # Preserve the existing collector allowance, clipped to the
+                    # shared remaining budget; a short fixed cap can starve a
+                    # valid bounded scan that must commit its anchor atomically.
+                    with entry_phase('collection', rpc, 45):
+                        status['collection'] = source.collect(watch_pools=book.watched_pools(int(time.time()), policy.max_confirmation_age_seconds)) if book else source.collect()
+                    if store.reorgs(CHAIN_ID):
+                        with ledger.transaction():
+                            ledger._set('entry_halt', 'source_reorganization_requires_review')
+                        return
+                except (EntryWorkDeferred, RpcBudgetExceeded, RequestBudgetExceeded) as exc:
+                    defer(exc)
+                    return
+                except Exception as exc:
+                    source_error(exc); defer(exc)
+                    if isinstance(exc, ReorgError):
+                        with ledger.transaction():
+                            ledger._set('entry_halt', 'source_reorganization_requires_review')
+                    return
         # Any reorg halts new entries pending review; existing holdings remain
         # real paper holdings and continue receiving exit quotes.
         if int(time.time()) < trial['ends_at']:
-            try:
-                if time.time() >= status['source_retry_at']:
-                    with rpc.budget(45):
-                        status['collection'] = source.collect(watch_pools=book.watched_pools(int(time.time()), policy.max_confirmation_age_seconds)) if book else source.collect()
-                else:
-                    status['collection'] = {'status': 'RATE_LIMIT_BACKOFF', 'retry_at': status['source_retry_at'], 'pending_retained': True}
-                if store.reorgs(CHAIN_ID):
-                    with ledger.transaction():
-                        ledger._set('entry_halt', 'source_reorganization_requires_review')
-            except Exception as exc:
-                source_error(exc)
-                if isinstance(exc, ReorgError):
-                    with ledger.transaction():
-                        ledger._set('entry_halt', 'source_reorganization_requires_review')
-            for swap in source.pending() if time.time() >= status['source_retry_at'] else []:
-                if (time.time() - started > 125 or int(time.time()) >= trial['ends_at'] or ledger._get('entry_halt')
+            if store.reorgs(CHAIN_ID):
+                with ledger.transaction():
+                    ledger._set('entry_halt', 'source_reorganization_requires_review')
+            for swap in selected_work():
+                if (time.time() >= entry_deadline or ledger._get('entry_halt')
                         or time.time() < status['quote_retry_at']):
                     break
                 event_id = signal_id(swap)
@@ -465,7 +602,8 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                     source.finish(swap, dict(existing))
                     continue
                 try:
-                    with rpc.budget(25):
+                    status['entry_work']['selected_attempts'] += 1
+                    with entry_phase('funded_buy_proof', rpc, 25):
                         proof = source.prove(swap)
                     if proof is None or Decimal(proof['spent_usd']) < policy.min_wallet_spend_usd:
                         source.finish(swap, {'reason': 'not_a_supported_direct_buy_or_below_minimum'})
@@ -475,6 +613,25 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                     ledger.record_event(event_id + ':proof', 'exploratory_wallet_buy', proof, int(time.time()))
                     if book:
                         book.record(event_id, proof)
+                    if int(time.time()) - proof['observed_at'] > policy.max_confirmation_age_seconds:
+                        expired = {'verdict': 'UNEVALUATED', 'reason': 'signal_expired',
+                                   'observed_at': proof['observed_at'], 'expired_at': int(time.time())}
+                        source.finish(swap, expired); status['decisions'].append(expired)
+                        continue
+                    blocker = entry_account_blocker(engine, asset, int(time.time()))
+                    if blocker:
+                        rejected = {'verdict': 'SKIP', 'reason': blocker, 'event_id': event_id, 'asset_id': asset,
+                                    'screening': 'not_run_account_blocker', 'route': 'not_run_account_blocker'}
+                        source.finish(swap, rejected); status['decisions'].append(rejected)
+                        counters = status['entry_work']['cheap_rejections']
+                        counters[blocker] = counters.get(blocker, 0) + 1
+                        ledger.record_event(event_id + ':account-precheck', 'entry_account_precheck', rejected, int(time.time()))
+                        continue
+                    if book:
+                        if callable(getattr(type(source), 'followup', None)):
+                            with entry_phase('same_interval_followup', rpc, 15):
+                                focused = source.followup(pool, sampled=proof)
+                            status.setdefault('same_interval_followup', []).append(focused)
                         closed = ledger.conn.execute('SELECT MAX(closed_at) FROM closed_positions WHERE asset_id=?', (asset,)).fetchone()[0]
                         cohort = book.recent(token, pool, now=int(time.time()), age=policy.max_confirmation_age_seconds,
                                              minimum_spend=policy.min_wallet_spend_usd,
@@ -497,16 +654,14 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                         if any(v is False for v in reconciled.checks.values()):
                             source.finish(swap, {'reason': 'previously_failed_safety', 'checks': safety.checks})
                             continue
-                    try:
+                    with entry_phase('goplus_screen', rpc):
                         safety = pool_adjusted_screen(GoPlusClient().screen(token), pool)
                         safety = observed_pool_screen(safety, proof)
-                    except Exception as exc:
-                        safety = SafetyEvidence(asset, int(time.time()), {k: None for k in policy.required_safety_checks},
-                                                'unavailable:exploratory_only', {'error': error(exc), 'report_pool_id': pool})
                     # A current creator concentration failure is meaningful even
                     # when the provider omits its complete holder list.
-                    safety = observe_creator_balance(safety, rpc)
-                    safety = supplement_from_runtime(safety, pool, rpc, runtime)
+                    with entry_phase('creator_and_supplemental', rpc):
+                        safety = observe_creator_balance(safety, rpc)
+                        safety = supplement_from_runtime(safety, pool, rpc, runtime)
                     if book:
                         safety = enhance_rug_screen(safety)
                         status['rug_screens'].append({'asset_id': asset, **safety.details['rug_screen']})
@@ -518,16 +673,19 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                         quote = None
                     else:
                         # Keep marks fresh before another entry risk decision.
-                        status['exits'].extend(watch())
+                        status['exits'].extend(watch(deadline=entry_deadline))
+                        check_entry_time()
                         if time.time() < status['quote_retry_at']:
                             break  # Pending source event retained; exits keep retrying independently.
                         try:
-                            quote, evidence = sized_entry_quote(engine,
-                                lambda amount, deadline: route(token, pool, max_notional=amount, deadline=deadline),
-                                deadline=min(started + 125, trial['ends_at']))
+                            with entry_phase('entry_quote', rpc):
+                                quote, evidence = sized_entry_quote(engine,
+                                    lambda amount, deadline: route(token, pool, max_notional=amount, deadline=deadline),
+                                    deadline=entry_deadline)
                         except RpcError as exc:
                             if rate_limited(exc):
                                 route_issue(exc, 'candidate_entry', asset, pool)
+                                defer(exc, event_id)
                                 break  # Quote provider backoff; retain the pending candidate.
                             raise
                         ledger.record_event(event_id + ':route', 'exploratory_entry_route', evidence, int(time.time()))
@@ -537,13 +695,19 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                     confirmation = WalletConfirmation(proof['wallet'], 'unreviewed:' + proof['wallet'], proof['tx_hash'],
                         proof['observed_at'], Decimal(proof['spent_usd']), True, False)
                     if book:
-                        with rpc.budget(15):
+                        with entry_phase('canonical_confirmation', rpc, 15):
                             confirmations = book.confirm(cohort, rpc)
                     else:
                         confirmations = [confirmation]
                     now = int(time.time())
+                    check_entry_time()
                     if now >= trial['ends_at']:
                         break
+                    if now - proof['observed_at'] > policy.max_confirmation_age_seconds:
+                        expired = {'verdict': 'UNEVALUATED', 'reason': 'signal_expired',
+                                   'observed_at': proof['observed_at'], 'expired_at': now}
+                        source.finish(swap, expired); status['decisions'].append(expired)
+                        continue
                     # The decision instant belongs to the route observation;
                     # canonical rechecks must not make a fresh quote appear to
                     # precede an artificially later strategy decision.
@@ -557,6 +721,8 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                         'profile': profile, 'quorum_transactions': [c.tx_hash for c in confirmations], 'strict_strategy_result': False})
                     comparison_capture(f'candidate:{event_id}:{started}', 'candidate', now,
                         {'candidate': candidate.as_dict(), 'quote': quote.as_dict() if quote is not None else None, 'cycle': started})
+                    check_entry_time()
+                    now = int(time.time())
                     result = engine.consider(candidate, quote, now)
                     try:
                         record_market_signal(ledger, candidate, quote, result, now)
@@ -572,13 +738,22 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                         ledger._set('entry_halt', 'source_reorganization_requires_review')
                     status['errors'].append(error(exc))
                     break
+                except (EntryWorkDeferred, RpcBudgetExceeded, RequestBudgetExceeded) as exc:
+                    defer(exc, event_id)
+                    break
                 except SourceError as exc:
                     if str(exc) == 'no valid matching pool; no substitute quote':
                         source.finish(swap, {'reason': 'pool_not_covered_by_market_feed'})
                     else:
                         status['errors'].append(error(exc))
+                        defer(exc, event_id)
                 except EntrySizingUnavailable as exc:
                     ledger.record_event(event_id + ':entry-sizing', 'entry_quote_sizing_unavailable', exc.details, int(time.time()))
+                    if exc.reason != 'risk_or_cash_budget_exhausted':
+                        defer(exc, event_id)
+                        if time.time() >= entry_deadline:
+                            break
+                        continue
                     rejected = {'verdict': 'SKIP', 'reason': exc.reason, 'event_id': event_id,
                                 'asset_id': asset, 'pool_id': pool}
                     source.finish(swap, rejected)
@@ -592,6 +767,7 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                 except RpcError as exc:
                     if rate_limited(exc):
                         source_error(exc)
+                        defer(exc, event_id)
                         break  # Do not classify or consume unverified pending observations.
                     if 'eth_call returned error 3;' in str(exc):
                         rejected = {'verdict': 'SKIP', 'reason': 'contract_or_route_call_reverted', 'event_id': event_id}
@@ -599,11 +775,16 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                         status['decisions'].append(rejected)
                     else:
                         status['errors'].append(error(exc))
+                        defer(exc, event_id)
                 except Exception as exc:
                     status['errors'].append(error(exc))
+                    defer(exc, event_id)
                     # Retry transient provider/route errors until this signal expires.
                     continue
         now = int(time.time())
+        status['entry_work']['finished_at'] = now
+        status['entry_work']['deadline_reached'] = time.time() >= entry_deadline and now < trial['ends_at']
+        status['pending_after'] = pending_stats()
         # Refresh existing holdings after source work, before publishing equity.
         status['exits'].extend(watch())
         now = int(time.time())
@@ -617,6 +798,7 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
         status['first_fill_at'] = min((f['observed_at'] for f in status['fills']), default=None)
         status['policy_revisions'] = [json.loads(r['payload']) for r in ledger.conn.execute("SELECT payload FROM events WHERE kind='policy_revision' ORDER BY observed_at")]
         status['total_monitoring_gaps'] = ledger.conn.execute("SELECT COUNT(*) FROM events WHERE kind='monitoring_gap'").fetchone()[0]
+        publication_started = time.time()
         try:
             status['telegram'] = notify_fills(ledger, folder, runtime)
         except Exception as exc:
@@ -630,6 +812,18 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
         ledger.export_csv(folder / 'trades.csv')
         atomic_json(folder / 'status.json', json_safe(status))
         write_html(status, folder / 'report.html', data_mode='EXPLORATORY_PAPER / LIVE MARKET DATA')
+        primary_completed_at = int(time.time())
+        status['primary_completed_at'] = primary_completed_at
+        status['primary_duration_seconds'] = max(0, primary_completed_at - started)
+        status['stage_seconds']['primary_publication'] = round(max(0, time.time() - publication_started), 6)
+        ledger.record_event('cycle-completed:' + str(started), 'exploratory_cycle_completed',
+            {'started_at': started, 'primary_completed_at': primary_completed_at,
+             'primary_duration_seconds': status['primary_duration_seconds'], 'profile': profile,
+             'entry_work': status['entry_work'], 'stage_seconds': status['stage_seconds'],
+             'pending_before': status['pending_before'], 'pending_after': status['pending_after'],
+             'expired_pending_recorded': status.get('expired_pending_recorded', 0),
+             'collection': status['collection'], 'errors': len(status['errors'])}, primary_completed_at)
+        atomic_json(folder / 'status.json', json_safe(status))
         # All primary trades, notifications and publication complete first.
         # Comparisons are separate portfolios; failures cannot replay a source fill.
         if comparison is not None:
@@ -642,12 +836,12 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                 extra_quotes = []
                 for asset, pool, quantity in comparison.needed_quotes(now, limit=2):
                     key = (asset, pool, str(quantity))
-                    if time.time() >= started + 150 or time.time() < max(status['quote_retry_at'], failed_until.get(key, 0)):
+                    if time.time() >= started + 110 or time.time() < max(status['quote_retry_at'], failed_until.get(key, 0)):
                         comparison.capture(f'quote-deferred:{started}:{asset}:{pool}', 'gap', int(time.time()),
                             {'reason': 'comparison_quote_deferred', 'asset_id': asset, 'pool_id': pool})
                         continue
                     try:
-                        q, _ = route(asset.split(':')[-1], pool, quantity, deadline=min(started + 180, time.time() + 15))
+                        q, _ = route(asset.split(':')[-1], pool, quantity, deadline=min(started + 110, time.time() + 15))
                         extra_quotes.append(q)
                     except Exception as exc:
                         comparison.capture(f'quote-gap:{started}:{asset}:{pool}', 'gap', int(time.time()),
@@ -669,6 +863,9 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                 status['errors'].append('Isolated paper comparison: ' + type(exc).__name__)
                 status['health'] = 'DEGRADED'
             atomic_json(folder / 'status.json', json_safe(status))
+        status['cycle_completed_at'] = int(time.time())
+        status['cycle_duration_seconds'] = max(0, status['cycle_completed_at'] - started)
+        atomic_json(folder / 'status.json', json_safe(status))
         return status
     finally:
         if comparison is not None:

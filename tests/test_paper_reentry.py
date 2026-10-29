@@ -141,7 +141,7 @@ class CycleIssueTests(unittest.TestCase):
                 patches.enter_context(patch.object(obj,name,value))
             a=worker.run_cycle(folder,root,profile='two-wallet-30k-reentry')
             self.assertEqual(a['source_retry_at'],NOW+120);self.assertEqual(a['quote_retry_at'],0)
-            self.assertEqual(len(a['errors']),1,a['errors']);source.pending.assert_not_called();source.finish.assert_not_called()
+            self.assertEqual(len(a['errors']),1,a['errors']);source.pending.assert_called_once();source.finish.assert_not_called()
             tick[0]+=10;b=worker.run_cycle(folder,root,profile='two-wallet-30k-reentry')
             self.assertEqual(b['collection']['status'],'RATE_LIMIT_BACKOFF');self.assertEqual(b['health'],'DEGRADED')
             self.assertEqual(source.collect.call_count,1);self.assertEqual(route.quote.call_count,2)

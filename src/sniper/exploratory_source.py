@@ -8,6 +8,8 @@ from .adapters.evm import (CHAIN_ID, FACTORY, WETH, USDG, SWAP_TOPIC, EvmCollect
     RpcError, ReorgError, address, quantity, decode_swap, verify_purchase, token_units,
     _words, _address_word, hash32, decode_transfer, TRANSFER_TOPIC, ZERO_ADDRESS)
 
+COLLECTION_REVISION = 'same-interval-pool-followup-v1'
+
 
 def verify_recipient_acquisition(swap, pool, receipt, transaction):
     """Prove a funded pool buy and net receipt, NOT recipient ownership of funds.
@@ -79,22 +81,102 @@ class ExploratorySource:
         self.rpc, self.store, self.market, self.clock = rpc, store, market, clock
         self.collector = EvmCollector(rpc, store=store, clock=clock)
         store.db.execute('CREATE TABLE IF NOT EXISTS exploration_outcomes (event_id TEXT PRIMARY KEY, payload TEXT NOT NULL)')
+        store.db.execute('CREATE INDEX IF NOT EXISTS exploration_event_age ON evm_events(chain_id,kind,canonical,observed_at)')
+        store.db.executescript('''
+            CREATE TABLE IF NOT EXISTS exploration_intervals (
+                interval_id TEXT PRIMARY KEY, source_id TEXT NOT NULL,
+                from_block INTEGER NOT NULL, through_block INTEGER NOT NULL,
+                anchor_hash TEXT NOT NULL, anchor_at INTEGER NOT NULL,
+                collected_at INTEGER NOT NULL, revision TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS exploration_interval_block ON exploration_intervals(from_block,through_block);
+            CREATE TABLE IF NOT EXISTS exploration_followups (
+                interval_id TEXT NOT NULL, pool TEXT NOT NULL, next_block INTEGER NOT NULL,
+                selected TEXT NOT NULL, state TEXT NOT NULL, updated_at INTEGER NOT NULL,
+                requests INTEGER NOT NULL DEFAULT 0, inserted INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(interval_id,pool));
+        ''')
+        store.db.create_function('exploration_signal_id', 3, lambda tx, index, block_hash:
+            signal_id({'tx_hash': tx, 'log_index': index, 'block_hash': block_hash}), deterministic=True)
 
     def pending(self):
-        # SQL limits memory growth during an unattended week.
-        rows = self.store.db.execute("SELECT payload FROM evm_events WHERE chain_id=? AND kind='sampled_swap' AND canonical=1 AND observed_at>=? ORDER BY block_number DESC,log_index DESC", (CHAIN_ID, int(self.clock()) - 900)).fetchall()
-        return [s for row in rows if not self.store.db.execute('SELECT 1 FROM exploration_outcomes WHERE event_id=?', (signal_id(s := json.loads(row['payload'])),)).fetchone()]
+        # Oldest still-fresh selections get their turn before a newer sample.
+        # This only returns journaled, canonical observations, never raw follow-up logs.
+        now = int(self.clock())
+        rows = self.store.db.execute('''SELECT e.payload FROM evm_events e
+            WHERE e.chain_id=? AND e.kind='sampled_swap' AND e.canonical=1
+              AND e.observed_at BETWEEN ? AND ? AND NOT EXISTS
+              (SELECT 1 FROM exploration_outcomes o WHERE o.event_id=
+               exploration_signal_id(e.tx_hash,e.log_index,e.block_hash))
+            ORDER BY e.observed_at,e.block_number,e.log_index,e.tx_hash''', (CHAIN_ID, now - 900, now)).fetchall()
+        return [json.loads(row['payload']) for row in rows]
+
+    def expire_pending(self, limit=500, resolve_outcome=None):
+        """Reconcile committed decisions, then audit genuinely unevaluated expiry.
+
+        The optional read-only resolver bridges a crash after the ledger commits
+        but before source.finish(). Its recorded verdict/reason remain authoritative;
+        expiry must not relabel such an evaluated event as UNEVALUATED. The return
+        count includes only newly recorded signal_expired outcomes.
+        """
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError('Expiry batch must be between one and 500')
+        if resolve_outcome is not None and not callable(resolve_outcome):
+            raise ValueError('Outcome resolver must be callable')
+        now = int(self.clock())
+        rows = self.store.db.execute('''SELECT e.payload FROM evm_events e
+            WHERE e.chain_id=? AND e.kind='sampled_swap' AND e.canonical=1 AND e.observed_at<?
+              AND NOT EXISTS (SELECT 1 FROM exploration_outcomes o WHERE o.event_id=
+                exploration_signal_id(e.tx_hash,e.log_index,e.block_hash))
+            ORDER BY e.observed_at,e.block_number,e.log_index LIMIT ?''', (CHAIN_ID, now - 900, limit)).fetchall()
+        expired = 0
+        with self.store.transaction():
+            for row in rows:
+                swap = json.loads(row['payload'])
+                recorded = resolve_outcome(signal_id(swap)) if resolve_outcome is not None else None
+                if recorded is not None:
+                    if (not isinstance(recorded, dict) or not isinstance(recorded.get('verdict'), str)
+                            or not recorded['verdict'] or not isinstance(recorded.get('reason'), str) or not recorded['reason']):
+                        raise ValueError('Invalid recorded source outcome')
+                    self.finish(swap, {**recorded, 'observed_at': swap['observed_at'],
+                        'recovered_at': now, 'outcome_source': 'existing_ledger_decision'})
+                else:
+                    self.finish(swap, {'verdict': 'UNEVALUATED', 'reason': 'signal_expired',
+                        'observed_at': swap['observed_at'], 'expired_at': now, 'freshness_seconds': 900})
+                    expired += 1
+        self.store.db.execute("UPDATE exploration_followups SET state='EXPIRED',updated_at=? WHERE state='PENDING' AND interval_id IN (SELECT interval_id FROM exploration_intervals WHERE anchor_at<?)", (now, now - 900))
+        return expired
+
+    def pending_summary(self):
+        now = int(self.clock())
+        rows = self.store.db.execute('''SELECT
+            SUM(CASE WHEN e.observed_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS fresh,
+            SUM(CASE WHEN e.observed_at<? THEN 1 ELSE 0 END) AS expired_unrecorded,
+            MIN(e.observed_at) AS oldest_observed_at
+            FROM evm_events e WHERE e.chain_id=? AND e.kind='sampled_swap' AND e.canonical=1
+            AND NOT EXISTS (SELECT 1 FROM exploration_outcomes o WHERE o.event_id=
+                exploration_signal_id(e.tx_hash,e.log_index,e.block_hash))''',
+            (now - 900, now, now - 900, CHAIN_ID)).fetchone()
+        outcomes = self.store.db.execute('''SELECT
+            SUM(CASE WHEN json_extract(payload,'$.reason')='signal_expired' THEN 1 ELSE 0 END) AS expired,
+            SUM(CASE WHEN json_extract(payload,'$.outcome_source')='existing_ledger_decision' THEN 1 ELSE 0 END) AS recovered
+            FROM exploration_outcomes''').fetchone()
+        return {'fresh': rows['fresh'] or 0, 'expired_unrecorded': rows['expired_unrecorded'] or 0,
+                'oldest_observed_at': rows['oldest_observed_at'],
+                'expired_recorded': outcomes['expired'] or 0, 'recovered_ledger_outcomes': outcomes['recovered'] or 0,
+                'followup_pending': self.store.db.execute("SELECT COUNT(*) FROM exploration_followups WHERE state='PENDING'").fetchone()[0]}
 
     def finish(self, swap, result):
         self.store.db.execute('INSERT OR IGNORE INTO exploration_outcomes VALUES(?,?)', (signal_id(swap), json.dumps(result, sort_keys=True)))
 
     def collect(self, sample_size=32, watch_pools=()):
+        if type(sample_size) is not int or not 1 <= sample_size <= 32:
+            raise ValueError('Global sample must contain between one and 32 transactions')
         self.rpc.verify_chain()
         reorg = self.collector._recover_reorg()
         cursor = self.store.cursor(CHAIN_ID)
         tip = quantity(self.rpc.call('eth_blockNumber')) - 5
         if cursor and tip <= cursor['block_number']:
-            return {'sampled': 0, 'reorg': reorg}
+            return {'sampled': 0, 'reorg': reorg, 'collection_revision': COLLECTION_REVISION}
         # At ~10 blocks/second a two-minute worker advances ~1200 blocks.
         # A 1000-block window dropped observations even during normal operation.
         # Cover up to five minutes of cadence/startup delay; retain the same
@@ -125,7 +207,8 @@ class ExploratorySource:
         # second buyer. This bounded follow-up does not depend on future P&L.
         selected_keys = {signal_id(s) for s in selected}
         focused = 0
-        for pool in list(dict.fromkeys(address(p) for p in watch_pools))[:8]:
+        watched = list(dict.fromkeys(address(p) for p in watch_pools))[:8]
+        for pool in watched:
             for swap in sorted((s for s in swaps if s['address'] == pool), key=signal_id)[:16]:
                 key = signal_id(swap)
                 if key not in selected_keys:
@@ -152,13 +235,152 @@ class ExploratorySource:
             s.update(kind='sampled_swap', observed_at=header['timestamp'])
         if self.collector.block(tip)['hash'] != anchor['hash']:
             raise ReorgError('Collection anchor changed')
-        self.store.commit_chunk(CHAIN_ID, selected, list(headers.values()), anchor, expected_cursor=cursor)
+        interval_id = hashlib.sha256(f'{self.store.identity}:{start}:{tip}:{anchor["hash"]}'.encode()).hexdigest()
+        def committed(_inserted):
+            now = int(self.clock())
+            self.store.db.execute('INSERT OR IGNORE INTO exploration_intervals VALUES(?,?,?,?,?,?,?,?)',
+                (interval_id, self.store.identity, start, tip, anchor['hash'], anchor['timestamp'], now, COLLECTION_REVISION))
+            for pool in watched:
+                self.store.db.execute('INSERT OR IGNORE INTO exploration_followups VALUES(?,?,?,?,?,?,?,?)',
+                    (interval_id, pool, tip + 1, '[]', 'COMPLETE', now, 0, 0))
+        self.store.commit_chunk(CHAIN_ID, selected, list(headers.values()), anchor, expected_cursor=cursor, on_commit=committed)
         return {'from_block': start, 'through_block': tip, 'logs_seen': len(logs), 'sampled': len(selected),
                 'sampled_transactions': len({s['tx_hash'] for s in selected}), 'global_sampled_transactions': len(seen),
                 'focused_pool_signals': focused,
                 'blocks_scanned': tip - start + 1, 'max_scan_blocks': 3000,
-                'coverage': 'bounded hash sample plus bounded candidate-pool follow-up; not all chain activity', 'reorg': reorg,
+                'coverage': 'bounded hash sample plus bounded same-interval candidate-pool follow-up; not all chain activity',
+                'collection_revision': COLLECTION_REVISION, 'interval_id': interval_id, 'reorg': reorg,
                 'skipped_blocks': max(0, start - cursor['block_number'] - 1) if cursor else 0}
+
+    def followup(self, pool, sampled=None):
+        """Recover bounded legs for a newly proven pool in its original interval.
+
+        The discovery must already have canonical funded-buy evidence in the
+        confirmation book. This method only schedules raw observations; prove()
+        and ConfirmationBook.confirm remain mandatory before they form a quorum.
+        """
+        pool, now = address(pool), int(self.clock())
+        if self.store.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='paper_confirmations'").fetchone() is None:
+            return {'state': 'NO_VERIFIED_BUYER', 'pool': pool, 'inserted': 0}
+        params = [CHAIN_ID, pool, now - 900, now]
+        selected_proof = ''
+        if sampled is not None:
+            selected_proof = ' AND p.tx_hash=? AND p.log_index=? AND p.block_hash=?'
+            params.extend((sampled['tx_hash'], sampled['log_index'], sampled['block_hash']))
+        verified = self.store.db.execute('''SELECT p.payload FROM paper_confirmations p
+            JOIN evm_events e ON e.chain_id=? AND e.tx_hash=p.tx_hash AND e.log_index=p.log_index
+             AND e.block_hash=p.block_hash AND e.kind='sampled_swap' AND e.canonical=1
+            WHERE p.pool=? AND p.observed_at BETWEEN ? AND ?''' + selected_proof +
+            ' ORDER BY p.observed_at DESC,p.event_id LIMIT 1', params).fetchone()
+        if verified is None:
+            return {'state': 'NO_VERIFIED_BUYER', 'pool': pool, 'inserted': 0}
+        proof = json.loads(verified['payload'])
+        if proof.get('verified_swap') is not True or proof.get('factory_verified') is not True:
+            raise ValueError('Follow-up requires verified funded acquisition evidence')
+        number = proof['block_number']
+        rows = self.store.db.execute('''SELECT i.* FROM exploration_intervals i
+                JOIN evm_checkpoints c ON c.chain_id=? AND c.block_number=i.through_block
+                 AND c.block_hash=i.anchor_hash AND c.canonical=1
+                WHERE i.source_id=? AND i.from_block<=? AND i.through_block>=? AND i.anchor_at>=?
+                ORDER BY i.collected_at DESC,i.through_block DESC LIMIT 1''',
+                (CHAIN_ID, self.store.identity, number, number, now - 900)).fetchall()
+        if not rows:
+            return {'state': 'NO_FRESH_SAVED_INTERVAL', 'pool': pool, 'inserted': 0}
+        interval = dict(rows[0])
+        with self.store.transaction():
+            present = self.store.db.execute('SELECT state FROM exploration_followups WHERE interval_id=? AND pool=?',
+                (interval['interval_id'], pool)).fetchone()
+            if present is None:
+                count = self.store.db.execute('SELECT COUNT(*) FROM exploration_followups WHERE interval_id=?', (interval['interval_id'],)).fetchone()[0]
+                if count >= 8:
+                    return {'state': 'POOL_BOUND_REACHED', 'pool': pool, 'interval_id': interval['interval_id'], 'inserted': 0}
+                self.store.db.execute('INSERT INTO exploration_followups VALUES(?,?,?,?,?,?,?,?)',
+                    (interval['interval_id'], pool, interval['from_block'], '[]', 'PENDING', now, 0, 0))
+        return self._followup(interval, pool)
+
+    def resume_followups(self):
+        rows = self.store.db.execute('''SELECT i.*,f.pool FROM exploration_followups f
+            JOIN exploration_intervals i ON i.interval_id=f.interval_id
+            WHERE f.state='PENDING' ORDER BY i.anchor_at,i.interval_id,f.pool LIMIT 8''').fetchall()
+        return {'jobs': [self._followup(dict(row), row['pool']) for row in rows],
+                'collection_revision': COLLECTION_REVISION}
+
+    def _followup(self, interval, pool):
+        job = self.store.db.execute('SELECT * FROM exploration_followups WHERE interval_id=? AND pool=?',
+                                   (interval['interval_id'], pool)).fetchone()
+        result = {'pool': pool, 'interval_id': interval['interval_id'], 'state': job['state'], 'inserted': job['inserted']}
+        if job['state'] != 'PENDING':
+            return result
+        now = int(self.clock())
+        if interval['anchor_at'] < now - 900:
+            self.store.db.execute("UPDATE exploration_followups SET state='EXPIRED',updated_at=? WHERE interval_id=? AND pool=?",
+                                  (now, interval['interval_id'], pool))
+            return {**result, 'state': 'EXPIRED'}
+        # Capture the journal generation before any provider work, not after it.
+        # A competing collector can move/rewind while the raw chunk selection is
+        # being gathered. Its progress must never authorize these older reads.
+        with self.store.transaction():
+            cursor = self.store.cursor(CHAIN_ID)
+            generation = self.store.db.execute('SELECT COALESCE(MAX(id),0) FROM evm_reorgs WHERE chain_id=?', (CHAIN_ID,)).fetchone()[0]
+            checkpoint = self.store.db.execute('SELECT 1 FROM evm_checkpoints WHERE chain_id=? AND block_number=? AND block_hash=? AND canonical=1',
+                (CHAIN_ID, interval['through_block'], interval['anchor_hash'])).fetchone()
+            if interval['source_id'] != self.store.identity:
+                raise ReorgError('Saved follow-up interval is no longer canonical')
+            invalidated = checkpoint is None or cursor is None or cursor['block_number'] < interval['through_block']
+            if invalidated:
+                self.store.db.execute("UPDATE exploration_followups SET state='INVALIDATED',updated_at=? WHERE interval_id=? AND pool=?",
+                                      (now, interval['interval_id'], pool))
+        if invalidated:
+            # Surface the reorg once, preserve the raw progress for audit, then
+            # let later resumes skip this definitively invalidated interval.
+            raise ReorgError('Saved follow-up checkpoint was invalidated')
+        anchor = self.collector.block(interval['through_block'])
+        if anchor['hash'] != interval['anchor_hash']:
+            raise ReorgError('Saved follow-up interval is no longer canonical')
+        selected = json.loads(job['selected'])
+        for first in range(job['next_block'], interval['through_block'] + 1, 500):
+            last = min(first + 499, interval['through_block'])
+            raw = self.rpc.call('eth_getLogs', [{'address': pool, 'topics': [SWAP_TOPIC], 'fromBlock': hex(first), 'toBlock': hex(last)}])
+            if not isinstance(raw, list) or len(raw) > 20000:
+                raise RpcError('Invalid or oversized pool follow-up response')
+            swaps = [decode_swap(value) for value in raw]
+            if any(s['address'] != pool or not first <= s['block_number'] <= last for s in swaps):
+                raise RpcError('Pool follow-up returned an event outside its requested scope')
+            choices = {signal_id(s): s for s in selected + swaps}
+            selected = [choices[k] for k in sorted(choices)[:16]]
+            # This bounded raw selection is not canonical admission. Its cursor
+            # survives interruption; final block proofs happen before insertion.
+            self.store.db.execute('''UPDATE exploration_followups SET next_block=?,selected=?,updated_at=?,requests=requests+1
+                WHERE interval_id=? AND pool=? AND state='PENDING' ''',
+                (last + 1, json.dumps(selected, sort_keys=True), int(self.clock()), interval['interval_id'], pool))
+        headers = {}
+        for swap in selected:
+            number = swap['block_number']
+            if number not in headers:
+                headers[number] = self.collector.block(number)
+            header = headers[number]
+            if header['hash'] != swap['block_hash']:
+                raise ReorgError('Follow-up event block changed')
+            swap.update(kind='sampled_swap', observed_at=header['timestamp'])
+        if self.collector.block(interval['through_block'])['hash'] != interval['anchor_hash']:
+            raise ReorgError('Follow-up anchor changed')
+        inserted = [0]
+        def completed(count):
+            checkpoint = self.store.db.execute('SELECT 1 FROM evm_checkpoints WHERE chain_id=? AND block_number=? AND block_hash=? AND canonical=1',
+                (CHAIN_ID, interval['through_block'], interval['anchor_hash'])).fetchone()
+            current_generation = self.store.db.execute('SELECT COALESCE(MAX(id),0) FROM evm_reorgs WHERE chain_id=?', (CHAIN_ID,)).fetchone()[0]
+            if interval['source_id'] != self.store.identity or checkpoint is None or current_generation != generation:
+                raise ReorgError('Follow-up journal generation changed during provider work')
+            inserted[0] = count
+            self.store.db.execute("UPDATE exploration_followups SET state='COMPLETE',updated_at=?,inserted=? WHERE interval_id=? AND pool=?",
+                (int(self.clock()), count, interval['interval_id'], pool))
+        # Use the existing atomic canonical journal writer at the unchanged tip.
+        # Admission/deduplication is the same as global sampling; cursor never rewinds.
+        self.store.commit_chunk(CHAIN_ID, selected, list(headers.values()),
+            {'number': cursor['block_number'], 'hash': cursor['block_hash']}, expected_cursor=cursor, on_commit=completed)
+        return {**result, 'state': 'COMPLETE', 'selected_legs': len(selected), 'inserted': inserted[0],
+                'from_block': interval['from_block'], 'through_block': interval['through_block'],
+                'collection_revision': COLLECTION_REVISION}
 
     def prove(self, sampled):
         swap = {**sampled, 'kind': 'swap'}

@@ -243,7 +243,8 @@ class WorkerQuorumTests(unittest.TestCase):
             second=worker.run_cycle(folder,runtime,profile='two-wallet-30k')
             if outage:
                 self.assertEqual(second['fills'],[])
-                self.assertEqual(second['decisions'][0]['reason'],'safety_failed:rug_screen_available')
+                self.assertEqual(second['decisions'],[])
+                self.assertGreater(second['entry_work']['deferred'],0)
                 tick[0]+=60
                 second=worker.run_cycle(folder,runtime,profile='two-wallet-30k')
             self.assertEqual(len(second['fills']),1)
