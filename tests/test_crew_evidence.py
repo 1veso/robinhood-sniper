@@ -122,7 +122,9 @@ class EvidenceTests(unittest.TestCase):
 class CpEvidenceTests(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
         self.store=EvidenceStore(self.root)
+        self.addCleanup(self.store.close)
         from test_solana_executor import fixture, FakeRpc, MINT as CMINT, NOW as CNOW
         self.pool,self.accounts,self.policy=fixture();self.mint=CMINT;self.at=CNOW
         class Rpc(FakeRpc):
@@ -139,7 +141,6 @@ class CpEvidenceTests(unittest.TestCase):
                 class Quote:price_usd=Decimal(1);observed_at=now
                 return Quote()
         self.usd_market=UsdMarket()
-    def tearDown(self):self.store.close();self.tmp.cleanup()
     def cp_capture(self,review=True,**kwargs):
         producer=Producer(self.root,store=self.store,rpc=self.rpc,usd_market=self.usd_market,
             clock=lambda:self.at,program_review=self.review if review else None,**kwargs)
