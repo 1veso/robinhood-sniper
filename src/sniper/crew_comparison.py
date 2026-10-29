@@ -26,7 +26,37 @@ from .adapters.solana import validate_address
 
 FORMAT = 'xenon_crew_comparison_v1'
 VARIANTS = ('baseline', 'crew')
-KINDS = ('candidate', 'watch', 'gap', 'cost', 'trial')
+KINDS = ('candidate', 'watch', 'gap', 'cost', 'trial', 'code_revision')
+MAINTENANCE_FILES = frozenset(('src/sniper/crew.py', 'src/sniper/crew_comparison.py'))
+
+
+def _hex(value, length):
+    return isinstance(value, str) and len(value) == length and all(c in '0123456789abcdef' for c in value)
+
+
+def validate_code_revision(payload, manifest, previous, at):
+    """A reviewed comparison-plumbing revision cannot amend strategy policy."""
+    if not isinstance(payload, dict): raise ValueError('Code revision evidence missing')
+    body = {k:v for k,v in payload.items() if k != 'revision_id'}
+    new = payload.get('new_code_binding')
+    if (payload.get('revision_id') != digest(body)
+            or payload.get('scope') != 'REVIEWED_COMPARISON_MAINTENANCE'
+            or payload.get('comparison_id') != manifest['comparison_id']
+            or payload.get('source_account_id') != manifest['source_account_id']
+            or payload.get('config_sha256') != manifest['config_sha256']
+            or payload.get('cost_policy_sha256') != digest(manifest['cost_policy'])
+            or payload.get('previous_code_binding') != previous
+            or type(payload.get('at')) is not int or payload['at'] != at
+            or payload.get('execution_authority') is not False
+            or not isinstance(payload.get('review_reference'), str) or not payload['review_reference'].strip()
+            or not _hex(payload.get('reviewed_commit'),40) or not _hex(payload.get('evidence_sha256'),64)
+            or not isinstance(new, dict) or set(new) != set(previous)
+            or not new or any(not isinstance(k,str) or not _hex(v,64) for k,v in new.items())):
+        raise ValueError('Invalid reviewed code revision binding')
+    changed = {k for k in previous if previous[k] != new[k]}
+    if not changed or not changed <= MAINTENANCE_FILES:
+        raise ValueError('Revision must change only allowlisted comparison plumbing')
+    return new
 
 
 def config_hash():
@@ -302,6 +332,57 @@ class Comparison:
         for book in self.books.values(): book.close()
         self.db.close()
 
+    def effective_code_revision(self, book):
+        row = book.db.execute("SELECT value FROM metadata WHERE key='crew_code_revision'").fetchone()
+        return json.loads(row[0]) if row else {'revision_id': None, 'new_code_binding': self.manifest['code_binding']}
+
+    def record_code_revision(self, *, expected_previous, new_code_binding, review_reference,
+                             reviewed_commit, evidence_sha256, now):
+        """Explicit installation API; workers never create or approve revisions.
+
+        Append evidence to the existing tape. The original manifest, earlier
+        decisions and holdings are untouched; portfolios adopt it by cursor.
+        Caller holds the coordinator worker lock during this maintenance step.
+        """
+        self._verify_source()
+        with closing(reader(Path(self.manifest['source_root']) / 'runtime/book.sqlite3')) as source:
+            cost = json.loads(source.execute("SELECT value FROM metadata WHERE key='execution_cost_policy'").fetchone()[0])
+            highwater = source.execute('SELECT COALESCE(MAX(seq),0) FROM observation_events').fetchone()[0]
+        if cost != self.manifest['cost_policy']:
+            raise ValueError('Source costs changed; maintenance revision cannot migrate accounts')
+        coordinator = Path(self.manifest['source_root']).parent / 'runtime/crew/coordinator.sqlite3'
+        if coordinator.exists():
+            with closing(reader(coordinator)) as source:
+                metadata = dict(source.execute('SELECT key,value FROM metadata'))
+            binding = json.loads(metadata['binding'])
+            if any(binding.get(k) != self.manifest[k] for k in ('comparison_id','source_account_id','source_stream_id')):
+                raise ValueError('Maintenance coordinator binding changed')
+            cursor = int(metadata['cursor'])
+        else:
+            # Standalone isolated comparisons have no intake coordinator.
+            cursor = self.manifest['source_highwater']
+        if cursor != highwater:
+            raise ValueError('Drain captured source inputs before recording a code revision')
+        actual = code_binding(Path(self.manifest['source_root']).parent)
+        if new_code_binding != actual: raise ValueError('Reviewed code does not match installed source')
+        prior = self.manifest['code_binding']
+        for row in self.db.execute("SELECT observed_at,payload FROM observations WHERE kind='code_revision' ORDER BY seq"):
+            prior = validate_code_revision(json.loads(row['payload']), self.manifest, prior, row['observed_at'])
+        body = {'scope':'REVIEWED_COMPARISON_MAINTENANCE','comparison_id':self.manifest['comparison_id'],
+                'source_account_id':self.manifest['source_account_id'],'config_sha256':self.manifest['config_sha256'],
+                'cost_policy_sha256':digest(self.manifest['cost_policy']), 'previous_code_binding':expected_previous,
+                'new_code_binding':new_code_binding,'review_reference':review_reference,'reviewed_commit':reviewed_commit,
+                'evidence_sha256':evidence_sha256,'at':now,'execution_authority':False}
+        payload = {**body,'revision_id':digest(body)}
+        key = 'code-revision:' + payload['revision_id']
+        # Exact retry after a committed append is harmless; no second revision.
+        old = self.db.execute('SELECT seq,payload FROM observations WHERE event_key=?',(key,)).fetchone()
+        if old:
+            if json.loads(old['payload']) != payload: raise ValueError('Code revision changed on replay')
+            return old['seq']
+        validate_code_revision(payload,self.manifest,prior,now)
+        return self.capture(key,'code_revision',now,payload,captured_at=now)
+
     def portfolios(self):
         if not self.books:
             try:
@@ -354,16 +435,25 @@ class Comparison:
         if not isinstance(result, dict): result = {}
         quote = result.get('refreshed_pool') or result.get('pool')
         packet = payload.get('baseline_packet'); review = payload.get('crew_packet')
+        active_code = self.effective_code_revision(book)
         original_at = payload.get('original_check_at')
         original_at = original_at if type(original_at) is int and 0 <= original_at <= now else None
         candidate = (packet or {}).get('assessment', {}).get('dossier', {}).get('candidate_id')
         candidate = candidate or self.manifest['source_account_id'] + ':' + str(result.get('mint', 'unknown'))
+        # Rejected pool-stage candidates can have a screened pinned pool but no
+        # quote. Retain that identity for evidence accounting; the absent quote
+        # still blocks entry and provides no hypothetical cost basis.
+        pool = quote.get('pool') if isinstance(quote, dict) else None
+        if quote is None and isinstance(result.get('facts'), dict):
+            pool = result['facts'].get('pool')
         decision = {'candidate_id': candidate, 'at': now, 'mint': result.get('mint'),
-                    'pool': quote.get('pool') if isinstance(quote, dict) else None,
+                    'pool': pool,
                     'variant': name, 'entry': False, 'status': 'REJECTED', 'reason': None,
                     'source_stage': result.get('stage'), 'source_observed_at': (packet or {}).get('assessment', {}).get('snapshot_at'),
                     'captured_at': row['captured_at'], 'baseline_packet_id': (packet or {}).get('packet_id'),
                     'crew_packet_id': (review or {}).get('packet_id'),
+                    'code_revision_id': active_code['revision_id'],
+                    'code_binding_sha256': digest(active_code['new_code_binding']),
                     'crew_complete': bool((review or {}).get('crew_complete')),
                     'quote': quote, 'basis_scenario': None, 'original_check_at': original_at,
                     'latency_seconds': now - original_at if original_at is not None else None,
@@ -391,7 +481,7 @@ class Comparison:
                 raise ValueError('Original source trial has not started')
             if not trial['started_at'] <= now < trial['ends_at']:
                 raise ValueError('Outside the original entry period; exits continue')
-            a = validate_baseline(packet, quote, self.manifest, now)
+            a = validate_baseline(packet, quote, {**self.manifest,'code_binding':active_code['new_code_binding']}, now)
             observed = a['dossier']['snapshot_at']
             decision['source_observed_at'] = observed
             decision['evidence_age_seconds'] = now - observed
@@ -479,6 +569,10 @@ class Comparison:
                         new = payload['trial']
                         if old and old != new: raise ValueError('Original source deadline cannot change')
                         book.db.execute("UPDATE metadata SET value=? WHERE key='crew_trial'", (encode(new),))
+                    elif row['kind'] == 'code_revision':
+                        previous = self.effective_code_revision(book)['new_code_binding']
+                        validate_code_revision(payload,self.manifest,previous,now)
+                        book.db.execute("INSERT OR REPLACE INTO metadata VALUES('crew_code_revision',?)",(encode(payload),))
                     elif row['kind'] == 'cost':
                         if payload.get('scope') not in ('shared', 'crew') or not payload.get('request_id'):
                             raise ValueError('Bound model/API cost attribution required')
@@ -596,6 +690,7 @@ class Comparison:
                 cursor = int(book.db.execute("SELECT value FROM metadata WHERE key='crew_cursor'").fetchone()[0])
                 trial = json.loads(book.db.execute("SELECT value FROM metadata WHERE key='crew_trial'").fetchone()[0])
                 financial = self._financial(book, now)
+                active_code = self.effective_code_revision(book)
                 decisions = [json.loads(r[0]) for r in book.db.execute('SELECT payload FROM crew_decisions ORDER BY seq')]
                 fills = [f for f in book.fills() if f['id'] not in self.manifest['seed_fill_ids']]
                 history = [json.loads(r[0]) for r in book.db.execute('SELECT payload FROM crew_equity ORDER BY seq')]
@@ -616,6 +711,7 @@ class Comparison:
                 'backlog': high - cursor, 'state': 'SETUP_BLOCKED' if trial is None else 'EXITS_ONLY' if now >= trial['ends_at'] else 'ACTIVE',
                 'original_trial': trial, 'new_entries': sum(f['kind'] == 'buy' for f in fills), 'new_fills': len(fills),
                 'rejections': reasons, 'decisions': len(decisions),
+                'code_revision_id':active_code['revision_id'],'code_binding_sha256':digest(active_code['new_code_binding']),
                 'observed_max_drawdown_usd': str(drawdown) if drawdown_complete else None,
                 'drawdown_complete': drawdown_complete,
                 'complete_crew_decisions': sum(d['crew_complete'] for d in decisions),
@@ -625,7 +721,9 @@ class Comparison:
                 'later_rejected_outcomes': self._later_outcomes(decisions, [r for r in watches if r['seq'] <= cursor])}
         return {'format': FORMAT, 'mode': 'ISOLATED_PAPER_COMPARISON', 'comparison_id': self.manifest['comparison_id'],
                 'source_account_id': self.manifest['source_account_id'], 'as_of': now, 'excluded_from_strategy': True,
-                'variants': variants, 'gaps': gaps, 'intake_scope': self.manifest['intake_scope'],
+                'variants': variants, 'gaps': gaps,
+                'code_revisions':[json.loads(r[0]) for r in self.db.execute("SELECT payload FROM observations WHERE kind='code_revision' AND observed_at<=? ORDER BY seq",(now,))],
+                'intake_scope': self.manifest['intake_scope'],
                 'cost_scope': self.manifest['cost_scope'], 'automatic_promotion': False,
                 'performance_scope': 'All recorded prospective decisions and portfolio fills, including open and unresolved positions. Seed fills excluded from new-fill counts. No invented bankroll/trial, prices, model bills or full-market coverage.'}
 

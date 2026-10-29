@@ -99,6 +99,87 @@ class CrewComparisonTests(unittest.TestCase):
     def decision(self, c, variant='baseline'):
         return json.loads(c.portfolios()[variant].db.execute('SELECT payload FROM crew_decisions ORDER BY seq DESC LIMIT 1').fetchone()[0])
 
+    def maintenance(self, c, old, new, now=NOW+1, **changes):
+        args={'expected_previous':old,'new_code_binding':new,'review_reference':'isolated-reviewed-maintenance',
+              'reviewed_commit':'c'*40,'evidence_sha256':'d'*64,'now':now}
+        args.update(changes)
+        with patch('sniper.crew_comparison.code_binding',return_value=args['new_code_binding']):
+            return c.record_code_revision(**args)
+
+    def test_reviewed_code_revision_is_prospective_and_keeps_manifest(self):
+        old={'fixture':'a'*64,'src/sniper/crew.py':'b'*64};new={**old,'src/sniper/crew.py':'c'*64}
+        with patch('sniper.crew_comparison.code_binding',return_value=old):c=self.comparison()
+        original=(self.folder/'manifest.json').read_bytes()
+        def packet(binding,at,mint):
+            p=self.payload(at=at,mint=mint);b=p['baseline_packet'];b['code_binding']=binding
+            b['packet_id']=digest({k:v for k,v in b.items() if k!='packet_id'});return p
+        self.capture(c,'old-before','candidate',NOW,packet(old,NOW,MINT))
+        seq=self.maintenance(c,old,new)
+        self.assertEqual(self.maintenance(c,old,new),seq)
+        self.capture(c,'new-after','candidate',NOW+2,packet(new,NOW+2,key(80)))
+        self.capture(c,'old-after','candidate',NOW+3,packet(old,NOW+3,key(81)))
+        c.process_pending()
+        book=c.portfolios()['baseline']
+        decisions=[json.loads(r[0]) for r in book.db.execute('SELECT payload FROM crew_decisions ORDER BY seq')]
+        self.assertTrue(decisions[0]['entry']);self.assertIsNone(decisions[0]['code_revision_id'])
+        self.assertTrue(decisions[1]['entry']);self.assertIsNotNone(decisions[1]['code_revision_id'])
+        self.assertFalse(decisions[2]['entry']);self.assertEqual(decisions[2]['reason'],'Baseline packet binding invalid')
+        self.assertEqual(len(book.fills()),2);self.assertEqual(c.process_pending(),{'baseline':0,'crew':0})
+        self.assertEqual((self.folder/'manifest.json').read_bytes(),original)
+        self.assertEqual(c.manifest['code_binding'],old);self.assertEqual(self.source.fills(),[])
+        report=c.report(NOW+4);self.assertEqual(len(report['code_revisions']),1)
+        self.assertEqual(report['variants']['baseline']['code_revision_id'],decisions[1]['code_revision_id'])
+
+    def test_code_revision_rejects_wrong_chain_unreviewed_or_strategy_change(self):
+        old={'fixture':'a'*64,'src/sniper/crew.py':'b'*64};new={**old,'src/sniper/crew.py':'c'*64}
+        with patch('sniper.crew_comparison.code_binding',return_value=old):c=self.comparison(False)
+        for override in ({'expected_previous':new},{'review_reference':''},{'reviewed_commit':'x'*40},
+                         {'evidence_sha256':'unverified'},{'new_code_binding':{**new,'fixture':'d'*64}}):
+            with self.subTest(override=override),self.assertRaises(ValueError):self.maintenance(c,old,new,**override)
+        with patch('sniper.crew_comparison.code_binding',return_value=old),self.assertRaises(ValueError):
+            c.record_code_revision(expected_previous=old,new_code_binding=new,review_reference='fixture',
+                                   reviewed_commit='c'*40,evidence_sha256='d'*64,now=NOW+1)
+        self.assertEqual(c.db.execute('SELECT COUNT(*) FROM observations').fetchone()[0],0)
+
+    def test_code_revision_invalid_payload_rolls_back_cursor_and_binding(self):
+        old={'fixture':'a'*64,'src/sniper/crew.py':'b'*64};new={**old,'src/sniper/crew.py':'c'*64}
+        with patch('sniper.crew_comparison.code_binding',return_value=old):c=self.comparison(False)
+        self.maintenance(c,old,new)
+        row=c.db.execute('SELECT * FROM observations').fetchone();p=json.loads(row['payload'])
+        p['execution_authority']=True;p['revision_id']=digest({k:v for k,v in p.items() if k!='revision_id'})
+        with c.db:c.db.execute('UPDATE observations SET payload=?,digest=? WHERE seq=?',(encode(p),digest(['code_revision',row['observed_at'],p]),row['seq']))
+        with self.assertRaises(ValueError):c.process_pending()
+        for book in c.portfolios().values():
+            self.assertEqual(book.db.execute("SELECT value FROM metadata WHERE key='crew_cursor'").fetchone()[0],'0')
+            self.assertEqual(c.effective_code_revision(book)['new_code_binding'],old)
+            self.assertEqual(book.fills(),[])
+
+    def test_code_revision_chain_uses_tape_when_portfolios_lag(self):
+        old={'fixture':'a'*64,'src/sniper/crew.py':'b'*64};one={**old,'src/sniper/crew.py':'c'*64}
+        two={**one,'src/sniper/crew.py':'e'*64}
+        with patch('sniper.crew_comparison.code_binding',return_value=old):c=self.comparison(False)
+        self.maintenance(c,old,one,NOW+1)
+        self.maintenance(c,one,two,NOW+2)
+        for book in c.portfolios().values():self.assertEqual(c.effective_code_revision(book)['new_code_binding'],old)
+        c.process_pending(limit=1)
+        for book in c.portfolios().values():self.assertEqual(c.effective_code_revision(book)['new_code_binding'],one)
+        c.process_pending(limit=1)
+        for book in c.portfolios().values():
+            self.assertEqual(c.effective_code_revision(book)['new_code_binding'],two)
+            self.assertEqual(book.fills(),[])
+
+    def test_code_revision_refuses_source_backlog_or_changed_costs(self):
+        old={'fixture':'a'*64,'src/sniper/crew.py':'b'*64};new={**old,'src/sniper/crew.py':'c'*64}
+        with patch('sniper.crew_comparison.code_binding',return_value=old):c=self.comparison(False)
+        with self.source.transaction():
+            self.source.db.execute("INSERT INTO observation_events(event_key,observed_at,recorded_at,kind,payload) VALUES('later',?,?,?,?)",(NOW,NOW,'worker_state','{}'))
+        with self.assertRaisesRegex(ValueError,'Drain captured'):self.maintenance(c,old,new)
+        with self.source.transaction():
+            self.source.db.execute("DELETE FROM observation_events WHERE event_key='later'")
+            policy=self.source.cost_policy();policy['slippage_bps']+=1
+            self.source.db.execute("UPDATE metadata SET value=? WHERE key='execution_cost_policy'",(encode(policy),))
+        with self.assertRaisesRegex(ValueError,'Source costs changed'):self.maintenance(c,old,new)
+
     def test_no_invented_bankroll_or_clock_source_untouched(self):
         c = self.comparison(False)
         self.capture(c, 'one', 'candidate', NOW, self.payload())

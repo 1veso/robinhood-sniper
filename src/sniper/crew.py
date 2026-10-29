@@ -171,8 +171,11 @@ class Coordinator:
         for row in rows:
             if self.monotonic() >= deadline: break
             row = dict(row); seq = row['seq']; key = stream + ':' + str(seq)
-            if seq != cursor + 1:
-                self._gap('source-sequence:' + key, 'source_sequence_gap', {'after':cursor,'next':seq,'observed_at':row['observed_at']})
+            # observation_events uses AUTOINCREMENT plus INSERT OR IGNORE.
+            # Deduplicated emits can consume IDs without adding rows: numeric
+            # holes alone are not evidence of missing source observations.
+            # Stream binding, highwater regression and explicit capture gaps
+            # remain authoritative; old recorded gaps are never rewritten.
             kind, reason, tape_seq = row['kind'], None, None
             mapped = {'crew_candidate_input':'candidate','crew_market_input':'watch','crew_capture_gap':'gap'}.get(kind)
             if mapped:
@@ -200,10 +203,23 @@ class Coordinator:
                                 assessment = (data.get('baseline_packet') or {}).get('assessment')
                                 dossier = assessment['dossier'] if assessment else data['dossier']
                                 baseline = assessment['baseline'] if assessment else data['baseline']
-                                quote = (data.get('result') or {}).get('refreshed_pool') or (data.get('result') or {}).get('pool') or {}
+                                result = data.get('result')
+                                if not isinstance(result,dict): raise ValueError('Candidate result must be a mapping')
+                                facts = result.get('facts')
+                                if facts is not None and not isinstance(facts,dict):
+                                    raise ValueError('Candidate facts must be a mapping')
+                                for field in ('refreshed_pool','pool'):
+                                    if result.get(field) is not None and not isinstance(result[field],dict):
+                                        raise ValueError('Candidate quote must be a mapping')
+                                quote = result.get('refreshed_pool') or result.get('pool')
+                                # A pool-stage rejection can retain its screened
+                                # pool in facts before any quote was returned.
+                                # Preserve that rejected candidate, without
+                                # manufacturing a quote or admission authority.
+                                pool = (facts or {}).get('pool') if quote is None else quote.get('pool')
                                 if (dossier.get('account_id') != self.identity['account_id']
-                                        or dossier.get('mint') != data.get('result',{}).get('mint')
-                                        or dossier.get('pool') != quote.get('pool')):
+                                        or dossier.get('mint') != result.get('mint')
+                                        or dossier.get('pool') != pool):
                                     raise ValueError('Research packet target binding invalid')
                                 validate_packet(packet, dossier, baseline, now=at,
                                                 producer_records=data.get('producer_records', ()))

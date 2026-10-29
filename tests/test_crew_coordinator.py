@@ -194,6 +194,54 @@ class CrewCoordinatorTests(unittest.TestCase):
             self.assertEqual(journal.db.execute('SELECT COUNT(*) FROM crew_rechecks').fetchone()[0],1)
         self.assertNotIn('later_rejected_outcomes',r['comparison']['variants']['baseline'])
         self.assertLess(len(encode(r)),10000)
+    def test_pool_failure_keeps_pinned_rejection_without_quote_or_fill(self):
+        self.init()
+        raw={'mint':MINT,'facts':{'pool':POOL},'stage':'pool','entry':False,
+             'reason':'ValueError: stage failed; no entry recorded'}
+        with patch('sniper.crew_capture.time.time',return_value=NOW), patch('sniper.paper_events.time.time_ns',return_value=NOW*10**9):
+            self.source.claim(MINT,NOW)
+            self.source.finish(MINT,NOW,'pool','SKIP',raw['reason'],raw)
+        r=self.worker();self.assertEqual(r['status'],'OK');self.assertEqual(r['intake']['gaps'],0)
+        c=self.coord()
+        self.assertEqual(c.comparison.db.execute("SELECT COUNT(*) FROM observations WHERE kind='candidate'").fetchone()[0],1)
+        self.assertEqual(c.db.execute('SELECT COUNT(*) FROM targets').fetchone()[0],0)
+        for book in c.comparison.portfolios().values():
+            d=json.loads(book.db.execute('SELECT payload FROM crew_decisions').fetchone()[0])
+            self.assertEqual(d['pool'],POOL);self.assertIsNone(d['quote']);self.assertIsNone(d['basis_scenario'])
+            self.assertEqual(d['reason'],'No recorded candidate quote');self.assertFalse(d['entry'])
+            self.assertEqual(book.fills(),[])
+        self.assertEqual(FakeProducer.calls,[]);self.assertEqual(self.source.fills(),[])
+        self.assertEqual(self.worker()['intake']['imported'],0)
+        for book in c.comparison.portfolios().values():
+            self.assertEqual(book.db.execute('SELECT COUNT(*) FROM crew_decisions').fetchone()[0],1)
+    def test_missing_quote_pool_binding_contradictions_stay_gaps(self):
+        self.init()
+        raw={'mint':MINT,'facts':{'pool':POOL},'stage':'pool','entry':False}
+        d,b=build('rug_desk',self.source.identity,{'mint':MINT,'at':NOW,'stage':'pool','reason':'fixture','payload':encode(raw)})
+        p={'result':raw,'baseline_packet':None,'dossier':d,'baseline':b,
+           'crew_packet':review(d,b,now=NOW),'producer_records':[]}
+        changed=deepcopy(p);changed['result']['facts']['pool']=key(222);self.event('candidate',changed)
+        changed=deepcopy(p);changed['result']['pool']={**self.market.quote(MINT,key(223))};self.event('candidate',changed)
+        # A malformed present quote must not fall back to otherwise matching facts.
+        changed=deepcopy(p);changed['result']['pool']={'mint':MINT};self.event('candidate',changed)
+        changed=deepcopy(p);changed['result']['facts']=['bad'];self.event('candidate',changed)
+        changed=deepcopy(p);changed['result']['pool']=['bad'];self.event('candidate',changed)
+        r=self.worker();self.assertEqual(r['status'],'OK');self.assertEqual(r['intake']['gaps'],5)
+        self.assertEqual(self.source.fills(),[])
+    def test_deduplicated_emit_sparse_sequences_are_not_coverage_gaps(self):
+        from sniper.paper_events import emit
+        self.init()
+        with self.source.transaction(),patch('sniper.paper_events.time.time_ns',return_value=NOW*10**9):
+            emit(self.source,'same-event','worker_state',NOW,{'status':'OK'})
+            emit(self.source,'same-event','worker_state',NOW,{'status':'OK'})
+        seq=self.event('candidate',self.candidate())
+        self.assertEqual([r[0] for r in self.source.db.execute('SELECT seq FROM observation_events ORDER BY seq')],[1,3])
+        r=self.worker();self.assertEqual(r['cursor'],seq);self.assertEqual(r['intake']['gaps'],0)
+        c=self.coord();self.assertEqual(c.comparison.db.execute("SELECT COUNT(*) FROM observations WHERE kind='gap'").fetchone()[0],0)
+        # Genuine explicit capture failures still produce a gap.
+        self.source_event('crew_capture_gap',{'reason':'fixture_failure'})
+        r=self.worker();self.assertEqual(r['intake']['gaps'],1)
+        self.assertEqual(c.comparison.db.execute("SELECT COUNT(*) FROM observations WHERE kind='gap'").fetchone()[0],1)
     def test_complete_isolated_evidence_capture_coordinator_both_books_and_original_exit(self):
         from test_crew_comparison import CrewComparisonTests,full_quote
         from test_crew_review import replace_record
