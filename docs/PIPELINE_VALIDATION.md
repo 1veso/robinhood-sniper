@@ -1,5 +1,12 @@
 # Collection, qualification, evidence, and execution validation
 
+The opt-in independent entry revision is documented in [PARALLEL_ENTRIES.md](PARALLEL_ENTRIES.md).
+Its isolated tests cover one-buyer A, same-pool/cross-pool B, shared-account overlap,
+strategy-specific re-entry, canonical journal/RPC binding and the unchanged safety,
+route, risk and exit gates. Installing it does not activate it: Strategy A's explicit
+eligibility and re-entry choices must first be recorded. Existing accounts retain
+their current selector until the separately journaled activation.
+
 Version 0.1.7 adds resumable derived wallet-history checkpoints. Each completed
 transaction is committed atomically to SQLite under its wallet, frozen snapshot
 and reconciliation version. Restarts reuse completed reconciliation rather than

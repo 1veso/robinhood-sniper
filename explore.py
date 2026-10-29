@@ -33,6 +33,9 @@ from sniper.models import Candidate, SafetyEvidence, WalletConfirmation, json_sa
 from sniper.policy import RiskPolicy
 from sniper.reporting import write_html
 from sniper.paper_comparison import Comparison
+from sniper.entry_strategies import entry_rules, rules_hash, load_wallet_registry, evaluate_signals
+from sniper.parallel_entry import (PROFILE as PARALLEL_PROFILE, ParallelEntryEngine,
+                                  qualified_signals, signal_proofs, record_signals)
 
 RULES = {'strategy': ExploratoryEngine.strategy_name, 'mode': ExploratoryEngine.engine_mode,
          'universe': 'Dynamic hash sample of funded buys and net recipient acquisitions in registered Robinhood V3 pools, including established pools',
@@ -51,6 +54,15 @@ RULES_V3 = {**RULES_V2, 'revision': 'two-wallet-30k-reentry',
             'position_count_cap': None, 'daily_entry_count_cap': None,
             'reentry': 'Only after full close; two distinct buying recipients in different transactions observed strictly after the close. Fresh current safety, route, cash and risk checks remain required.'}
 
+RULES_PARALLEL = {**RULES_V3, 'revision': PARALLEL_PROFILE,
+    'minimum_observed_wallets': None,
+    'wallet_qualification': 'Per strategy, explicitly pinned in trial.entry_rules',
+    'reentry': 'Strategy A uses its explicitly pinned rule; Strategy B requires two fresh distinct buyers after full close',
+    'entry_paths': 'Independent whale_follow OR two_wallet_v3; exact eligibility/re-entry rules are pinned in trial.entry_rules',
+    'quorum_scope': 'Strategy B aggregates distinct recipients and transactions by chain and token across eligible V3 pools within 900 seconds',
+    'execution_scope': 'The triggering pool is selected and screened separately; its liquidity and size-bounded route never borrow evidence from another pool',
+    'attribution': 'One shared token position; record both qualifying signals and the initiating strategy; no independent portfolio-return claim'}
+
 
 def profile_settings(profile):
     if profile == 'legacy':
@@ -59,6 +71,8 @@ def profile_settings(profile):
         return RiskPolicy.from_file(ROOT / 'config' / 'exploration-v2.toml'), RULES_V2, 'exploration'
     if profile == 'two-wallet-30k-reentry':
         return RiskPolicy.from_file(ROOT / 'config' / 'exploration-v3.toml'), RULES_V3, 'exploration'
+    if profile == PARALLEL_PROFILE:
+        return RiskPolicy.from_file(ROOT / 'config' / 'exploration-v3.toml'), RULES_PARALLEL, 'exploration'
     raise ValueError('Unknown paper profile')
 
 
@@ -69,7 +83,7 @@ def active_profile(runtime):
         if (runtime / 'exploration' / 'retired.json').exists() or (runtime / 'exploration-v2' / 'trial.json').exists():
             raise ValueError('Active profile selector missing; restore it before restarting')
         manifest_path = runtime / 'exploration' / 'trial.json'
-        if manifest_path.exists() and json.loads(manifest_path.read_text(encoding='utf-8')).get('rules', {}).get('revision') in ('two-wallet-30k', 'two-wallet-30k-reentry'):
+        if manifest_path.exists() and json.loads(manifest_path.read_text(encoding='utf-8')).get('rules', {}).get('revision') in ('two-wallet-30k', 'two-wallet-30k-reentry', PARALLEL_PROFILE):
             raise ValueError('Active profile selector missing; rerun the authorized activation to recover it')
         return 'legacy'
     value = json.loads(path.read_text(encoding='utf-8'))
@@ -78,6 +92,9 @@ def active_profile(runtime):
     manifest = json.loads((runtime / name / 'trial.json').read_text(encoding='utf-8'))
     if value.get('account_id') != manifest.get('account_id'):
         raise ValueError('Active profile identity mismatch')
+    if profile == PARALLEL_PROFILE and (value.get('entry_revision') != manifest.get('entry_revision')
+            or manifest.get('entry_revision') != rules_hash(manifest.get('entry_rules'))):
+        raise ValueError('Active entry revision mismatch')
     return profile
 
 
@@ -190,6 +207,74 @@ def activate_reentry(runtime):
         ledger.close(); store.close()
 
 
+def activate_parallel(runtime, *, whale_eligibility, whale_reentry, now=None):
+    """Explicit entry revision, preserving the original account and monetary policy.
+
+    Both strategy-A choices are required at activation. Repeating the same
+    activation recovers JSON publication after a committed journal transaction.
+    Caller holds the controller/worker locks; no account is created here.
+    """
+    policy, rules, name = profile_settings(PARALLEL_PROFILE)
+    entries = entry_rules(whale_eligibility=whale_eligibility, whale_reentry=whale_reentry)
+    if now is not None and (type(now) is not int or now < 0):
+        raise ValueError('Activation time must be a nonnegative integer')
+    revision = rules_hash(entries)
+    folder = runtime / name
+    if any(not (folder / f).is_file() for f in ('trial.json', 'ledger.sqlite3', 'events.sqlite3')):
+        raise ValueError('Independent entry activation requires the established paper account')
+    ledger = Ledger(folder / 'ledger.sqlite3', policy.starting_cash_usd, require_existing=True)
+    store = EvmStore(folder / 'events.sqlite3')
+    try:
+        manifest = json.loads(ledger._get('trial_manifest'))
+        disk = json.loads((folder / 'trial.json').read_text(encoding='utf-8'))
+        revision_id = 'policy-revision:' + PARALLEL_PROFILE + ':' + revision
+        prior = ledger.conn.execute('SELECT payload FROM events WHERE event_id=?', (revision_id,)).fetchone()
+        previous_trial = json.loads(prior['payload'])['previous_trial'] if prior else None
+        if disk != manifest and disk != previous_trial:
+            raise ValueError('Unrecorded trial manifest change')
+        if manifest['account_id'] != ledger._get('account_id') or manifest['source_id'] != store.identity:
+            raise ValueError('Account/source identity changed')
+        if manifest.get('policy_version') != policy.version:
+            raise ValueError('Trial monetary policy differs from the recorded account')
+        selector_path = runtime / 'active-exploration.json'
+        if selector_path.exists():
+            selector = json.loads(selector_path.read_text(encoding='utf-8'))
+            if (selector.get('account_id') != manifest['account_id']
+                    or selector.get('profile') not in ('two-wallet-30k-reentry', PARALLEL_PROFILE)
+                    or (selector.get('profile') == PARALLEL_PROFILE and selector.get('entry_revision') != revision)):
+                raise ValueError('Active selector does not match the reviewed account/revision')
+        if ledger._get('policy_version') != policy.version or ledger._get('policy') != json_text(policy.as_dict()):
+            raise ValueError('Independent entry revision cannot alter the monetary risk, costs or exits')
+        if manifest.get('entry_revision') != revision:
+            if manifest['rules'] != RULES_V3 or prior or ledger._get('entry_revision'):
+                raise ValueError('Independent entry activation requires the existing v3 account; later revisions need review')
+            at = int(time.time()) if now is None else now
+            updated = {**manifest, 'rules': rules, 'revision_started_at': at,
+                       'entry_rules': entries, 'entry_revision': revision, 'entry_revision_started_at': at}
+            atomic_json(folder / 'trial-before-parallel.json', manifest)
+            with ledger.transaction():
+                ledger.record_event(revision_id, 'policy_revision', {
+                    'previous_trial': manifest, 'new_trial': updated,
+                    'previous_policy': policy.as_dict(), 'new_policy': policy.as_dict(),
+                    'entry_revision': revision, 'entry_rules': entries,
+                    'reason': 'User authorized independent whale-follow and cross-pool token V3 entry paths; same cash, holdings, monetary risk, exits, source and deadline'}, at)
+                ledger._set('entry_revision', revision)
+                ledger._set('entry_rules', json_text(entries))
+                ledger._set('trial_manifest', json.dumps(updated, sort_keys=True))
+            manifest = updated
+        if manifest.get('entry_rules') != entries or manifest['rules'] != rules:
+            raise ValueError('Independent entry activation binding mismatch')
+        ParallelEntryEngine(ledger, policy, entry_rules=entries, runtime=runtime, store=store)
+        atomic_json(folder / 'trial.json', manifest)
+        selector = {'profile': PARALLEL_PROFILE, 'account_id': manifest['account_id'],
+                    'activated_at': manifest['entry_revision_started_at'], 'entry_revision': revision,
+                    'previous_profile': 'two-wallet-30k-reentry'}
+        atomic_json(runtime / 'active-exploration.json', selector)
+        return selector
+    finally:
+        ledger.close(); store.close()
+
+
 def open_trial(folder, policy, *, start=False, now=None, rules=None):
     rules = RULES if rules is None else rules
     now = int(time.time()) if now is None else now
@@ -197,6 +282,8 @@ def open_trial(folder, policy, *, start=False, now=None, rules=None):
     if not manifest.exists() and not start:
         raise ValueError('Trial is not initialized; run explore.py --start once')
     prior = json.loads(manifest.read_text(encoding='utf-8')) if manifest.exists() else None
+    if rules.get('revision') == PARALLEL_PROFILE and prior is None:
+        raise ValueError('Independent entry rules require explicit activation of the existing account')
     if prior and any(not (folder / f).is_file() for f in ('ledger.sqlite3', 'events.sqlite3')):
         raise ValueError('Established trial database missing; restore original state')
     if not prior and any((folder / f).exists() for f in ('ledger.sqlite3', 'events.sqlite3')):
@@ -204,8 +291,9 @@ def open_trial(folder, policy, *, start=False, now=None, rules=None):
     ledger = Ledger(folder / 'ledger.sqlite3', policy.starting_cash_usd, require_existing=bool(prior))
     store = None
     try:
-        engine = ExploratoryEngine(ledger, policy)
         store = EvmStore(folder / 'events.sqlite3')
+        engine = (ParallelEntryEngine(ledger, policy, entry_rules=prior['entry_rules'], runtime=folder.parent, store=store)
+                  if rules.get('revision') == PARALLEL_PROFILE else ExploratoryEngine(ledger, policy))
         if prior:
             if (prior.get('account_id') != ledger._get('account_id') or prior.get('source_id') != store.identity or
                     prior.get('rules') != rules or prior.get('policy_version') != policy.version or
@@ -345,14 +433,17 @@ def sized_entry_quote(engine, request_quote, *, clock=None, deadline=None):
 def run_cycle(folder, runtime, *, start=False, profile='legacy'):
     policy, rules, _ = profile_settings(profile)
     ledger, store, engine, trial = open_trial(folder, policy, start=start, rules=rules)
-    book = ConfirmationBook(store) if profile in ('two-wallet-30k', 'two-wallet-30k-reentry') else None
+    parallel = profile == PARALLEL_PROFILE
+    book = ConfirmationBook(store) if profile in ('two-wallet-30k', 'two-wallet-30k-reentry', PARALLEL_PROFILE) else None
     started = int(time.time())
     entry_deadline = min(started + ENTRY_WORK_SECONDS, trial['ends_at'])
     previous = json.loads((folder / 'status.json').read_text(encoding='utf-8')) if (folder / 'status.json').exists() else {}
     status = {'mode': 'EXPLORATORY_PAPER', 'started_at': started, 'errors': [], 'cycle_issues': [], 'decisions': [],
               'trial': trial, 'profile': profile, 'entry_rules': {'minimum_liquidity_usd': str(policy.min_liquidity_usd),
-              'distinct_buyers_required': policy.min_independent_wallets, 'buyer_window_seconds': policy.max_confirmation_age_seconds},
+              'distinct_buyers_required': None if parallel else policy.min_independent_wallets, 'buyer_window_seconds': policy.max_confirmation_age_seconds},
               'rug_screens': [], 'real_money_enabled': False, 'strict_strategy_result': False}
+    if parallel:
+        status['entry_rules'].update(entry_revision=trial['entry_revision'], strategies=trial['entry_rules'])
     status['entry_work'] = {'deadline': entry_deadline, 'maximum_seconds_from_cycle_start': ENTRY_WORK_SECONDS,
         'final_exit_quote_allowance_seconds': EXIT_QUOTE_SECONDS, 'publication_reserve_seconds': PUBLICATION_RESERVE_SECONDS,
         'deferred': 0, 'cheap_rejections': {}, 'selected_attempts': 0, 'deadline_reached': False,
@@ -626,6 +717,11 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                 if existing:
                     source.finish(swap, dict(existing))
                     continue
+                signals, signal_checked_at = None, None
+                def signal_state(reason=None, execution_status='blocked'):
+                    if parallel and signals is not None:
+                        record_signals(ledger, event_id, asset, trial['entry_revision'], signals, int(time.time()),
+                            execution_status=execution_status, execution_reason=reason, execution_pool_id=pool)
                 try:
                     status['entry_work']['selected_attempts'] += 1
                     with entry_phase('funded_buy_proof', rpc, 25) as proof_deadline:
@@ -647,7 +743,9 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                                    'observed_at': proof['observed_at'], 'expired_at': int(time.time())}
                         source.finish(swap, expired); status['decisions'].append(expired)
                         continue
-                    blocker = entry_account_blocker(engine, asset, int(time.time()))
+                    # Independent paths must become visible even if the token
+                    # is already held. Legacy policies retain their cheap check.
+                    blocker = None if parallel else entry_account_blocker(engine, asset, int(time.time()))
                     if blocker:
                         rejected = {'verdict': 'SKIP', 'reason': blocker, 'event_id': event_id, 'asset_id': asset,
                                     'screening': 'not_run_account_blocker', 'route': 'not_run_account_blocker'}
@@ -662,16 +760,50 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                                 focused = source.followup(pool, sampled=proof)
                             status.setdefault('same_interval_followup', []).append(focused)
                         closed = ledger.conn.execute('SELECT MAX(closed_at) FROM closed_positions WHERE asset_id=?', (asset,)).fetchone()[0]
-                        cohort = book.recent(token, pool, now=int(time.time()), age=policy.max_confirmation_age_seconds,
+                        if parallel:
+                            all_proofs = book.recent_token_proofs(token, now=int(time.time()),
+                                age=policy.max_confirmation_age_seconds, minimum_spend=policy.min_wallet_spend_usd)
+                            signal_now = int(time.time())
+                            evaluated_signals = evaluate_signals(all_proofs, token=token, now=signal_now,
+                                last_closed_at=closed, rules=trial['entry_rules'], registry=load_wallet_registry(runtime, signal_now))
+                            # Recorded journal membership is not a fresh chain
+                            # check. Verify every displayed qualifying purchase.
+                            cohort = signal_proofs(evaluated_signals)
+                            if cohort:
+                                with entry_phase('canonical_signal', rpc, 15):
+                                    signal_checked_at = engine.confirm_proofs(cohort, rpc)
+                            signals = evaluated_signals
+                            if not qualified_signals(signals):
+                                waiting = {'verdict': 'WAIT', 'reason': 'waiting_for_entry_strategy', 'asset_id': asset,
+                                           'strategy_signals': signals, 'entry_revision': trial['entry_revision']}
+                                signal_state('waiting_for_entry_strategy', 'not_evaluated')
+                                source.finish(swap, waiting); status['decisions'].append(waiting)
+                                continue
+                            signal_state(None, 'not_evaluated')
+                            blocker = entry_account_blocker(engine, asset, int(time.time()))
+                            if blocker:
+                                rejected = {'verdict': 'SKIP', 'reason': blocker, 'event_id': event_id, 'asset_id': asset,
+                                            'entry_revision': trial['entry_revision'], 'qualified_strategies':
+                                            [s['strategy_id'] for s in qualified_signals(signals)],
+                                            'screening': 'not_run_account_blocker', 'route': 'not_run_account_blocker'}
+                                signal_state(blocker)
+                                source.finish(swap, rejected); status['decisions'].append(rejected)
+                                counters = status['entry_work']['cheap_rejections']
+                                counters[blocker] = counters.get(blocker, 0) + 1
+                                ledger.record_event(event_id + ':account-precheck', 'entry_account_precheck', rejected, int(time.time()))
+                                continue
+                        else:
+                            cohort = book.recent(token, pool, now=int(time.time()), age=policy.max_confirmation_age_seconds,
                                              minimum_spend=policy.min_wallet_spend_usd,
                                              observed_after=closed if policy.cooldown_seconds == 0 else None)
-                        if len(cohort) < policy.min_independent_wallets:
+                        if not parallel and len(cohort) < policy.min_independent_wallets:
                             waiting = {'verdict': 'WAIT', 'reason': 'waiting_for_distinct_buyers', 'asset_id': asset,
                                        'observed_wallets': len(cohort), 'required_wallets': policy.min_independent_wallets}
                             source.finish(swap, waiting)
                             status['decisions'].append(waiting)
                             continue
-                        cohort = cohort[:policy.min_independent_wallets]
+                        if not parallel:
+                            cohort = cohort[:policy.min_independent_wallets]
                     # Known provider failures persist across an outage. A missing
                     # response must not erase a previously failed safety check.
                     remembered = ledger._get('safety_rejection:' + token)
@@ -681,6 +813,7 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                         if book:
                             reconciled = enhance_rug_screen(reconciled)
                         if any(v is False for v in reconciled.checks.values()):
+                            signal_state('previously_failed_safety')
                             source.finish(swap, {'reason': 'previously_failed_safety', 'checks': safety.checks})
                             continue
                     with entry_phase('goplus_screen', rpc):
@@ -725,7 +858,10 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                         proof['observed_at'], Decimal(proof['spent_usd']), True, False)
                     if book:
                         with entry_phase('canonical_confirmation', rpc, 15):
-                            confirmations = book.confirm(cohort, rpc)
+                            if parallel:
+                                signal_checked_at = engine.confirm_proofs(cohort, rpc)
+                            else:
+                                confirmations = book.confirm(cohort, rpc)
                     else:
                         confirmations = [confirmation]
                     now = int(time.time())
@@ -737,6 +873,17 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                                    'observed_at': proof['observed_at'], 'expired_at': now}
                         source.finish(swap, expired); status['decisions'].append(expired)
                         continue
+                    if parallel:
+                        closed = ledger.conn.execute('SELECT MAX(closed_at) FROM closed_positions WHERE asset_id=?', (asset,)).fetchone()[0]
+                        signals = evaluate_signals(cohort, token=token, now=now, last_closed_at=closed,
+                            rules=trial['entry_rules'], registry=load_wallet_registry(runtime, now))
+                        qualified = qualified_signals(signals)
+                        if not qualified:
+                            signal_state('entry_strategy_no_longer_qualified')
+                            source.finish(swap, {'verdict': 'SKIP', 'reason': 'entry_strategy_no_longer_qualified'})
+                            continue
+                        selected_signal = qualified[0]  # Stable A-first attribution, one shared position.
+                        confirmations = [WalletConfirmation.from_dict(c) for c in selected_signal['confirmations']]
                     # The decision instant belongs to the route observation;
                     # canonical rechecks must not make a fresh quote appear to
                     # precede an artificially later strategy decision.
@@ -748,6 +895,10 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                         'proof_event': event_id + ':proof', 'coverage': 'sampled funded acquisitions',
                         'spend_basis': proof.get('spend_basis'), 'proof_scope': proof.get('proof_scope'),
                         'profile': profile, 'quorum_transactions': [c.tx_hash for c in confirmations], 'strict_strategy_result': False})
+                    if parallel:
+                        candidate.metadata.update(entry_revision=trial['entry_revision'],
+                            strategy_signals=signals, qualified_strategies=[s['strategy_id'] for s in qualified],
+                            initiating_strategy=selected_signal['strategy_id'], canonical_checked_at=signal_checked_at)
                     comparison_capture(f'candidate:{event_id}:{started}', 'candidate', now,
                         {'candidate': candidate.as_dict(), 'quote': quote.as_dict() if quote is not None else None, 'cycle': started})
                     check_entry_time()
@@ -763,20 +914,26 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                         # End entry work promptly so the next watcher remains on cadence.
                         break
                 except ReorgError as exc:
+                    if signals is not None:
+                        signals = [{**s, 'qualified': False, 'qualification_reason': 'canonical_recheck_failed'} for s in signals]
+                        signal_state('canonical_recheck_failed')
                     with ledger.transaction():
                         ledger._set('entry_halt', 'source_reorganization_requires_review')
                     status['errors'].append(error(exc))
                     break
                 except (EntryWorkDeferred, RpcBudgetExceeded, RequestBudgetExceeded) as exc:
+                    signal_state('entry_work_deferred', 'deferred')
                     defer(exc, event_id)
                     break
                 except SourceError as exc:
+                    signal_state('market_evidence_unavailable', 'deferred')
                     if str(exc) == 'no valid matching pool; no substitute quote':
                         source.finish(swap, {'reason': 'pool_not_covered_by_market_feed'})
                     else:
                         status['errors'].append(error(exc))
                         defer(exc, event_id)
                 except EntrySizingUnavailable as exc:
+                    signal_state(exc.reason, 'deferred' if exc.reason != 'risk_or_cash_budget_exhausted' else 'blocked')
                     ledger.record_event(event_id + ':entry-sizing', 'entry_quote_sizing_unavailable', exc.details, int(time.time()))
                     if exc.reason != 'risk_or_cash_budget_exhausted':
                         defer(exc, event_id)
@@ -788,6 +945,7 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                     source.finish(swap, rejected)
                     status['decisions'].append(rejected)
                 except RouteUnavailable as exc:
+                    signal_state('route_unavailable')
                     route_issue(exc, 'candidate_entry', asset, pool)
                     rejected = {'verdict': 'SKIP', 'reason': 'route_unavailable', 'event_id': event_id,
                                 'asset_id': asset, 'pool_id': pool, 'side': exc.details['side']}
@@ -916,7 +1074,16 @@ def main():
     parser.add_argument('--runtime', type=Path, default=ROOT / 'runtime')
     parser.add_argument('--activate-v2', action='store_true', help='Explicitly activate the user-requested $30k/two-buyer revision; preserves previous records')
     parser.add_argument('--activate-reentry', action='store_true', help='Authorized entry-only revision: no count caps; fresh post-close quorum re-entry')
+    parser.add_argument('--activate-parallel', action='store_true', help='Explicitly activate independently reviewed A/B entry rules on the existing account')
+    parser.add_argument('--whale-eligibility', choices=('reviewed_tracked', 'observed_recipient'))
+    parser.add_argument('--whale-reentry', choices=('fresh_post_close', 'cooldown_24h'))
     args = parser.parse_args()
+    if args.activate_parallel and (not args.whale_eligibility or not args.whale_reentry):
+        parser.error('--activate-parallel requires explicit --whale-eligibility and --whale-reentry')
+    if not args.activate_parallel and (args.whale_eligibility or args.whale_reentry):
+        parser.error('Whale rule choices are accepted only with --activate-parallel')
+    if args.activate_parallel and (args.start or args.activate_v2 or args.activate_reentry):
+        parser.error('Independent entry activation cannot be combined with initialization or older revisions')
     args.runtime.mkdir(parents=True, exist_ok=True)
     folder = args.runtime
     try:
@@ -925,6 +1092,10 @@ def main():
                 activate_v2(args.runtime)
             if args.activate_reentry:
                 activate_reentry(args.runtime)
+            if args.activate_parallel:
+                with instance_lock(args.runtime / 'exploration' / 'worker.lock'):
+                    activate_parallel(args.runtime, whale_eligibility=args.whale_eligibility,
+                                      whale_reentry=args.whale_reentry)
             profile = active_profile(args.runtime)
             _, _, name = profile_settings(profile)
             folder = args.runtime / name

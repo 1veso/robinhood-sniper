@@ -6,6 +6,7 @@ own accounting so interrupted processing cannot replay a financial operation.
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 import hashlib
 import html
@@ -17,11 +18,99 @@ import time
 import uuid
 
 from .ledger import Ledger, json_text
-from .models import Candidate, MarketQuote, json_safe
+from .models import Candidate, MarketQuote, WalletConfirmation, decimal, json_safe
 from .policy import RiskPolicy
 
 VARIANTS = ('baseline', 'A', 'B')
 FORMAT = 'radeon_comparison_v1'
+ENTRY_COMPATIBILITY_SCOPE = ('Dual-entry source signals are comparable only when retained, freshly canonical-checked '
+    'proofs independently satisfy the original two-buyer rule in the selected execution pool. '
+    'Other dual-entry inputs are recorded as noncomparable gaps; existing exits continue. '
+    'The source collector still constrains coverage. No independent strategy returns are inferred.')
+
+
+def legacy_entry_candidate(candidate, quote, now, policy, source_id):
+    """Project only the provable original admission subset from a newer source.
+
+    This is a local evidence check, not a new canonical RPC check. The source
+    runner binds the recorded check time and proofs before capture. New entry
+    selectors never change the immutable comparison's original admission rule.
+    """
+    metadata = candidate.metadata
+    selectors = ('entry_revision', 'initiating_strategy', 'qualified_strategies', 'strategy_signals', 'canonical_checked_at')
+    if not any(key in metadata for key in selectors):
+        return candidate
+    if not isinstance(metadata.get('entry_revision'), str) or not metadata['entry_revision']:
+        return None
+    from .adapters.evm import address, hash32
+    try:
+        checked = metadata.get('canonical_checked_at')
+        if (metadata.get('source_id') != source_id or type(checked) is not int
+                or not 0 <= now - checked <= policy.max_quote_age_seconds or quote is None
+                or quote.asset_id != candidate.asset_id
+                or not candidate.asset_id.startswith('eip155:4663/erc20:')):
+            return None
+        token, pool = address(candidate.asset_id.split(':')[-1]), address(quote.pool_id)
+        signals = metadata.get('strategy_signals')
+        if not isinstance(signals, list):
+            return None
+        signals = [s for s in signals if isinstance(s, dict) and s.get('strategy_id') == 'two_wallet_v3'
+                   and s.get('qualified') is True]
+        if len(signals) != 1:
+            return None
+        proofs = signals[0].get('source_proofs')
+        if not isinstance(proofs, list) or len(proofs) > 1000:
+            return None
+        eligible = []
+        for proof in proofs:
+            if (not isinstance(proof, dict) or proof.get('verified_swap') is not True
+                    or proof.get('factory_verified') is not True or type(proof.get('chain_id', 4663)) is not int
+                    or proof.get('chain_id', 4663) != 4663
+                    or address(proof.get('token_address')) != token):
+                return None
+            # Pool facts remain scoped to the pool they describe. Cross-pool
+            # evidence must never be relabelled as proof for this route.
+            if address(proof.get('pool')) != pool:
+                continue
+            at = proof.get('observed_at')
+            if (type(at) is not int or not 0 <= now - at <= policy.max_confirmation_age_seconds or at > checked
+                    or type(proof.get('block_number')) is not int or proof['block_number'] < 0
+                    or type(proof.get('log_index')) is not int or proof['log_index'] < 0):
+                return None
+            wallet, tx = address(proof.get('wallet')), hash32(proof.get('tx_hash'))
+            hash32(proof.get('block_hash'))
+            spent = decimal(proof.get('spent_usd'), minimum=policy.min_wallet_spend_usd)
+            eligible.append(WalletConfirmation(wallet, 'unreviewed:' + wallet, tx, at, spent, True, False))
+        # Maximum distinct-wallet / distinct-transaction matching avoids a
+        # greedy choice losing a valid pair when a wallet has several buys.
+        by_wallet, matched = {}, {}
+        for proof in sorted(eligible, key=lambda p: (-p.observed_at, p.wallet, p.tx_hash)):
+            by_wallet.setdefault(proof.wallet, []).append(proof)
+        def assign(wallet, seen):
+            for proof in by_wallet[wallet]:
+                if proof.tx_hash in seen:
+                    continue
+                seen.add(proof.tx_hash)
+                old = matched.get(proof.tx_hash)
+                if old is None or assign(old.wallet, seen):
+                    matched[proof.tx_hash] = proof
+                    return True
+            return False
+        for wallet in by_wallet:
+            assign(wallet, set())
+            if len(matched) >= policy.min_independent_wallets:
+                break
+        confirmations = list(matched.values())
+        if len(confirmations) < policy.min_independent_wallets:
+            return None
+        comparison_metadata = {k: v for k, v in metadata.items() if k not in (
+            'entry_revision', 'initiating_strategy', 'qualified_strategies', 'strategy_signals', 'canonical_checked_at')}
+        comparison_metadata.update(comparison_source_entry_revision=metadata['entry_revision'],
+            comparison_source_signals=metadata['strategy_signals'], comparison_canonical_checked_at=checked,
+            comparison_entry_scope='legacy_same_pool_two_wallet')
+        return replace(candidate, confirmations=confirmations, metadata=comparison_metadata)
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
 
 
 def _atomic(path, value):
@@ -214,7 +303,14 @@ class Comparison:
                             candidate = Candidate.from_dict(payload['candidate'])
                             quote = MarketQuote.from_dict(payload['quote']) if payload['quote'] is not None else None
                             cycle = str(payload['cycle'])
-                            if ledger._get('comparison_last_buy_cycle') != cycle:
+                            comparable = legacy_entry_candidate(candidate, quote, now, self.policy, self.manifest['source_id'])
+                            if comparable is None:
+                                ledger.record_event(f'comparison-entry-scope:{seq}', 'comparison_gap',
+                                    {'reason': 'entry_strategy_revision_not_comparable', 'candidate': candidate.event_id,
+                                     'source_entry_revision': candidate.metadata.get('entry_revision'),
+                                     'required_scope': 'legacy_same_pool_two_wallet'}, now)
+                            elif ledger._get('comparison_last_buy_cycle') != cycle:
+                                candidate = comparable
                                 result = engine.consider(candidate, quote, now)
                                 if result['verdict'] == 'PAPER_BUY':
                                     ledger._set('comparison_last_buy_cycle', cycle)
@@ -270,6 +366,7 @@ class Comparison:
             source_account_id=self.manifest['source_account_id'], excluded_from_strategy=True,
             entry_deadline=self.manifest['entry_deadline'], started_at=self.manifest['started_at'],
             intake_scope=self.manifest['intake_scope'], entry_quote_scope=self.manifest['entry_quote_scope'],
+            entry_compatibility_scope=ENTRY_COMPATIBILITY_SCOPE,
             past_results_reconstructed=False, variants=results,
             profitability_claim=False, paid_calls_enabled=False, live_execution_enabled=False)
         _atomic(self.folder / 'report.json', value)
@@ -292,6 +389,7 @@ B: recovery before hard-stop re-entry. No automatic promotion. These portfolios 
 <div class="table"><table><thead><tr><th>Variant</th><th>Net change USD</th><th>Fill costs USD</th>
 <th>New entries</th><th>Closed sample</th><th>Observed drawdown %</th><th>Unresolved</th><th>Backlog</th></tr></thead><tbody>'''
             + ''.join(rows) + '</tbody></table></div><p>' + html.escape(self.manifest['intake_scope'])
-            + '</p><p>' + html.escape(self.manifest['entry_quote_scope']) + '</p><p>Unresolved values are conservative unrealized marks, never sales. Small samples and gaps do not establish profitability.</p>'
+            + '</p><p>' + html.escape(self.manifest['entry_quote_scope']) + '</p><p>' + html.escape(ENTRY_COMPATIBILITY_SCOPE)
+            + '</p><p>Unresolved values are conservative unrealized marks, never sales. Small samples and gaps do not establish profitability.</p>'
             + details + '</html>')
         return value

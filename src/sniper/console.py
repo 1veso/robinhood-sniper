@@ -69,6 +69,67 @@ def rows(connection, sql, params=()):
     return [dict(row) for row in connection.execute(sql, params)]
 
 
+ENTRY_STRATEGIES = {'whale_follow': 'A · Whale following', 'two_wallet_v3': 'B · Two-whale V3 confirmation'}
+
+
+def entry_attribution(metadata):
+    if not isinstance(metadata, dict):
+        metadata = {}
+    initiator = metadata.get('initiating_strategy')
+    qualified = metadata.get('qualified_strategies')
+    revision = metadata.get('entry_revision')
+    return {'initiating_strategy': initiator if isinstance(initiator, str) and initiator in ENTRY_STRATEGIES else None,
+            'qualified_strategies': [s for s in qualified if isinstance(s, str) and s in ENTRY_STRATEGIES] if isinstance(qualified, list) else [],
+            'entry_revision': revision[:256] if isinstance(revision, str) else None}
+
+
+def entry_signal_view(connection, trial):
+    """Bounded projection of append-only signal states, never admission authority."""
+    revision = trial.get('entry_revision')
+    if not isinstance(revision, str) or not revision:
+        return None
+    since = trial.get('entry_revision_started_at', trial['started_at'])
+    latest, scanned = {}, 0
+    for row in connection.execute("SELECT observed_at,payload FROM events WHERE kind='entry_strategy_signal' AND observed_at>=? ORDER BY rowid DESC LIMIT 1000", (since,)):
+        scanned += 1
+        try:
+            value = json.loads(row['payload'])
+        except (ValueError, TypeError):
+            continue
+        if (not isinstance(value, dict) or value.get('entry_revision') != revision
+                or not isinstance(value.get('strategy_id'), str) or value['strategy_id'] not in ENTRY_STRATEGIES):
+            continue
+        signal_key = value.get('signal_key')
+        if not isinstance(signal_key, str) or not signal_key or signal_key in latest:
+            continue
+        # Provider payloads and raw proofs are intentionally absent from this API.
+        projected = {'observed_at': row['observed_at'], 'qualified': value.get('qualified') is True}
+        for key in ('signal_key','event_id','asset_id','symbol','strategy_id','entry_revision','qualification_reason',
+                    'execution_pool_id','execution_status','execution_reason'):
+            item = value.get(key)
+            projected[key] = item[:256] if isinstance(item, str) else None
+        projected.update(entry_attribution(value))
+        projected['source_pools'] = [p for p in value.get('source_pools', [])[:32] if isinstance(p, str) and re.fullmatch(r'0x[0-9a-fA-F]{40}', p)] if isinstance(value.get('source_pools'), list) else []
+        for key in ('observed_wallets', 'required_wallets'):
+            projected[key] = value.get(key) if type(value.get(key)) is int and value[key] >= 0 else None
+        latest[signal_key] = projected
+    signals = list(latest.values())
+    strategies = []
+    for strategy_id, label in ENTRY_STRATEGIES.items():
+        current = [s for s in signals if s['strategy_id'] == strategy_id]
+        rules = trial.get('entry_rules', {}).get(strategy_id, {})
+        eligibility = rules.get('eligibility') if isinstance(rules, dict) else None
+        if eligibility not in ('reviewed_tracked', 'observed_recipient'):
+            eligibility = None
+        strategies.append({'strategy_id': strategy_id, 'label': label,
+            'eligibility': eligibility,
+            'observed_signals': len(current), 'qualified_signals': sum(s['qualified'] for s in current),
+            'latest': current[0] if current else None})
+    return {'entry_revision': revision, 'since': since, 'strategies': strategies, 'signals': signals[:80],
+            'scanned_event_count': scanned, 'projected_signal_count': len(signals),
+            'scope': 'Latest state per signal within at most 1000 recent state events; latest 80 signals displayed. These are bounded observations, not lifetime totals or separate strategy returns.'}
+
+
 def queue(path):
     try:
         with reader(path) as c:
@@ -234,6 +295,18 @@ class ConsoleData:
                 p['trailing_price'] = p['peak_price'] * (1 - decimal(policy['trailing_stop_pct']) / 100) if p['tp_done'] else None
             fills = rows(c, 'SELECT * FROM fills ORDER BY id DESC LIMIT 500')
             closed = rows(c, 'SELECT * FROM closed_positions ORDER BY closed_at DESC LIMIT 200')
+            origins = {}
+            position_ids = sorted({item['position_id'] for item in snapshot['positions'] + fills + closed})
+            origin_rows = c.execute("SELECT f.position_id,d.payload FROM fills f JOIN decisions d ON d.event_id=f.event_id WHERE f.action='OPEN' AND f.position_id IN ("
+                + ','.join('?' for _ in position_ids) + ')', position_ids) if position_ids else []
+            for row in origin_rows:
+                payload = json.loads(row['payload'])
+                metadata = payload.get('candidate', {}).get('metadata', {})
+                attribution = entry_attribution(metadata)
+                if attribution['initiating_strategy']:
+                    origins[row['position_id']] = attribution
+            for item in snapshot['positions'] + fills + closed:
+                item.update(origins.get(item.get('position_id'), {}))
             assets = {}
             for fill in reversed(fills):
                 assets[fill['asset_id']] = {'asset_id': fill['asset_id'], 'symbol': fill['symbol'], 'state': 'closed', 'pool_id': None}
@@ -247,11 +320,13 @@ class ConsoleData:
                 quote = d.get('quote') or {}
                 confirmations = candidate.get('confirmations') or []
                 safety = candidate.get('safety') or {}
+                metadata = candidate.get('metadata') or {}
                 row.update({'symbol': candidate.get('symbol'), 'pool_id': quote.get('pool_id'),
                             'buyers': len({x.get('wallet') for x in confirmations if x.get('wallet')}),
                             'liquidity_usd': quote.get('liquidity_usd'),
                             'safety_checks': safety.get('checks', {}),
-                            'policy_version': (d.get('result') or {}).get('policy_version')})
+                            'policy_version': (d.get('result') or {}).get('policy_version'),
+                            **entry_attribution(metadata)})
                 decisions.append(row)
             for asset in assets.values():
                 if not asset['pool_id']:
@@ -268,17 +343,25 @@ class ConsoleData:
             active_since = max((r['at'] for r in revisions if r['after'] == active_version), default=trial['started_at'])
             # Match both the activation window and recorded decision policy.
             # Historical/missing policy evidence must not become a current rejection.
+            entry_revision = trial.get('entry_revision')
+            entry_scope = {}
+            if isinstance(entry_revision, str) and entry_revision:
+                active_since = max(active_since, trial.get('entry_revision_started_at', trial['started_at']))
+                entry_scope = {'entry_revision': entry_revision}
+            revision_clause = " AND CASE WHEN json_valid(payload) THEN json_extract(payload,'$.candidate.metadata.entry_revision') END = ?" if entry_scope else ''
             active_reasons = rows(c, '''SELECT verdict,reason,COUNT(*) count FROM decisions
                 WHERE observed_at>=? AND CASE WHEN json_valid(payload)
-                THEN json_extract(payload,'$.result.policy_version') END = ?
-                GROUP BY verdict,reason ORDER BY count DESC,reason,verdict''', (active_since, active_version))
+                THEN json_extract(payload,'$.result.policy_version') END = ?''' + revision_clause + '''
+                GROUP BY verdict,reason ORDER BY count DESC,reason,verdict''',
+                (active_since, active_version, entry_revision) if entry_scope else (active_since, active_version))
             def rejection_scope(counts, **scope):
                 rejected = [r for r in counts if r['verdict'] == 'SKIP']
                 return {**scope, 'decision_count': sum(r['count'] for r in counts),
                         'rejection_count': sum(r['count'] for r in rejected), 'reasons': rejected}
             rejection_scopes = {
-                'current_policy': rejection_scope(active_reasons, policy_version=active_version, since=active_since),
+                'current_policy': rejection_scope(active_reasons, policy_version=active_version, since=active_since, **entry_scope),
                 'account': rejection_scope(reasons, since=trial['started_at'])}
+            entry_strategies = entry_signal_view(c, trial)
             gaps = [selected(json.loads(r['payload']), ('from','to','seconds')) for r in rows(c, "SELECT payload FROM events WHERE kind='monitoring_gap' ORDER BY observed_at")]
             screens = {}
             for r in rows(c, "SELECT observed_at,payload FROM events WHERE kind='rug_screen' ORDER BY observed_at DESC LIMIT 160"):
@@ -325,10 +408,10 @@ class ConsoleData:
             collector = None
         return {'account_id': identity, 'name': 'Robinhood Ã‚Â· Wallet follower', 'chain': 'Robinhood Chain Ã‚Â· 4663',
                 'status': selected(status, ('started_at','finished_at','trial_state','entry_halt','collection','source_retry_at','quote_retry_at')),
-                'error_count': len(status.get('errors', [])), 'trial': selected(trial, ('started_at','ends_at','revision_started_at','policy_version')),
+                'error_count': len(status.get('errors', [])), 'trial': selected(trial, ('started_at','ends_at','revision_started_at','policy_version','entry_revision','entry_revision_started_at')),
                 'cycle_issues': [selected(i, ('stage','asset_id','pool_id','code','severity','attempts','observed_at')) for i in status.get('cycle_issues', [])],
                 'snapshot': snapshot, 'policy': policy, 'assets': list(assets.values()), 'fills': fills, 'closed': closed,
-                'decisions': decisions, 'reasons': reasons, 'rejection_scopes': rejection_scopes, 'equity_history': equity, 'screens': screens,
+                'decisions': decisions, 'entry_strategies': entry_strategies, 'reasons': reasons, 'rejection_scopes': rejection_scopes, 'equity_history': equity, 'screens': screens,
                 'market': market, 'event_counts': event_counts, 'gaps': gaps, 'policy_revisions': revisions,
                 'daily': daily[0] if daily else None, 'research': research, 'collector': collector, 'repairs': repairs,
                 'notifications': {'trades': queue(folder / 'notifications.sqlite3'), 'market': queue(folder / 'market-notifications.sqlite3')},

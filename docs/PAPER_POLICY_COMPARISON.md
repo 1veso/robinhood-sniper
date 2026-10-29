@@ -105,3 +105,28 @@ claims. They cannot enable paid models or real execution. No winning variant is
 automatically promoted. The shortened prospective sample ends new admissions at
 the existing deadline, with exits continuing afterwards; it is not a fresh
 seven-day trial.
+
+## Later dual-entry source revisions
+
+The active account can evaluate whale-following and cross-pool two-buyer signals
+independently. That does not amend these already initialized comparison
+hypotheses, their manifest, seed, monetary policy or original exits. The
+comparison accepts a newer source candidate only when its retained two-wallet
+signal independently proves two distinct recipients in different transactions
+for the selected execution pool, with the original freshness and spend rules.
+The recorded canonical check must be current, and the source UUID, chain, token,
+pool and proof identities must agree. Pool facts are never copied across pools.
+
+Whale-only signals, confirmations that qualify only across different pools and
+missing or mismatched evidence become durable
+`entry_strategy_revision_not_comparable` gaps. Their tape cursors still commit;
+they produce no comparison fill. Eligible legacy subsets retain their source
+signals as provenance, while newer admission selectors are removed from the
+comparison candidate. Watch observations and existing exits continue in every
+case. This performs no additional provider calls and cannot reconstruct missing
+observations. The unchanged shared collector still limits prospective coverage.
+
+The report publishes this compatibility scope alongside the original manifest
+scope. These portfolios continue to compare the original exit/re-entry
+hypotheses; they are not separate return accounts for the active whale-following
+and cross-pool entry strategies, and cannot justify promoting either strategy.

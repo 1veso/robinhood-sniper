@@ -199,6 +199,9 @@ class PaperEngine:
         """Keep the reference account's historical diagnostic contract."""
         return {"reason": "risk_or_cash_budget_exhausted"}
 
+    def _entry_candidate(self, candidate: Candidate, now: int) -> Candidate:
+        return candidate
+
     def consider(self, candidate: Candidate, quote: MarketQuote, now: int) -> dict[str, Any]:
         timestamp(now)
         if not isinstance(candidate, Candidate):
@@ -211,6 +214,7 @@ class PaperEngine:
             if existing:
                 return {"mode": "PAPER", "verdict": "SKIP", "reason": "duplicate_event",
                         "event_id": candidate.event_id, "asset_id": candidate.asset_id, "original_verdict": existing["verdict"]}
+            candidate = self._entry_candidate(candidate, now)
             self._day(now)
             self._expire_marks(now)
             def reject(reason: str, **extra: Any) -> dict[str, Any]:
@@ -246,7 +250,7 @@ class PaperEngine:
             confirmations, error = self._confirmations(candidate, now)
             if error:
                 return reject(error)
-            if confirmations < self.policy.min_independent_wallets:
+            if confirmations < self._confirmation_requirement(candidate):
                 return reject("insufficient_" + self.confirmation_label, **{self.confirmation_label: confirmations})
             problem = self._quote_problem(quote, candidate.asset_id, now, decision_at)
             if problem:
@@ -268,15 +272,16 @@ class PaperEngine:
             if self.policy.max_entries_per_day and count >= self.policy.max_entries_per_day:
                 return reject("max_entries_per_day")
             closed = self.ledger.conn.execute("SELECT MAX(closed_at) FROM closed_positions WHERE asset_id=?", (candidate.asset_id,)).fetchone()[0]
-            if closed is not None and now - closed < self.policy.cooldown_seconds:
+            cooldown_seconds = self._entry_cooldown_seconds(candidate)
+            if closed is not None and now - closed < cooldown_seconds:
                 return reject("cooldown")
-            if closed is not None and self.policy.cooldown_seconds == 0:
+            if closed is not None and cooldown_seconds == 0:
                 fresh, error = self._confirmations(candidate, now, observed_after=closed)
                 if error:
                     return reject(error)
-                if fresh < self.policy.min_independent_wallets:
+                if fresh < self._confirmation_requirement(candidate):
                     return reject("reentry_requires_new_buyers_after_close", observed_buyers_after_close=fresh,
-                                  required_buyers=self.policy.min_independent_wallets, last_closed_at=closed)
+                                  required_buyers=self._confirmation_requirement(candidate), last_closed_at=closed)
             additional = self._additional_entry_check(candidate, quote, now)
             if additional:
                 return reject(**additional)
@@ -286,7 +291,7 @@ class PaperEngine:
             position_id = "position:" + candidate.event_id
             p = {
                 "position_id": position_id, "asset_id": candidate.asset_id, "symbol": candidate.symbol,
-                "strategy": candidate.strategy, "event_id": candidate.event_id, "opened_at": now,
+                "strategy": self._position_strategy(candidate), "event_id": candidate.event_id, "opened_at": now,
                 "pool_id": quote.pool_id, "entry_price": amounts["fill_price"],
                 "reference_entry_price": quote.price_usd, "qty0": amounts["quantity"], "qty": amounts["quantity"],
                 "total_entry_cost": amounts["entry_cost"], "remaining_basis": amounts["entry_cost"],
@@ -303,7 +308,7 @@ class PaperEngine:
             )
             self.ledger._set("cash", snapshot["cash"] - amounts["entry_cost"])
             self.ledger._set("fees_paid", snapshot["fees_paid"] + amounts["friction"] + quote.gas_usd)
-            self._fill(position_id, candidate.event_id, candidate.asset_id, candidate.symbol, candidate.strategy,
+            self._fill(position_id, candidate.event_id, candidate.asset_id, candidate.symbol, p["strategy"],
                        "OPEN", now, amounts["quantity"], quote.price_usd, amounts["fill_price"],
                        amounts["notional"], amounts["friction"], quote.gas_usd, -amounts["entry_cost"], ZERO, "entry")
             self._position_opened(p, quote, now)
@@ -319,6 +324,16 @@ class PaperEngine:
 
     def decision_context(self, candidate: Candidate) -> dict[str, Any]:
         return {}
+
+    def _confirmation_requirement(self, candidate: Candidate) -> int:
+        """Default reference/legacy admission; explicit entry families may specialize."""
+        return self.policy.min_independent_wallets
+
+    def _entry_cooldown_seconds(self, candidate: Candidate) -> int:
+        return self.policy.cooldown_seconds
+
+    def _position_strategy(self, candidate: Candidate) -> str:
+        return candidate.strategy
 
     def _additional_entry_check(self, candidate: Candidate, quote: MarketQuote, now: int) -> dict[str, Any] | None:
         """Extension point for explicitly isolated paper comparisons only."""

@@ -540,7 +540,7 @@ class ExploratorySource:
             raise ReorgError('Signal anchor changed during proof')
         if fallback_binding is not None and fallback_block(block) != swap['block_hash']:
             raise ReorgError('Historical fallback signal anchor changed during proof')
-        return {**proof, 'pool': pool, 'fee': fee, 'factory_verified': True, 'spent_usd': str(spent), 'observed_at': sampled['observed_at'],
+        return {**proof, 'chain_id': CHAIN_ID, 'pool': pool, 'fee': fee, 'factory_verified': True, 'spent_usd': str(spent), 'observed_at': sampled['observed_at'],
                 'block_number': block, 'block_hash': swap['block_hash'], 'tx_hash': swap['tx_hash'],
                 'log_index': swap['log_index'], 'base_price': base_price.as_dict(),
                 'historical_state_provider': 'quote_rpc' if fallback_binding else 'collection_rpc',
