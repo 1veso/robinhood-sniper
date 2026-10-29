@@ -421,6 +421,12 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                            {'quotes': [q.as_dict() for q in quotes.values()], 'cycle': started})
         return engine.watch(quotes, now)
     try:
+        ledger.record_event('execution-model:affordable-entry-v1', 'execution_model_revision',
+            {'component': 'entry_route_sizing', 'algorithm': 'affordable-entry-v1',
+             'previous': 'route requested at maximum ticket before monetary risk sizing',
+             'current': 'affordable input then bounded cost-aware refinement',
+             'policy_version': policy.version, 'risk_limits_changed': False,
+             'active_exits_changed': False}, started)
         last = previous.get('finished_at', started)
         gap = max(0, started - last)
         if gap > 180:
