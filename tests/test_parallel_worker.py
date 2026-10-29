@@ -33,6 +33,7 @@ class ParallelWorkerTests(unittest.TestCase):
         self.pending, self.routes, self.finished, self.rpc_checks = [], [], [], []
         self.registry = registry()
         self.safety_failure, self.route_available, self.block_hash = None, True, BLOCK
+        self.entry_quote_advance_once = 0
 
     def tearDown(self):
         self.temp.cleanup()
@@ -69,6 +70,9 @@ class ParallelWorkerTests(unittest.TestCase):
         class Route:
             def __init__(self, *args): self.last_evidence = {}
             def quote(self, token, pool, **kwargs):
+                if not kwargs.get('exit_only') and owner.entry_quote_advance_once:
+                    owner.tick[0] += owner.entry_quote_advance_once
+                    owner.entry_quote_advance_once = 0
                 owner.routes.append({'token': token, 'pool': pool, **kwargs})
                 amount = D(kwargs['max_notional'])
                 qty = kwargs['sell_quantity'] if kwargs.get('exit_only') else amount / owner.price
@@ -139,6 +143,22 @@ class ParallelWorkerTests(unittest.TestCase):
         self.assertEqual(len(result['fills']), 1)
         self.assertEqual(result['fills'][0]['strategy'], 'two_wallet_v3')
         self.assertFalse(self.latest_signals()['whale_follow']['qualified'])
+
+    def test_optional_b_proof_expiring_during_quote_does_not_block_fresh_a(self):
+        self.add(make_proof(wallet=OTHER, tx=TX2, pool=POOL2, at=NOW - 895))
+        self.add(make_proof(at=NOW - 10))
+        self.entry_quote_advance_once = 10
+        result = self.cycle(); self.assert_clean(result)
+        self.assertEqual(self.tick[0], NOW + 10)
+        self.assertEqual(len(result['fills']), 1)
+        self.assertEqual(result['fills'][0]['strategy'], 'whale_follow')
+        history = self.signals()
+        self.assertTrue(any(s['strategy_id'] == 'two_wallet_v3' and s['qualified'] for s in history))
+        final = self.latest_signals()
+        self.assertTrue(final['whale_follow']['qualified'])
+        self.assertFalse(final['two_wallet_v3']['qualified'])
+        self.assertEqual(final['two_wallet_v3']['observed_wallets'], 1)
+        self.assertTrue(all(p['tx_hash'] != TX2 for s in final.values() for p in s['source_proofs']))
 
     def test_two_cross_pool_buyers_open_b_using_only_selected_pool_route(self):
         self.registry = {'status': 'EMPTY', 'wallets': {}, 'checked_at': NOW}

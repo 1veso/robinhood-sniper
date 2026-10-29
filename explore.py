@@ -857,6 +857,18 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                     confirmation = WalletConfirmation(proof['wallet'], 'unreviewed:' + proof['wallet'], proof['tx_hash'],
                         proof['observed_at'], Decimal(proof['spent_usd']), True, False)
                     if book:
+                        if parallel:
+                            # Quoting can consume the last seconds of B's older
+                            # witness. Drop expired optional-path proofs before
+                            # RPC validation so a still-valid A can qualify.
+                            closed = ledger.conn.execute('SELECT MAX(closed_at) FROM closed_positions WHERE asset_id=?', (asset,)).fetchone()[0]
+                            signals = evaluate_signals(all_proofs, token=token, now=now, last_closed_at=closed,
+                                rules=trial['entry_rules'], registry=load_wallet_registry(runtime, now))
+                            cohort = signal_proofs(signals)
+                            if not qualified_signals(signals):
+                                signal_state('entry_strategy_no_longer_qualified')
+                                source.finish(swap, {'verdict': 'SKIP', 'reason': 'entry_strategy_no_longer_qualified'})
+                                continue
                         with entry_phase('canonical_confirmation', rpc, 15):
                             if parallel:
                                 signal_checked_at = engine.confirm_proofs(cohort, rpc)
