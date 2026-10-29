@@ -15,6 +15,7 @@ const pretty = v => String(v ?? 'unknown').replace(/[_:]/g,' ');
 const html = (id, content) => {if($(id).innerHTML !== content) $(id).innerHTML=content;};
 let bot=['robinhood','solana','neon','jev'].includes(new URLSearchParams(location.search).get('bot'))?new URLSearchParams(location.search).get('bot'):'robinhood', state=null, chart=null, selectedAsset='', tab='positions', range=21600, query='', generation=0, loading=false, chartKey='', error=false;
 let plot=null;
+let rejectionScope='current_policy';
 let neonRefreshQueued=false,neonRefreshGeneration=-1;
 let wallets=null, walletError=false, walletLoading=false, selectedWallet='', walletDetail=null, walletDetailError=false, walletDetailRequest=0, walletDetailLoading='';
 let jevDetail=null,jevDetailError='',jevLoading=false;
@@ -212,7 +213,16 @@ function renderEvidence(){
   const checks=screen?.checks||{};
   html('evidence',`<div class="evidence-address">Token ${esc(a.asset_id.split(':').at(-1))}<br>Pinned pool ${esc(a.pool_id||'Unavailable')}</div><div class="checks">${Object.entries(checks).map(([k,v])=>`<span class="check ${v===true?'positive':v===false?'negative':'warning'}">${esc(pretty(k))}: ${v===true?'observed pass':v===false?'failed':'unknown'}</span>`).join('')||'<span class="check warning">Safety evidence unavailable</span>'}</div><p class="compact muted">${screen?'Screen recorded '+stamp(screen.observed_at,true)+' · '+age(screen.observed_at)+' ago. ':''}Historical checks are not a current safety guarantee. Entries require a fresh provider response and size-bounded route.</p>${p?key('Last quoted liquidity',usd(p.mark_liquidity)+' · '+age(p.mark_at)+' ago')+key('Stop / take-profit thresholds',`${price(p.stop_price)} / ${price(p.take_price)}`)+key('Trailing status',p.tp_done?price(p.trailing_price):'Arms after first take profit')+key('Time exit eligibility',stamp(p.opened_at+Number(state.policy.time_stop_seconds),true)+' if gain < '+state.policy.time_stop_min_gain_pct+'%'): '<p class="compact muted">No open position in this coin.</p>'}`);
 }
-function renderReasons(){html('rejections',state.reasons.length?state.reasons.slice(0,7).map(r=>`<div class="reason-row"><span>${esc(pretty(r.reason))}<span class="muted"> · ${esc(r.verdict)}</span></span><strong>${r.count}</strong></div>`).join(''):'<p class="compact muted">No decisions recorded yet.</p>');}
+function renderReasons(){
+  const scopes=state.rejection_scopes,control=$('rejection-scope');
+  control.hidden=!scopes;$('rejection-scope-label').hidden=!!scopes;
+  control.value=rejectionScope;
+  const scope=scopes?.[rejectionScope],reasons=scope?.reasons||state.reasons;
+  const removed=bot==='robinhood'&&state.policy.cooldown_seconds===0&&state.policy.max_entries_per_day===0&&state.policy.max_open_positions===0;
+  const rows=reasons.slice(0,7).map(r=>`<div class="reason-row"><span>${esc(pretty(r.reason))}<span class="muted"> · ${esc(r.verdict)}${scope&&rejectionScope==='account'&&removed&&['cooldown','max_entries_per_day','max_open_positions'].includes(r.reason)&&!scopes.current_policy.reasons.some(current=>current.reason===r.reason)?' · historical; rule removed':''}</span></span><strong>${r.count}</strong></div>`).join('');
+  const note=scope?`<p class="compact muted">${rejectionScope==='current_policy'?'Current policy since '+stamp(scope.since,true)+'.':'Account history includes earlier policies.'} ${number(scope.rejection_count,0)} rejections / ${number(scope.decision_count,0)} decisions. Up to 7 reasons shown.</p>${removed?'<p class="compact muted">Cooldown and position/daily-entry count caps are removed. Fresh post-close buyers and the remaining safety/risk checks still apply.</p>':''}`:'';
+  html('rejections',note+(rows||'<p class="compact muted">'+(scope?'No rejections in this scope.':'No decisions recorded yet.')+'</p>'));
+}
 
 function canvasContext(canvas){const rect=canvas.getBoundingClientRect(),dpr=window.devicePixelRatio||1;canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);return {ctx,w:rect.width,h:rect.height};}
 function clearCanvas(canvas){if(canvas.id==='price-chart'){plot=null;$('chart-tip').hidden=true;}return canvasContext(canvas);}
@@ -290,3 +300,5 @@ let resizeTimer;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
 window.NeonWorkspace.configure({refresh:()=>{if(bot==='neon')refresh();}});window.NeonWorkspace.setActive(bot==='neon');document.querySelectorAll('[data-bot]').forEach(b=>{b.classList.toggle('selected',b.dataset.bot===bot);b.setAttribute('aria-pressed',String(b.dataset.bot===bot));});
 setInterval(()=>{if(!document.hidden)refresh();},5000);setInterval(freshness,1000);refresh();
+
+$('rejection-scope').addEventListener('change',event=>{rejectionScope=event.target.value;if(state&&state.rejection_scopes)renderReasons();});

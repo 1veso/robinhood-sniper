@@ -264,6 +264,21 @@ class ConsoleData:
             for r in rows(c, "SELECT observed_at,payload FROM events WHERE kind='policy_revision' ORDER BY observed_at"):
                 p = json.loads(r['payload'])
                 revisions.append({'at': r['observed_at'], 'before': p['previous_trial']['policy_version'], 'after': p['new_trial']['policy_version']})
+            active_version = view._get('policy_version')
+            active_since = max((r['at'] for r in revisions if r['after'] == active_version), default=trial['started_at'])
+            # Match both the activation window and recorded decision policy.
+            # Historical/missing policy evidence must not become a current rejection.
+            active_reasons = rows(c, '''SELECT verdict,reason,COUNT(*) count FROM decisions
+                WHERE observed_at>=? AND CASE WHEN json_valid(payload)
+                THEN json_extract(payload,'$.result.policy_version') END = ?
+                GROUP BY verdict,reason ORDER BY count DESC,reason,verdict''', (active_since, active_version))
+            def rejection_scope(counts, **scope):
+                rejected = [r for r in counts if r['verdict'] == 'SKIP']
+                return {**scope, 'decision_count': sum(r['count'] for r in counts),
+                        'rejection_count': sum(r['count'] for r in rejected), 'reasons': rejected}
+            rejection_scopes = {
+                'current_policy': rejection_scope(active_reasons, policy_version=active_version, since=active_since),
+                'account': rejection_scope(reasons, since=trial['started_at'])}
             gaps = [selected(json.loads(r['payload']), ('from','to','seconds')) for r in rows(c, "SELECT payload FROM events WHERE kind='monitoring_gap' ORDER BY observed_at")]
             screens = {}
             for r in rows(c, "SELECT observed_at,payload FROM events WHERE kind='rug_screen' ORDER BY observed_at DESC LIMIT 160"):
@@ -313,7 +328,7 @@ class ConsoleData:
                 'error_count': len(status.get('errors', [])), 'trial': selected(trial, ('started_at','ends_at','revision_started_at','policy_version')),
                 'cycle_issues': [selected(i, ('stage','asset_id','pool_id','code','severity','attempts','observed_at')) for i in status.get('cycle_issues', [])],
                 'snapshot': snapshot, 'policy': policy, 'assets': list(assets.values()), 'fills': fills, 'closed': closed,
-                'decisions': decisions, 'reasons': reasons, 'equity_history': equity, 'screens': screens,
+                'decisions': decisions, 'reasons': reasons, 'rejection_scopes': rejection_scopes, 'equity_history': equity, 'screens': screens,
                 'market': market, 'event_counts': event_counts, 'gaps': gaps, 'policy_revisions': revisions,
                 'daily': daily[0] if daily else None, 'research': research, 'collector': collector, 'repairs': repairs,
                 'notifications': {'trades': queue(folder / 'notifications.sqlite3'), 'market': queue(folder / 'market-notifications.sqlite3')},

@@ -58,6 +58,33 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(len(actual['fills']), 1)
         self.assertEqual(actual['snapshot']['positions'][0]['mark_status'], 'missing_quote')
 
+    def test_rejections_separate_current_policy_from_history_and_full_counts_from_visible_rows(self):
+        original=self.ledger._get('policy_version');current='current-fixture';at=NOW+10
+        with self.ledger.transaction():
+            self.ledger._set('policy_version',current)
+            self.ledger.record_event('revision','policy_revision',{'previous_trial':{'policy_version':original},'new_trial':{'policy_version':current}},at)
+            for n in range(94):
+                version=current if n<90 else original if n<93 else None
+                reason='already_open' if n<90 else 'cooldown'
+                payload={'result':{'policy_version':version}}
+                self.ledger.conn.execute('INSERT INTO decisions VALUES(?,?,?,?,?,?)',
+                    ('scoped:'+str(n),'fixture',at if n==90 else at+1,'SKIP',reason,json.dumps(payload)))
+        before=self.ledger.conn.total_changes
+        view=self.data.robinhood();scopes=view['rejection_scopes']
+        self.assertEqual(scopes['current_policy'],{'policy_version':current,'since':at,'decision_count':90,'rejection_count':90,
+            'reasons':[{'verdict':'SKIP','reason':'already_open','count':90}]})
+        self.assertEqual(scopes['account']['decision_count'],95)
+        self.assertEqual(scopes['account']['rejection_count'],94)
+        self.assertEqual(next(r['count'] for r in scopes['account']['reasons'] if r['reason']=='cooldown'),4)
+        self.assertEqual(len(view['decisions']),80)
+        self.assertEqual(self.ledger.conn.total_changes,before)
+
+    def test_no_rejections_does_not_count_successful_entries_as_rejections(self):
+        scopes=self.data.robinhood()['rejection_scopes']
+        self.assertEqual(scopes['current_policy']['decision_count'],1)
+        self.assertEqual(scopes['current_policy']['rejection_count'],0)
+        self.assertEqual(scopes['current_policy']['reasons'],[])
+
     def test_old_asset_safety_uses_latest_evidence_without_per_asset_json_scans(self):
         asset='eip155:4663:token1'
         self.ledger.record_event('older-risk','rug_screen',{'asset_id':asset,'checks':{'fresh':False},'source':'old'},NOW-4)
