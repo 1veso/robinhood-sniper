@@ -109,7 +109,7 @@ class ConsoleData:
     def _inspect_jobs(self):
         if os.name != 'nt':
             return {'available': False, 'items': [], 'checked_at': None, 'error': 'unsupported_platform'}
-        command = "$ErrorActionPreference='Stop'; Get-ScheduledTask -TaskName 'SNIPER*','RUG DESK*','NEON*','Pump Jev*' | Where-Object { $_.TaskName -in @('SNIPER Exploratory Paper','SNIPER Paper Research','SNIPER Telegram Monitor','SNIPER Automatic Executor Shadow','RUG DESK Watch','RUG DESK Scan','RUG DESK Report','RUG DESK Console','NEON Paper Signals','NEON Paper Watch','Pump Jev Shadow Review') } | ForEach-Object { $i=$_ | Get-ScheduledTaskInfo; [pscustomobject]@{name=$_.TaskName;state=[string]$_.State;last_result=$i.LastTaskResult;last_run=$i.LastRunTime.ToUniversalTime().ToString('o');next_run=$i.NextRunTime.ToUniversalTime().ToString('o')} } | ConvertTo-Json -Compress"
+        command = "$ErrorActionPreference='Stop'; Get-ScheduledTask -TaskName 'SNIPER*','RUG DESK*','NEON*','Pump Jev*' | Where-Object { $_.TaskName -in @('SNIPER Exploratory Paper','SNIPER Paper Research','SNIPER Telegram Monitor','SNIPER Automatic Executor Shadow','RUG DESK Watch','RUG DESK Scan','RUG DESK Report','RUG DESK Console','NEON Paper Signals','NEON Paper Watch','Pump Jev Shadow Review') } | ForEach-Object { $i=$_ | Get-ScheduledTaskInfo; [pscustomobject]@{name=$_.TaskName;state=[string]$_.State;last_result=$i.LastTaskResult;last_run=$i.LastRunTime.ToUniversalTime().ToString('o');next_run=$i.NextRunTime.ToUniversalTime().ToString('o');working_directory=($_.Actions | Select-Object -First 1).WorkingDirectory} } | ConvertTo-Json -Compress"
         result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', command], capture_output=True, timeout=25, creationflags=subprocess.CREATE_NO_WINDOW)
         if result.returncode:
             raise ValueError('Task inspection unavailable')
@@ -118,6 +118,9 @@ class ConsoleData:
             items = [items]
         if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
             raise ValueError('Task inspection response is malformed')
+        for item in items:
+            directory=item.pop('working_directory',None)
+            item['account_root_bound']=bool(directory and Path(directory).resolve()==self.root.resolve())
         return {'available': True, 'checked_at': int(time.time()), 'items': items, 'error': None}
 
     def _refresh_jobs(self):
@@ -174,6 +177,20 @@ class ConsoleData:
                          'refresh_seconds': 5, 'read_only': True, 'real_money_enabled': False,
                          'execution_target': 'automatic', 'live_execution_ready': False,
                          'jobs': self.jobs()})
+            if bot=='neon' and data.get('neon_workspace'):
+                worker=data['neon_workspace']['worker'];jobs=data['jobs']
+                worker['schedule_observed_at']=jobs.get('checked_at')
+                if not data['neon_workspace'].get('replay') and jobs.get('checked_at') and 0<=int(time.time())-jobs['checked_at']<=90:
+                    for job in jobs.get('items',[]):
+                        if not job.get('account_root_bound'):continue
+                        from datetime import datetime
+                        try:
+                            planned=datetime.fromisoformat(job['next_run'].replace('Z','+00:00'))
+                            planned=int(planned.timestamp()) if planned.tzinfo else None
+                        except (ValueError,TypeError,KeyError):planned=None
+                        if planned is not None and planned<=int(time.time()):planned=None
+                        if job.get('name')=='NEON Paper Signals':worker['next_scan_at']=planned
+                        if job.get('name')=='NEON Paper Watch':worker['next_watch_at']=planned
             from .switchover import inventory
             if bot not in ('neon','jev'):
                 data['switchover'] = inventory(self.root, 'evm' if bot=='robinhood' else 'solana')
@@ -192,7 +209,7 @@ class ConsoleData:
                 for decision in data.get('decisions',[]):
                     decision['jev'] = linked.get(decision.get('asset_id'))
             return data
-        return self.cached(('state', bot), 3, load)
+        return self.cached(('state', bot), .15 if bot=='neon' else 3, load)
 
     def robinhood(self):
         folder = self.root / 'runtime/exploration'
@@ -396,7 +413,9 @@ def make_server(root, host='127.0.0.1', port=8765):
         raise ValueError('Console binds to loopback only')
     data = ConsoleData(root)
     static = Path(__file__).resolve().parents[2] / 'console'
-    files = {'/': ('index.html','text/html; charset=utf-8'), '/app.js': ('app.js','text/javascript; charset=utf-8'), '/style.css': ('style.css','text/css; charset=utf-8'), '/favicon.svg': ('favicon.svg','image/svg+xml')}
+    files = {'/': ('index.html','text/html; charset=utf-8'), '/app.js': ('app.js','text/javascript; charset=utf-8'), '/style.css': ('style.css','text/css; charset=utf-8'), '/favicon.svg': ('favicon.svg','image/svg+xml'),
+             '/neon.js':('neon.js','text/javascript; charset=utf-8'),'/neon.css':('neon.css','text/css; charset=utf-8')}
+    event_waiters=threading.BoundedSemaphore(8)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -432,19 +451,44 @@ def make_server(root, host='127.0.0.1', port=8765):
                     self.send(200, json_text(data.state(params.get('bot', ['robinhood'])[0])).encode())
                 elif url.path == '/api/events':
                     from .solana_console import events
-                    page=events(data.root,params.get('bot',['solana'])[0],
-                        self.headers.get('Last-Event-ID') or params.get('after',[''])[0],
-                        int(params.get('limit',['200'])[0]))
+                    bot=params.get('bot',['solana'])[0]
+                    after=self.headers.get('Last-Event-ID') or params.get('after',[''])[0]
+                    limit=int(params.get('limit',['200'])[0]);wait_ms=int(params.get('wait_ms',['0'])[0])
+                    if not 0<=wait_ms<=10000:raise ValueError('Invalid event wait')
+                    page=events(data.root,bot,after,limit)
+                    # Each inspection closes its read transaction. Waiting neither
+                    # locks the book nor drives a worker/provider. Bounded clients.
+                    if wait_ms and not page['events'] and page['available']:
+                        if not event_waiters.acquire(blocking=False):
+                            self.send(429,b'{"error":"Event reader capacity reached; retry shortly."}');return
+                        try:
+                            deadline=time.monotonic()+wait_ms/1000
+                            while not page['events'] and time.monotonic()<deadline:
+                                time.sleep(min(.1,max(0,deadline-time.monotonic())))
+                                page=events(data.root,bot,after,limit)
+                        finally:event_waiters.release()
+                    page['server_time_ms']=time.time_ns()//1_000_000
                     if 'text/event-stream' in self.headers.get('Accept','') or params.get('format')==['sse']:
                         # Bounded catch-up batches release SQLite immediately. EventSource
                         # reconnects with Last-Event-ID; no worker/provider calls occur here.
-                        chunks=['retry: 3000\n\n']
+                        chunks=['retry: 250\n\n']
                         for event in page['events']:
                             chunks.append('id: '+event['id']+'\nevent: observation\ndata: '+json_text(event)+'\n\n')
                         chunks.append('event: cursor\ndata: '+json_text({k:v for k,v in page.items() if k!='events'})+'\n\n')
                         self.send(200,''.join(chunks).encode(),'text/event-stream; charset=utf-8')
                     else:
                         self.send(200,json_text(page).encode())
+                elif url.path == '/api/neon-journal':
+                    from .neon_workspace import journal
+                    self.send(200,json_text(journal(data.root,
+                        stage_filter=params.get('stage',[''])[0],token=params.get('token',[''])[0],
+                        outcome_filter=params.get('outcome',[''])[0],category_filter=params.get('category',[''])[0],
+                        reason_filter=params.get('reason',[''])[0],
+                        since=int(params.get('since',['0'])[0]),before=int(params['before'][0]) if 'before' in params else None,
+                        limit=int(params.get('limit',['100'])[0]))).encode())
+                elif url.path == '/api/neon-candidate':
+                    from .neon_workspace import candidate
+                    self.send(200,json_text(candidate(data.root,params.get('mint',[''])[0])).encode())
                 elif url.path == '/api/chart':
                     self.send(200, json_text(data.chart(params.get('bot', ['robinhood'])[0], params.get('asset', [''])[0], params.get('pool', [''])[0])).encode())
                 elif url.path == '/api/wallets':
@@ -469,7 +513,7 @@ def make_server(root, host='127.0.0.1', port=8765):
                     self.send(404, b'{"error":"Not found"}')
             except ValueError:
                 self.send(409, b'{"error":"Account data unavailable or inconsistent. Retrying automatically; no account was changed."}')
-            except (OSError, sqlite3.Error, KeyError, TypeError):
+            except (OSError, sqlite3.Error, KeyError, TypeError, ArithmeticError):
                 self.send(503, b'{"error":"Cannot read current account data. Retrying automatically; no account was changed."}')
 
     server = ThreadingHTTPServer((host, port), Handler)

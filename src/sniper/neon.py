@@ -211,6 +211,12 @@ def publish(book,app,now):
         'acceptance_excluded':True,'api_usage':cost}
     with book.transaction():
         book.db.execute('INSERT OR IGNORE INTO neon_equity VALUES(?,?)',(now,encode(snapshot)))
+        from .paper_events import observe, emit
+        observe(book,now)
+        readiness_view={k:state[k] for k in ('trial_state','entry_enabled','blockers')}
+        previous=book.db.execute("SELECT payload FROM observation_events WHERE kind='readiness_changed' ORDER BY seq DESC LIMIT 1").fetchone()
+        if not previous or json.loads(previous[0])!=readiness_view:
+            emit(book,'readiness:'+str(now)+':'+digest(readiness_view),'readiness_changed',now,readiness_view)
     atomic(book.runtime/'status.json',encode(state));return state
 
 

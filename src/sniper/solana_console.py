@@ -45,6 +45,7 @@ def view(app,bot='solana',now=None):
         positions=[json.loads(r[0]) for r in db.execute('SELECT payload FROM positions')]
         snapshot=paper_events.financial(db,account,root,now,fills=fills,positions=positions)
         runs=rows(db,'SELECT job,started,finished,status FROM runs ORDER BY started DESC LIMIT 30')
+        last_watch=db.execute("SELECT max(finished) FROM runs WHERE job='watch'").fetchone()[0]
         checks=rows(db,'SELECT mint,at,stage,verdict,reason FROM checks ORDER BY at DESC LIMIT 80')
         reasons=rows(db,'SELECT verdict,reason,count(*) count FROM checks GROUP BY verdict,reason ORDER BY count DESC')
         high=paper_events.cursor(db)
@@ -54,6 +55,8 @@ def view(app,bot='solana',now=None):
         candidates=[json.loads(r[0]) for r in db.execute('SELECT payload FROM neon_candidates ORDER BY at DESC LIMIT 30')] if 'neon_candidates' in tables else []
         gaps=rows(db,'SELECT from_at AS "from",to_at AS "to",to_at-from_at seconds FROM neon_monitoring_gaps ORDER BY id') if 'neon_monitoring_gaps' in tables else []
         leader=rows(db,'SELECT event_id,at,stage,verdict,reason,payload FROM leader_decisions ORDER BY id DESC LIMIT 80') if 'leader_decisions' in tables else []
+        from .neon_workspace import workspace
+        neon_workspace=workspace(db,account,report,positions,fills,now) if bot=='neon' else None
     observed=report.get('generated_at');stale=type(observed) is not int or not 0<=now-observed<=(180 if bot=='neon' else 2100)
     blockers=list(report.get('blockers',[])) if bot=='neon' else []
     model=report.get('model',{}) if bot=='neon' else {'enabled':report.get('paid_ai_enabled')}
@@ -69,13 +72,21 @@ def view(app,bot='solana',now=None):
     by_id={p['id']:p for p in positions}
     for p in snapshot['positions']:
         original=by_id[p['id']];entry=D(p['entry_price']);basis=D(p['cost_basis'])
+        step=original.get('steps',0);next_take=config.EXIT['ladder'][step] if step<len(config.EXIT['ladder']) else None
+        last_fill=next((f for f in reversed(fills) if f['position_id']==p['id'] and f['kind']=='sell'),None)
         p.update(qty=p['quantity'],remaining_basis=p['cost_basis'],liquidation_value=p['liquidation_value_usd'],
             mark_status='missing_quote' if p['quote_unavailable'] else 'ok',mark_at=p['last_quote_at'],
             mark_price=(original.get('liquidation_cost_estimate') or {}).get('reference_price'),
             unrealized_pct=str(D(p['unrealized_pnl'])/basis*100) if basis else '0',tp_done=p['steps']>0,
             stop_price=str(entry*(1+D(str(config.EXIT['stop_pct']))/100)),
-            take_price=str(entry*(1+D(str(config.EXIT['ladder'][0][0]))/100)),
-            trailing_price=str(D(p['peak'])*(1-D(str(config.EXIT['trail_pct']))/100)),mark_liquidity=None)
+            take_price=str(entry*(1+D(str(next_take[0]))/100)) if next_take else None,
+            next_take_step=step+1 if next_take else None,next_take_original_fraction=str(next_take[1]) if next_take else None,
+            trailing_price=str(D(p['peak'])*(1-D(str(config.EXIT['trail_pct']))/100)) if step>0 else None,
+            trailing_active=step>0,realized_pnl=original.get('realized_pnl','0'),
+            last_watcher_completion=last_watch,quote_age_seconds=now-p['last_quote_at'] if p.get('last_quote_at') else None,
+            exit_status='price_unavailable_hold' if p['quote_unavailable'] else 'partial_recorded' if last_fill else 'monitoring',
+            latest_exit_fill={k:last_fill.get(k) for k in ('id','at','quantity','price','pnl','reason')} if last_fill else None,
+            mark_liquidity=None)
     display=[]
     for f in fills:
         costs=f.get('execution_costs') or {};buy=f['kind']=='buy';amount=D(f['quantity'])*D(f['price'])
@@ -98,7 +109,7 @@ def view(app,bot='solana',now=None):
         'status':{'finished_at':max((r['finished'] or 0 for r in runs),default=0),'trial_state':phase},
         'snapshot':snapshot,'trial':trial,'policy':{**config.settings(),'time_stop_seconds':config.EXIT['time_stop_hours']*3600,'time_stop_min_gain_pct':config.EXIT['time_stop_min_pct']},
         'policy_binding':account['config_sha256'],'readiness':readiness,'assets':list(assets.values()),'fills':display[::-1][:500],
-        'closed':[p for p in positions if D(p['remaining'])<=0][-200:],
+        'closed':[{k:p.get(k) for k in ('id','mint','pool','remaining','opened_at','closed_at','entry_price','realized_pnl','steps')} for p in positions if D(p['remaining'])<=0][-200:],
         'equity_history':[{'observed_at':r['observed_at'],'equity':r['equity']} for r in pnl if r.get('equity') is not None],
         'pnl_history':pnl,'cost_policy':cost_policy,'screens':{},'decisions':decisions[:80],'reasons':reasons,'runs':runs,'gaps':gaps,
         'policy_revisions':[],'market':[json.loads(r['payload']) for r in market],'event_counts':report.get('observations',{}),
@@ -106,10 +117,10 @@ def view(app,bot='solana',now=None):
         'cadence_seconds':60 if bot=='neon' else config.WATCH_SECONDS,'setup_blocked':not trial,
         'blocker':'; '.join(blockers),'blockers':blockers,'paid_ai_enabled':model.get('enabled') is True,
         'fill_model':'Existing cost-aware paper fills; no wallet execution','candidates':candidates,
-        'selection':report.get('selection',report.get('leader_selection',{})),'sources':report.get('sources',[]),
+        'selection':report.get('selection',report.get('leader_selection',{})),'sources':[{k:s.get(k) for k in ('name','at','status')} for s in report.get('sources',[]) if isinstance(s,dict)],
         'source_scope':(neon_policy or {}).get('source_scope','Existing screened Solana candidates'),
         'research':{'candidate_count':report.get('candidate_count',len(candidates)),'approved_wallet_count':len(report.get('selection',{}).get('leaders',[]))},
-        'error_count':sum(r['status']=='error' for r in runs[:2]),
+        'error_count':sum(r['status']=='error' for r in runs[:2]),'neon_workspace':neon_workspace,
         'event_stream':{'schema_version':1,'cursor':high,'available':high is not None,'snapshot_consistent':True,
                         'url':'/api/events?bot='+bot,'historical_backfill':False,'ordering':'seq is commit order; observed_at is evidence time'}}
 
@@ -118,7 +129,16 @@ def events(app,bot,after,limit=200):
     root=folder(app,bot)
     with reader(root/'runtime/book.sqlite3') as db:
         account=identity(db,root)
-        return paper_events.events(db,account['account_id'],after,limit)
+        page=paper_events.events(db,account['account_id'],after,limit)
+        page['bot']=bot
+        if bot=='neon':
+            from .neon_workspace import event_item
+            stream=page['cursor'].rsplit(':',1)[0] if page.get('cursor') else ''
+            for item in page['events']:
+                item['journal_item']=event_item({'seq':item['seq'],'payload':json.dumps(item['data']),
+                    'kind':item['type'],'observed_at':item['observed_at'],'recorded_at':item['recorded_at'],
+                    'recorded_at_ms':item.get('recorded_at_ms')},account['account_id'],stream)
+        return page
 
 def discover(app):
     from .console import reader

@@ -20,6 +20,9 @@ def install(book):
             seq INTEGER PRIMARY KEY AUTOINCREMENT, event_key TEXT NOT NULL UNIQUE,
             observed_at INTEGER NOT NULL, recorded_at INTEGER NOT NULL,
             kind TEXT NOT NULL, payload TEXT NOT NULL)''')
+        if 'recorded_at_ms' not in {row[1] for row in book.db.execute('PRAGMA table_info(observation_events)')}:
+            book.db.execute('ALTER TABLE observation_events ADD COLUMN recorded_at_ms INTEGER')
+        book.db.execute('CREATE INDEX IF NOT EXISTS observation_event_time ON observation_events(observed_at,seq)')
         book.db.execute("INSERT OR IGNORE INTO metadata VALUES('observation_stream_id',?)", (str(uuid.uuid4()),))
 
 
@@ -28,8 +31,9 @@ def emit(book, key, kind, at, payload):
     if type(at) is not int or at < 0:
         raise ValueError('Invalid observation time')
     body=encode(payload)
-    book.db.execute('INSERT OR IGNORE INTO observation_events(event_key,observed_at,recorded_at,kind,payload) VALUES(?,?,?,?,?)',
-                    (key,at,int(time.time()),kind,body))
+    recorded=time.time_ns()//1_000_000
+    book.db.execute('INSERT OR IGNORE INTO observation_events(event_key,observed_at,recorded_at,kind,payload,recorded_at_ms) VALUES(?,?,?,?,?,?)',
+                    (key,at,recorded//1000,kind,body,recorded))
 
 
 def stage(book, mint, at, name, status, *, verdict=None, reason=None, entry=False, event_id=None):
@@ -120,9 +124,35 @@ def events(db, account_id, after, limit=200):
     if source!=stream or not sequence.isdecimal() or int(sequence)>maximum:
         raise ValueError('Stream changed or cursor ahead; refetch snapshot')
     items=[]
-    for r in db.execute('SELECT seq,observed_at,recorded_at,kind,payload FROM observation_events WHERE seq>? AND seq<=? ORDER BY seq LIMIT ?',(int(sequence),maximum,limit)):
+    columns={r[1] for r in db.execute('PRAGMA table_info(observation_events)')}
+    millisecond='recorded_at_ms' if 'recorded_at_ms' in columns else 'NULL'
+    for r in db.execute('SELECT seq,observed_at,recorded_at,kind,payload,'+millisecond+' FROM observation_events WHERE seq>? AND seq<=? ORDER BY seq LIMIT ?',(int(sequence),maximum,limit)):
         items.append({'id':stream+':'+str(r[0]),'seq':r[0],'account_id':account_id,
-                      'observed_at':r[1],'recorded_at':r[2],'type':r[3],'data':json.loads(r[4])})
+                      'previous_cursor':items[-1]['id'] if items else after,
+                      'observed_at':r[1],'recorded_at':r[2],'recorded_at_ms':r[5],'type':r[3],'data':public_payload(r[3],json.loads(r[4]))})
     last=items[-1]['seq'] if items else int(sequence)
     return {'schema_version':1,'available':True,'account_id':account_id,'events':items,
-            'cursor':stream+':'+str(last),'high_watermark':head,'has_more':last<maximum}
+            'prev_cursor':after,'event_count':len(items),'cursor':stream+':'+str(last),'high_watermark':head,'has_more':last<maximum}
+
+
+def public_payload(kind,payload):
+    """Public view of immutable observations, never raw provider exception bodies."""
+    from .neon_workspace import safe,display_reason
+    allow={
+        'candidate_stage':('candidate_id','mint','stage','status','verdict','reason','entry','leader_event_id','run_id'),
+        'paper_fill':('id','position_id','mint','pool','kind','at','quantity','price','fee','pnl','reason','run_id'),
+        'position_changed':('id','mint','pool','remaining','remaining_cost_basis_usd','realized_pnl','steps','peak','opened_at','closed_at','last_observed_at','last_error_at','feed_error','run_id'),
+        'worker_state':('run_id','job','status'),
+        'source_observation':('source_name','status','reason','source_id','observed_at','run_id'),
+        'candidate_intake':('candidate_id','wallet','handle','candidate_kind','source_kind','source_id','observed_at','qualified','reason','run_id'),
+        'readiness_changed':('trial_state','entry_enabled','blockers','run_id'),
+        'market_observation':('mint','pool','price','liquidity','observed_at','source'),
+        'pnl_observation':('as_of','available','net_pnl','equity','cash','starting_cash','realized_pnl','unrealized_pnl','position_basis','rent_reserved_usd','api_cost_usd','api_costs_known','open_positions','closed_positions','unresolved_positions','marks_complete','return_pct','known_cost_net_pnl','capital_baseline_supported','valuation','reason'),
+    }.get(kind,())
+    result={k:payload[k] for k in allow if k in payload}
+    if 'reason' in result:result['reason']=display_reason(kind,result.get('status'),result['reason'])
+    for key in ('handle','valuation'):
+        if key in result:result[key]=safe(result[key],400)
+    if 'blockers' in result:result['blockers']=[safe(v) for v in result['blockers']] if isinstance(result['blockers'],list) else []
+    if 'feed_error' in result:result['feed_error']=bool(result['feed_error'])
+    return result

@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>TENDIES TRACKER Observation Console</title>
+  <link rel="stylesheet" href="/neon.css">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css">
+  <script src="/neon.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -18,12 +20,13 @@
   <div class="rail-title">Your bots <span>04</span></div>
   <button class="bot-button selected" data-bot="robinhood" aria-pressed="true"><span class="bot-icon">R</span><span><strong>Wallet follower</strong><small>Robinhood Chain</small></span><i class="dot" aria-hidden="true"></i></button>
   <button class="bot-button" data-bot="solana" aria-pressed="false"><span class="bot-icon sol">S</span><span><strong>RUG DESK</strong><small>Solana · setup</small></span><i class="dot amber" aria-hidden="true"></i></button>
-  <button class="bot-button" data-bot="neon" aria-pressed="false"><span class="bot-icon sol">N</span><span><strong>Neon bot</strong><small>Solana · leader following</small></span><i class="dot amber" aria-hidden="true"></i></button>
+  <button class="bot-button" data-bot="neon" aria-pressed="false"><span class="bot-icon sol">N</span><span><strong>NEON</strong><small>Bot 03 · Solana</small></span><i class="dot amber" aria-hidden="true"></i></button>
   <button class="bot-button" data-bot="jev" aria-pressed="false"><span class="bot-icon sol">J</span><span><strong>Pump / Jev Review</strong><small>Shadow · second opinion</small></span><i class="dot amber" aria-hidden="true"></i></button>
   <div class="rail-rule"></div><p class="rail-caption">Strategy accounts stay separate.<br>Jev reviews existing accounts.</p>
   <div class="rail-bottom"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6l-8-3Zm-4 9 3 3 5-6"/></svg><strong>Observation only</strong><p>Automatic paper trading.<br>Real money is disabled.</p><span id="version">LOCAL CONSOLE</span></div>
 </aside>
 <main id="workspace" tabindex="-1">
+  <section id="neon-workspace" aria-label="NEON live paper workspace" hidden></section>
   <div id="offline" class="alert error" role="alert" hidden></div>
   <div class="workspace-title"><div><h1 id="account-title">Wallet follower</h1><div class="subtitle"><span id="chain">Robinhood Chain · 4663</span><span class="separator">/</span><span id="account-id">Reading account…</span></div></div><div class="trial"><strong id="trial-state">Loading trial</strong><span id="trial-deadline">Original account · original deadline</span></div></div>
   <div class="context-line"><span id="strategy-note">Reading the active strategy…</span><span class="context-status" id="worker-freshness">—</span></div>

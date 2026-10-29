@@ -13,8 +13,9 @@ const stamp = (t, date=false) => t ? new Date(t*1000).toLocaleString('en-GB',{ti
 const age = t => {if(!t)return 'unknown';let s=Math.max(0,Math.floor(Date.now()/1000-t));return s<60?s+'s':s<3600?Math.floor(s/60)+'m '+s%60+'s':Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m';};
 const pretty = v => String(v ?? 'unknown').replace(/[_:]/g,' ');
 const html = (id, content) => {if($(id).innerHTML !== content) $(id).innerHTML=content;};
-let bot='robinhood', state=null, chart=null, selectedAsset='', tab='positions', range=21600, query='', generation=0, loading=false, chartKey='', error=false;
+let bot=['robinhood','solana','neon','jev'].includes(new URLSearchParams(location.search).get('bot'))?new URLSearchParams(location.search).get('bot'):'robinhood', state=null, chart=null, selectedAsset='', tab='positions', range=21600, query='', generation=0, loading=false, chartKey='', error=false;
 let plot=null;
+let neonRefreshQueued=false,neonRefreshGeneration=-1;
 let wallets=null, walletError=false, walletLoading=false, selectedWallet='', walletDetail=null, walletDetailError=false, walletDetailRequest=0, walletDetailLoading='';
 let jevDetail=null,jevDetailError='',jevLoading=false;
 
@@ -43,15 +44,16 @@ function renderJev(){
 
 async function fetchJSON(path){const response=await fetch(path,{cache:'no-store',signal:AbortSignal.timeout(18000)});const data=await response.json();if(!response.ok)throw new Error(data.error||'Console connection interrupted');return data;}
 async function refresh(){
-  if(loading)return;loading=true;const token=generation;
+  if(loading){if(bot==='neon'){neonRefreshQueued=true;neonRefreshGeneration=generation;}return;}loading=true;const token=generation;let completed=false;
   try{
     const next=await fetchJSON('/api/state?bot='+bot);
     if(token!==generation)return;
-    state=next;error=false;$('offline').hidden=true;
+    state=next;completed=true;error=false;$('offline').hidden=true;
+    if(bot==='neon'){window.NeonWorkspace.update(next);return;}
     if(!state.assets.some(a=>a.asset_id===selectedAsset))selectedAsset=(state.assets.find(a=>a.state==='open')||state.assets[0]||{}).asset_id||'';
     render();await Promise.all([loadChart(token),tab==='wallets'?loadWallets(token):Promise.resolve()]);
-  }catch(e){if(token===generation){error=true;$('offline').textContent='Data connection interrupted. '+e.message+' Last displayed values are retained; they are not current. Automatic retry every 5 seconds.';$('offline').hidden=false;}}
-  finally{loading=false;freshness();}
+  }catch(e){if(token===generation){error=true;if(bot==='neon')window.NeonWorkspace.disconnected();$('offline').textContent='Data connection interrupted. '+e.message+' Last displayed values are retained; they are not current. Automatic retry every 5 seconds.';$('offline').hidden=false;}}
+  finally{loading=false;freshness();if(token===generation&&neonRefreshQueued&&neonRefreshGeneration===token){neonRefreshQueued=false;if(completed&&bot==='neon')setTimeout(()=>{if(bot==='neon'&&generation===token)refresh();},60);}}
 }
 async function loadChart(token=generation){
   const a=state?.assets.find(a=>a.asset_id===selectedAsset);
@@ -91,6 +93,7 @@ function metric(label,value,detail,cls=''){return `<div class="metric"><span>${e
 function key(label,value,cls=''){return `<div class="key-row"><span>${esc(label)}</span><b class="${cls}">${value}</b></div>`;}
 function ack(q){if(!q?.available)return '<span class="warning">Unavailable</span>';const pending=Object.entries(q.counts).filter(([k])=>!['sent','suppressed','expired'].includes(k)).reduce((n,[,v])=>n+v,0);return `<span class="${pending?'warning':'positive'}">${q.counts.sent||0} acknowledged${pending?' · '+pending+' unresolved':''}</span>`;}
 function render(){
+  window.NeonWorkspace.setActive(bot==='neon');
   document.querySelectorAll('.market-grid,.ledger-panel,.detail-grid').forEach(el=>{el.hidden=bot==='jev';});
   $('jev-panel').hidden=bot!=='jev';
   if(bot==='jev'){renderJev();return;}
@@ -131,7 +134,7 @@ function freshness(){
   if(!state)return;
   const finished=state.status.finished_at,old=!finished||Date.now()/1000-finished>state.cadence_seconds*3;
   $('worker-freshness').textContent=`Worker completed ${age(finished)} ago${old?' · overdue':''}${state.error_count?' · '+state.error_count+' cycle errors':''}`;$('worker-freshness').className='context-status'+(old||state.error_count?' warning':'');
-  if(bot==='jev')return;
+  if(bot==='jev'||bot==='neon')return;
   if(state.trial.ends_at){const remaining=state.trial.ends_at-Date.now()/1000;
     $('trial-state').textContent=remaining>0?`Paper trial · ${Math.floor(remaining/86400)}d ${Math.floor(remaining%86400/3600)}h remaining`:'Entry period ended · exits continue';
     $('trial-deadline').textContent='Ends '+new Date(state.trial.ends_at*1000).toLocaleString('en-GB',{timeZone:'Europe/Berlin',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})+' CET';
@@ -268,7 +271,7 @@ function drawEquity(){
 }
 
 document.querySelectorAll('[data-bot]').forEach(button=>button.addEventListener('click',()=>{
-  if(bot===button.dataset.bot)return;bot=button.dataset.bot;generation++;selectedAsset='';chart=null;state=null;loading=false;error=false;query='';wallets=null;walletError=false;walletLoading=false;selectedWallet='';walletDetail=null;walletDetailError=false;walletDetailLoading='';$('filter').value='';$('offline').hidden=true;
+  if(bot===button.dataset.bot)return;bot=button.dataset.bot;window.NeonWorkspace.setActive(bot==='neon');history.replaceState(null,'','?bot='+bot);generation++;neonRefreshQueued=false;neonRefreshGeneration=-1;selectedAsset='';chart=null;state=null;loading=false;error=false;query='';wallets=null;walletError=false;walletLoading=false;selectedWallet='';walletDetail=null;walletDetailError=false;walletDetailLoading='';$('filter').value='';$('offline').hidden=true;
   document.querySelectorAll('[data-bot]').forEach(b=>{b.classList.toggle('selected',b===button);b.setAttribute('aria-pressed',String(b===button));});
   $('account-title').textContent=bot==='solana'?'RUG DESK · Solana':'Wallet follower';$('chain').textContent=bot==='solana'?'Solana Mainnet':'Robinhood Chain · 4663';$('account-id').textContent='Reading selected account…';$('account-id').title='';$('strategy-note').textContent='Reading account policy…';$('worker-freshness').textContent='Waiting for worker status';$('trial-state').textContent='Reading trial status';$('trial-deadline').textContent='—';$('quote-price').textContent='—';$('quote-change').textContent='Loading selected account';$('quote-age').textContent='—';$('instrument-state').textContent='LOADING';html('asset-select','<option>Loading coins…</option>');$('asset-select').disabled=true;for(const id of ['guardrails','health-mini','evidence','rejections','ta'])html(id,'');for(const id of ['open-count','fill-count','trial-return'])$(id).textContent='—';$('trial-detail').textContent='Reading separate account';$('footer-id').textContent='Loading selected account';$('notice').textContent='Observation only · reading separate account';clearCanvas($('equity-chart'));html('metrics',metric('Account','Loading…','Reading separate persistent account'));html('activity','<div class="empty">Reading selected account…</div>');$('chart-empty').hidden=false;$('chart-empty').textContent='Loading selected account…';clearCanvas($('price-chart'));refresh();
 }));
@@ -285,4 +288,5 @@ $('price-chart').addEventListener('pointermove',e=>{if(!plot)return;const rect=e
 $('price-chart').addEventListener('pointerleave',()=>{$('chart-tip').hidden=true;});
 let resizeTimer;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{if(state){drawChart();drawEquity();}},100);});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
+window.NeonWorkspace.configure({refresh:()=>{if(bot==='neon')refresh();}});window.NeonWorkspace.setActive(bot==='neon');document.querySelectorAll('[data-bot]').forEach(b=>{b.classList.toggle('selected',b.dataset.bot===bot);b.setAttribute('aria-pressed',String(b.dataset.bot===bot));});
 setInterval(()=>{if(!document.hidden)refresh();},5000);setInterval(freshness,1000);refresh();

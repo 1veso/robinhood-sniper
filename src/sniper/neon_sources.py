@@ -153,24 +153,51 @@ class Research:
             self.db.execute("INSERT OR IGNORE INTO metadata VALUES('neon_source_id',?)",(uuid.uuid4().hex,))
         self.source_id=self.db.execute("SELECT value FROM metadata WHERE key='neon_source_id'").fetchone()[0]
 
+    def observation(self, name, status, now, reason):
+        """Safe, durable UI evidence; no provider payloads or authority changes."""
+        from .paper_events import emit
+        with self.book.transaction():
+            run=self.db.execute("SELECT id FROM runs WHERE job='signals' AND status='running' ORDER BY started DESC LIMIT 1").fetchone()
+            payload={'source_name':name,'status':status,'reason':reason,
+                     'source_id':self.source_id,'observed_at':now,'run_id':run[0] if run else None}
+            emit(self.book,'source:'+name+':'+str(now)+':'+status,'source_observation',now,payload)
+
     def refresh_board(self):
         now=int(self.clock()); previous=self.db.execute("SELECT * FROM neon_sources WHERE name='leaderboard'").fetchone()
         if previous and 0<=now-previous['at']<3600:
             return dict(previous)
+        self.observation('leaderboard','RUNNING',now,'Fetching public research candidates; no qualification implied')
         try:
             candidates=leaderboard(self.transport('GET',BOARD,None,{'Accept':'application/json'},15),now)
             status='OK';result={'candidate_count':len(candidates),'qualified_count':0,'scope':'Research leads only'}
             with self.book.transaction():
                 for candidate in candidates:
                     self.db.execute('INSERT OR REPLACE INTO neon_candidates VALUES(?,?,?)',(candidate['wallet'],now,encode(candidate)))
+                    from .paper_events import emit
+                    evidence={'candidate_id':self.book.identity['account_id']+':wallet:'+candidate['wallet'],
+                              'wallet':candidate['wallet'],'handle':candidate['handle'],'candidate_kind':'trader_research',
+                              'source_kind':candidate['source_kind'],'source_id':self.source_id,
+                              'observed_at':candidate['captured_at'],'qualified':False,
+                              'reason':'Research candidate only; complete history and model selection required'}
+                    emit(self.book,'intake:'+digest(evidence),'candidate_intake',candidate['captured_at'],evidence)
         except Exception as exc:
             status='ERROR';result={'error_type':type(exc).__name__,'candidate_count':None,'qualified_count':0}
         with self.book.transaction():
             self.db.execute('INSERT OR REPLACE INTO neon_sources VALUES(?,?,?,?)',('leaderboard',now,status,encode(result)))
+        self.observation('leaderboard',status,int(self.clock()),'Public research candidate refresh completed' if status=='OK' else 'Public candidate provider unavailable or invalid; no qualification inferred')
         return {'at':now,'status':status,**result}
 
     def observe(self, leaders):
-        self.rpc.verify_chain(); now=int(self.clock()); events=[]; results=[]
+        self.observation('rpc','RUNNING',int(self.clock()),'Checking finalized Solana observations')
+        try:self.rpc.verify_chain()
+        except Exception as exc:
+            failed_at=int(self.clock())
+            with self.book.transaction():
+                self.db.execute('INSERT OR REPLACE INTO neon_sources VALUES(?,?,?,?)',
+                    ('rpc',failed_at,'ERROR',encode({'error_type':type(exc).__name__,'scope':'chain_verification'})))
+            self.observation('rpc','ERROR',failed_at,'Solana chain verification failed; no trade inferred')
+            raise
+        now=int(self.clock()); events=[]; results=[]
         candidates=[json.loads(r[0]) for r in self.db.execute('SELECT payload FROM neon_candidates WHERE at>=? ORDER BY at DESC,wallet LIMIT 30',(now-7200,))]
         selected={l['wallet']:l for l in leaders}
         # Selected leaders receive every pass; one other research candidate rotates.
@@ -185,6 +212,9 @@ class Research:
                 results.append({'wallet':wallet,'status':'ERROR','error_type':type(exc).__name__})
         with self.book.transaction():
             self.db.execute('INSERT OR REPLACE INTO neon_sources VALUES(?,?,?,?)',('rpc',now,'ERROR' if any(r['status']=='ERROR' for r in results) else 'OK',encode(results)))
+        failed=any(r['status']=='ERROR' for r in results)
+        self.observation('rpc','ERROR' if failed else 'OK',int(self.clock()),
+            'Some finalized observations unavailable; pending work retained' if failed else 'Finalized observation pass completed; unsupported transactions do not become buy signals')
         return events,results
 
     def _wallet(self,wallet,name,now):

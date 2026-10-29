@@ -46,7 +46,19 @@ def atomic(path, text):
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temp, path)
+        # A Windows snapshot reader may briefly block pathname replacement.
+        # Retry publication of these same fsynced bytes, never the operation
+        # that generated them (which may already have committed a paper fill).
+        deadline = time.monotonic() + 1.0
+        for attempt in range(8):
+            try:
+                os.replace(temp, path)
+                break
+            except PermissionError as exc:
+                remaining = deadline - time.monotonic()
+                if getattr(exc, 'winerror', None) not in (5, 32, 33) or attempt == 7 or remaining <= 0:
+                    raise
+                time.sleep(min(.02 * (2 ** attempt), .2, remaining))
     finally:
         temp.unlink(missing_ok=True)
 
