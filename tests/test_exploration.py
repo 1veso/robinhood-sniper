@@ -322,7 +322,7 @@ class TrialTests(unittest.TestCase):
             def collect(self): return {'sampled': 1}
             def pending(self): return [swap]
             def finish(self, *args): pass
-            def prove(self, s):
+            def prove(self, s, *, fallback_rpc=None):
                 return {'token_address': TOKEN, 'pool': POOL, 'spent_usd': '100', 'wallet': WALLET,
                         'tx_hash': TX_SWAP, 'observed_at': NOW}
         class Market:

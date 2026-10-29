@@ -65,7 +65,7 @@ class ComparisonWorkerTests(unittest.TestCase):
                 return {'sampled': len(owner.pending)}
             def pending(self): return owner.pending
             def finish(self, *args): pass
-            def prove(self, swap):
+            def prove(self, swap, *, fallback_rpc=None):
                 return {'token_address': TOKEN, 'pool': POOL, 'spent_usd': '100',
                         'wallet': 'wallet-a', 'tx_hash': 'observed-tx-a', 'observed_at': owner.tick[0]}
         class Market:

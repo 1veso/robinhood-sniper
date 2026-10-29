@@ -390,10 +390,10 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
         try:
             with request_budget(phase_deadline, clock=time.time):
                 if rpc is None:
-                    yield
+                    yield phase_deadline
                 else:
                     with rpc.budget(left):
-                        yield
+                        yield phase_deadline
             check_entry_time()
             if time.time() >= phase_deadline:
                 raise EntryWorkDeferred(name + ' allowance reached; unfinished observations remain pending')
@@ -529,9 +529,12 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
         comparison_capture(f'control:{started}', 'control', started, {'entry_halt': ledger._get('entry_halt')})
         status['monitoring_gap_seconds'] = gap
         status['exits'] = watch()
+        source_setup_started = time.time()
         rpc = RpcClient(endpoint, timeout=8, max_retries=1)
+        proof_rpc = RpcClient(quote_endpoint, timeout=8, max_retries=1)
         market = DexScreenerClient(chain_id='robinhood')
         source = ExploratorySource(rpc, store, market)
+        status['stage_seconds']['source_setup'] = round(max(0, time.time() - source_setup_started), 6)
         def pending_stats():
             if callable(getattr(type(source), 'pending_summary', None)):
                 return source.pending_summary()
@@ -540,9 +543,11 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
             row = ledger.conn.execute('SELECT verdict,reason,observed_at FROM decisions WHERE event_id=?', (event_id,)).fetchone()
             return None if row is None else {'verdict': row['verdict'], 'reason': row['reason'],
                                             'decision_observed_at': row['observed_at']}
+        maintenance_started = time.time()
         if callable(getattr(type(source), 'expire_pending', None)):
             status['expired_pending_recorded'] = source.expire_pending(resolve_outcome=recorded_outcome)
         status['pending_before'] = pending_stats()
+        status['stage_seconds']['pending_maintenance'] = round(max(0, time.time() - maintenance_started), 6)
         status['collection'] = {'status': 'NOT_RUN_TRIAL_EXPIRED', 'sampled': 0}
         def selected_work():
             """Persisted fresh work gets priority over another collection pass."""
@@ -588,6 +593,8 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                     return
         # Any reorg halts new entries pending review; existing holdings remain
         # real paper holdings and continue receiving exit quotes.
+        entry_processing_started = time.time()
+        stages_before_entry = sum(status['stage_seconds'].values())
         if int(time.time()) < trial['ends_at']:
             if store.reorgs(CHAIN_ID):
                 with ledger.transaction():
@@ -603,8 +610,12 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                     continue
                 try:
                     status['entry_work']['selected_attempts'] += 1
-                    with entry_phase('funded_buy_proof', rpc, 25):
-                        proof = source.prove(swap)
+                    with entry_phase('funded_buy_proof', rpc, 25) as proof_deadline:
+                        proof_remaining = proof_deadline - time.time()
+                        if proof_remaining <= 0:
+                            raise EntryWorkDeferred('Funded-buy proof allowance reached')
+                        with proof_rpc.budget(proof_remaining):
+                            proof = source.prove(swap, fallback_rpc=proof_rpc if quote_endpoint != endpoint else None)
                     if proof is None or Decimal(proof['spent_usd']) < policy.min_wallet_spend_usd:
                         source.finish(swap, {'reason': 'not_a_supported_direct_buy_or_below_minimum'})
                         continue
@@ -784,10 +795,15 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
         now = int(time.time())
         status['entry_work']['finished_at'] = now
         status['entry_work']['deadline_reached'] = time.time() >= entry_deadline and now < trial['ends_at']
+        measured_entry_work = sum(status['stage_seconds'].values()) - stages_before_entry
+        status['stage_seconds']['entry_local_overhead'] = round(max(0, time.time() - entry_processing_started - measured_entry_work), 6)
+        maintenance_started = time.time()
         status['pending_after'] = pending_stats()
+        status['stage_seconds']['pending_maintenance'] = round(status['stage_seconds']['pending_maintenance'] + max(0, time.time() - maintenance_started), 6)
         # Refresh existing holdings after source work, before publishing equity.
         status['exits'].extend(watch())
         now = int(time.time())
+        reporting_started = time.time()
         snapshot = engine.report(now)
         snapshot['fill_model'] = 'Pinned live V3 buy/sell quotes plus 100bps adverse stress, modeled gas and additional depth stress; simulated fills only'
         status['snapshot'] = json_safe(snapshot)
@@ -798,6 +814,7 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
         status['first_fill_at'] = min((f['observed_at'] for f in status['fills']), default=None)
         status['policy_revisions'] = [json.loads(r['payload']) for r in ledger.conn.execute("SELECT payload FROM events WHERE kind='policy_revision' ORDER BY observed_at")]
         status['total_monitoring_gaps'] = ledger.conn.execute("SELECT COUNT(*) FROM events WHERE kind='monitoring_gap'").fetchone()[0]
+        status['stage_seconds']['financial_reporting'] = round(max(0, time.time() - reporting_started), 6)
         publication_started = time.time()
         try:
             status['telegram'] = notify_fills(ledger, folder, runtime)

@@ -1,11 +1,12 @@
 """Bounded, explicitly sampled live V3 signals. No wallet skill is inferred."""
 import hashlib
 import json
+import sqlite3
 import time
 from decimal import Decimal
 
 from .adapters.evm import (CHAIN_ID, FACTORY, WETH, USDG, SWAP_TOPIC, EvmCollector,
-    RpcError, ReorgError, address, quantity, decode_swap, verify_purchase, token_units,
+    RpcError, HistoricalStateUnavailable, ReorgError, address, quantity, decode_swap, verify_purchase, token_units,
     _words, _address_word, hash32, decode_transfer, TRANSFER_TOPIC, ZERO_ADDRESS)
 
 COLLECTION_REVISION = 'same-interval-pool-followup-v1'
@@ -146,24 +147,58 @@ class ExploratorySource:
         self.store.db.execute("UPDATE exploration_followups SET state='EXPIRED',updated_at=? WHERE state='PENDING' AND interval_id IN (SELECT interval_id FROM exploration_intervals WHERE anchor_at<?)", (now, now - 900))
         return expired
 
-    def pending_summary(self):
+    def pending_summary(self, budget_seconds=2, monotonic=time.monotonic):
+        """Read diagnostic totals within a cooperative two-second wall budget.
+
+        Fresh work is counted first through its age index. Historical totals may
+        be unavailable under host load; diagnostic scans must not delay exits.
+        """
+        if isinstance(budget_seconds, bool) or not 0 < budget_seconds <= 2:
+            raise ValueError('Summary budget must be positive and at most two seconds')
         now = int(self.clock())
-        rows = self.store.db.execute('''SELECT
-            SUM(CASE WHEN e.observed_at BETWEEN ? AND ? THEN 1 ELSE 0 END) AS fresh,
-            SUM(CASE WHEN e.observed_at<? THEN 1 ELSE 0 END) AS expired_unrecorded,
-            MIN(e.observed_at) AS oldest_observed_at
-            FROM evm_events e WHERE e.chain_id=? AND e.kind='sampled_swap' AND e.canonical=1
-            AND NOT EXISTS (SELECT 1 FROM exploration_outcomes o WHERE o.event_id=
-                exploration_signal_id(e.tx_hash,e.log_index,e.block_hash))''',
-            (now - 900, now, now - 900, CHAIN_ID)).fetchone()
-        outcomes = self.store.db.execute('''SELECT
-            SUM(CASE WHEN json_extract(payload,'$.reason')='signal_expired' THEN 1 ELSE 0 END) AS expired,
-            SUM(CASE WHEN json_extract(payload,'$.outcome_source')='existing_ledger_decision' THEN 1 ELSE 0 END) AS recovered
-            FROM exploration_outcomes''').fetchone()
-        return {'fresh': rows['fresh'] or 0, 'expired_unrecorded': rows['expired_unrecorded'] or 0,
-                'oldest_observed_at': rows['oldest_observed_at'],
-                'expired_recorded': outcomes['expired'] or 0, 'recovered_ledger_outcomes': outcomes['recovered'] or 0,
-                'followup_pending': self.store.db.execute("SELECT COUNT(*) FROM exploration_followups WHERE state='PENDING'").fetchone()[0]}
+        result = dict.fromkeys(('fresh', 'expired_unrecorded', 'oldest_observed_at',
+                               'expired_recorded', 'recovered_ledger_outcomes', 'followup_pending'))
+        result.update(summary_complete=False, summary_unavailable_reason=None)
+        deadline = monotonic() + budget_seconds
+        expired = False
+        def interrupted():
+            nonlocal expired
+            expired = expired or monotonic() >= deadline
+            return int(expired)
+        def read(sql, params=()):
+            if interrupted():
+                raise TimeoutError('Summary time budget exceeded')
+            return self.store.db.execute(sql, params).fetchone()
+        busy_timeout = self.store.db.execute('PRAGMA busy_timeout').fetchone()[0]
+        self.store.db.execute('PRAGMA busy_timeout=0')
+        self.store.db.set_progress_handler(interrupted, 1000)
+        try:
+            fresh = read('''SELECT COUNT(*) AS count,MIN(e.observed_at) AS oldest
+                FROM evm_events e WHERE e.chain_id=? AND e.kind='sampled_swap' AND e.canonical=1
+                AND e.observed_at BETWEEN ? AND ? AND NOT EXISTS
+                (SELECT 1 FROM exploration_outcomes o WHERE o.event_id=
+                 exploration_signal_id(e.tx_hash,e.log_index,e.block_hash))''', (CHAIN_ID, now - 900, now))
+            result['fresh'] = fresh['count']
+            outcomes = read('''SELECT
+                SUM(CASE WHEN json_extract(payload,'$.reason')='signal_expired' THEN 1 ELSE 0 END) AS expired,
+                SUM(CASE WHEN json_extract(payload,'$.outcome_source')='existing_ledger_decision' THEN 1 ELSE 0 END) AS recovered
+                FROM exploration_outcomes''')
+            result.update(expired_recorded=outcomes['expired'] or 0, recovered_ledger_outcomes=outcomes['recovered'] or 0)
+            result['followup_pending'] = read("SELECT COUNT(*) FROM exploration_followups WHERE state='PENDING'")[0]
+            historical = read('''SELECT COUNT(*) AS count,MIN(e.observed_at) AS oldest
+                FROM evm_events e WHERE e.chain_id=? AND e.kind='sampled_swap' AND e.canonical=1 AND e.observed_at<?
+                AND NOT EXISTS (SELECT 1 FROM exploration_outcomes o WHERE o.event_id=
+                  exploration_signal_id(e.tx_hash,e.log_index,e.block_hash))''', (CHAIN_ID, now - 900))
+            result['expired_unrecorded'] = historical['count']
+            known_times = [value for value in (fresh['oldest'], historical['oldest']) if value is not None]
+            result['oldest_observed_at'] = min(known_times) if known_times else None
+            result['summary_complete'] = True
+        except (TimeoutError, sqlite3.Error):
+            result['summary_unavailable_reason'] = 'summary time budget exceeded' if expired else 'summary read unavailable'
+        finally:
+            self.store.db.set_progress_handler(None, 0)
+            self.store.db.execute(f'PRAGMA busy_timeout={int(busy_timeout)}')
+        return result
 
     def finish(self, swap, result):
         self.store.db.execute('INSERT OR IGNORE INTO exploration_outcomes VALUES(?,?)', (signal_id(swap), json.dumps(result, sort_keys=True)))
@@ -382,7 +417,7 @@ class ExploratorySource:
                 'from_block': interval['from_block'], 'through_block': interval['through_block'],
                 'collection_revision': COLLECTION_REVISION}
 
-    def prove(self, sampled):
+    def prove(self, sampled, fallback_rpc=None):
         swap = {**sampled, 'kind': 'swap'}
         swap.pop('observed_at', None)
         swap.pop('canonical', None)
@@ -391,8 +426,34 @@ class ExploratorySource:
             raise ReorgError('Signal is no longer canonical')
         def read(to, data):
             return ('eth_call', [{'to': to, 'data': data}, hex(block)])
+        fallback_binding = None
+        def fallback_block(number):
+            raw = fallback_rpc.call('eth_getBlockByNumber', [hex(number), False])
+            if not isinstance(raw, dict) or quantity(raw.get('number')) != number:
+                raise RpcError('Historical fallback block unavailable or mismatched')
+            return hash32(raw.get('hash'))
+        def observe(calls):
+            nonlocal fallback_binding
+            try:
+                return self.rpc.call_many(calls) if len(calls) > 1 else [self.rpc.call(*calls[0])]
+            except HistoricalStateUnavailable:
+                if fallback_rpc is None:
+                    raise
+                if any(method != 'eth_call' or params[1] != hex(block) for method, params in calls):
+                    raise RpcError('Historical fallback refuses a different method or block')
+                if fallback_binding is None:
+                    self.rpc.verify_chain(CHAIN_ID)
+                    fallback_rpc.verify_chain(CHAIN_ID)
+                    genesis = self.collector.block(0)['hash']
+                    if fallback_block(0) != genesis:
+                        raise RpcError('Historical fallback genesis mismatch')
+                    if self.collector.block(block)['hash'] != swap['block_hash'] or fallback_block(block) != swap['block_hash']:
+                        raise ReorgError('Historical fallback signal block mismatch')
+                    fallback_binding = {'chain_id': CHAIN_ID, 'genesis_hash': genesis,
+                        'block_number': block, 'block_hash': swap['block_hash']}
+                return fallback_rpc.call_many(calls) if len(calls) > 1 else [fallback_rpc.call(*calls[0])]
         pool = swap['address']
-        raw = self.rpc.call_many([read(pool, s) for s in ('0x0dfe1681', '0xd21220a7', '0xddca3f43')])
+        raw = observe([read(pool, s) for s in ('0x0dfe1681', '0xd21220a7', '0xddca3f43')])
         t0, t1 = [_address_word(_words(r, 1)[0]) for r in raw[:2]]
         fee = int(_words(raw[2], 1)[0], 16)
         if (t0 in (WETH, USDG)) == (t1 in (WETH, USDG)):
@@ -403,7 +464,7 @@ class ExploratorySource:
         if not 0 < fee < 1000000:
             raise RpcError('Invalid pool fee')
         lookup = '0x1698ee82' + t0[2:].zfill(64) + t1[2:].zfill(64) + f'{fee:064x}'
-        found = self.rpc.call(*read(FACTORY, lookup))
+        found = observe([read(FACTORY, lookup)])[0]
         if _address_word(_words(found, 1)[0]) != pool:
             return None
         transaction, receipt = self.rpc.call_many([('eth_getTransactionByHash', [swap['tx_hash']]), ('eth_getTransactionReceipt', [swap['tx_hash']])])
@@ -417,15 +478,19 @@ class ExploratorySource:
             proof = verify_recipient_acquisition(swap, {'pool': pool, 'token0': t0, 'token1': t1}, receipt, transaction)
         if proof is None:
             return None
-        decimals = int(_words(self.rpc.call(*read(base, '0x313ce567')), 1)[0], 16)
+        decimals = int(_words(observe([read(base, '0x313ce567')])[0], 1)[0], 16)
         base_price = self.market.quote(base, now=int(self.clock()))
         spent = token_units(int(proof['spent_raw']), decimals) * base_price.price_usd
         if not spent.is_finite() or spent <= 0:
             raise RpcError('Missing base valuation')
         if self.collector.block(block)['hash'] != swap['block_hash']:
             raise ReorgError('Signal anchor changed during proof')
+        if fallback_binding is not None and fallback_block(block) != swap['block_hash']:
+            raise ReorgError('Historical fallback signal anchor changed during proof')
         return {**proof, 'pool': pool, 'fee': fee, 'factory_verified': True, 'spent_usd': str(spent), 'observed_at': sampled['observed_at'],
                 'block_number': block, 'block_hash': swap['block_hash'], 'tx_hash': swap['tx_hash'],
                 'log_index': swap['log_index'], 'base_price': base_price.as_dict(),
+                'historical_state_provider': 'quote_rpc' if fallback_binding else 'collection_rpc',
+                'historical_state_binding': fallback_binding,
                 'qualification': 'unestablished', 'independence': 'unestablished',
                 'transaction': transaction, 'receipt': receipt}

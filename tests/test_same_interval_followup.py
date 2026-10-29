@@ -254,6 +254,31 @@ class SameIntervalFollowupTests(unittest.TestCase):
             self.assertEqual(result['verdict'],'UNEVALUATED');self.assertEqual(result['reason'],'signal_expired')
             self.assertEqual(result['observed_at'],original[row['event_id']])
 
+    def test_historical_summary_is_bounded_and_preserves_known_fresh_count(self):
+        self.source.collect()
+        with self.store.transaction():
+            self.store.db.executemany('''INSERT INTO evm_events
+                (chain_id,tx_hash,log_index,block_number,block_hash,kind,payload,observed_at,canonical)
+                VALUES(?,?,?,?,?,'sampled_swap','{}',?,1)''',
+                [(CHAIN_ID,'0x'+f'{1000+i:064x}',0,1,bh(1),NOW-1000) for i in range(5000)])
+        ticks=[0]
+        def monotonic():
+            ticks[0]+=.01
+            return ticks[0]
+        summary=self.source.pending_summary(budget_seconds=.1,monotonic=monotonic)
+        self.assertEqual(summary['fresh'],32)
+        self.assertEqual(summary['expired_recorded'],0)
+        self.assertFalse(summary['summary_complete'])
+        self.assertEqual(summary['summary_unavailable_reason'],'summary time budget exceeded')
+        self.assertIsNone(summary['expired_unrecorded'])
+        self.assertIsNone(summary['oldest_observed_at'])
+        # Timeout changes no records and clears the connection progress handler.
+        self.assertEqual(self.store.db.execute('SELECT COUNT(*) FROM evm_events').fetchone()[0],5032)
+        self.assertEqual(self.store.db.execute('PRAGMA busy_timeout').fetchone()[0],10000)
+        exact=self.source.pending_summary()
+        self.assertTrue(exact['summary_complete'])
+        self.assertEqual(exact['expired_unrecorded'],5000)
+
     def test_expiry_recovers_committed_entry_after_restart_without_relabeling_or_filling_again(self):
         _,_,proof=self.first_proof()
         self.source.followup(POOL,sampled=proof)

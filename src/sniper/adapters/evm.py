@@ -35,6 +35,23 @@ class RpcError(RuntimeError):
     """An RPC transport, protocol, or server failure. Never means 'safe'."""
 
 
+class HistoricalStateUnavailable(RpcError):
+    """This provider cannot serve a concrete historical eth_call state."""
+
+
+def _read_error(method, params, error):
+    # Classify only the observed server condition. Never expose provider text,
+    # and never permit latest-state, log, receipt or arbitrary-error fallback.
+    code = error.get('code', 'unknown') if isinstance(error, dict) else 'unknown'
+    message = error.get('message') if isinstance(error, dict) else None
+    if (method == 'eth_call' and isinstance(params, list) and len(params) == 2
+            and isinstance(params[1], str) and re.fullmatch(r'0x[0-9a-fA-F]+', params[1])
+            and type(code) is int and code == -32000 and isinstance(message, str)
+            and re.fullmatch(r'historical state (?:0x)?[0-9a-fA-F]{64} is not available', message)):
+        return HistoricalStateUnavailable('RPC historical eth_call state unavailable')
+    return RpcError(f'RPC {method} returned error {code}; observation unavailable')
+
+
 class RpcBudgetExceeded(RpcError):
     """A cooperative collection deadline expired; retry the uncommitted chunk."""
 
@@ -219,10 +236,15 @@ class RpcClient:
             by_id[item["id"]] = item
         # Validate ALL identities before classifying any contract error. Never
         # return partial success or echo provider messages that may contain URLs.
+        errors = []
         for request in payload:
             item = by_id[request['id']]
             if 'error' in item:
-                raise RpcError(f"RPC {request['method']} returned error {item['error']['code']}; observation unavailable")
+                errors.append(_read_error(request['method'], request['params'], item['error']))
+        if errors:
+            # An unrelated failure in the same batch must not be hidden by an
+            # archival-state fallback triggered by another result.
+            raise next((error for error in errors if not isinstance(error, HistoricalStateUnavailable)), errors[0])
         return [by_id[p["id"]]['result'] for p in payload]
 
     def call(self, method: str, params: list[Any] | None = None) -> Any:
@@ -247,8 +269,7 @@ class RpcClient:
             raise RpcError("RPC envelope or response id is invalid")
         if response.get("error") is not None:
             error = response["error"]
-            code = error.get("code", "unknown") if isinstance(error, dict) else "unknown"
-            raise RpcError(f"RPC {method} returned error {code}; observation unavailable")
+            raise _read_error(method, payload['params'], error)
         if "result" not in response:
             raise RpcError("RPC response has neither result nor usable error")
         return response["result"]

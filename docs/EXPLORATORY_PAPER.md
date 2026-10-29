@@ -70,6 +70,9 @@ and source events pending. Each cycle records up to 500 expired pending events a
 expired backlog is disclosed; neither expiry nor a skipped check becomes a
 safety failure. A decision already committed before interrupted source
 publication is reconciled from the ledger, never relabeled unevaluated.
+Historical backlog summaries have a two-second read budget; if exceeded, their
+totals are explicitly unavailable. They cannot consume an unbounded share of
+exit/publication time. Complete historical counts remain inspectable in SQLite.
 `status.json` includes entry-work counts, stage durations,
 pending/expired counts and primary completion time. The ledger's
 `exploratory_cycle_completed` audit is written after successful primary report
@@ -84,6 +87,17 @@ uses the usual receipt proof and quorum checks. Eight pool slots include pools
 already watched by the initial scan; each pool selects at most sixteen legs.
 Legacy scans without saved interval metadata are not reconstructed. Compare
 results before/after this collection revision separately from entry-policy cohorts.
+
+Some observation RPC nodes prune historical state before a selected event's
+900-second signal lifetime ends. For the specific historical-state-unavailable
+response, funded-buy proof can use the already configured quote RPC for the same
+historical `eth_call` operations. Both providers must agree on chain, genesis and
+the event's canonical block hash. Original block tags and timestamps are retained;
+current state is never substituted. Receipts, transactions and collection logs
+still use the observation provider. The fallback shares the existing proof/entry
+deadline and does not send broad collector queries to the quote provider. Other
+RPC errors retain their normal failure handling, and missing proof still blocks
+entry. The proof records when this fallback supplied historical state.
 
 ## Reports and Telegram
 

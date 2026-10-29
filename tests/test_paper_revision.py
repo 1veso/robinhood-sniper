@@ -210,7 +210,7 @@ class WorkerQuorumTests(unittest.TestCase):
                 p=data[min(2,(tick[0]-NOW)//60)]
                 persist(self.store,p)
                 return {'sampled':1}
-            def prove(self,event): return {k:v for k,v in event.items() if k not in ('kind','canonical')}
+            def prove(self,event,*,fallback_rpc=None): return {k:v for k,v in event.items() if k not in ('kind','canonical')}
         class RPC:
             def __init__(self,*a,**kw):pass
             def budget(self,*a):

@@ -23,6 +23,7 @@ class EntryBudgetTests(unittest.TestCase):
         self.fixture.setUp()
         self.finished, self.proved, self.recorded = [], [], []
         self.original_time = NOW
+        self.prove_hook = None
 
     def tearDown(self):
         self.fixture.tearDown()
@@ -32,15 +33,17 @@ class EntryBudgetTests(unittest.TestCase):
         owner, fixture = self, self.fixture
         class Source:
             def __init__(self, rpc, store, market):
-                self.store = store
+                self.rpc, self.store = rpc, store
                 store.db.execute('CREATE TABLE IF NOT EXISTS exploration_outcomes(event_id TEXT PRIMARY KEY,payload TEXT NOT NULL)')
             def pending(self):
                 return [item for item in fixture.pending if not self.store.db.execute(
                     'SELECT 1 FROM exploration_outcomes WHERE event_id=?', (item['id'],)).fetchone()]
             def collect(self, **kwargs):
                 fixture.collections.append(fixture.tick[0]); return {'sampled': 0}
-            def prove(self, item):
+            def prove(self, item, *, fallback_rpc=None):
                 owner.proved.append(item['id'])
+                if owner.prove_hook is not None:
+                    owner.prove_hook(self.rpc, fallback_rpc)
                 return {'token_address': TOKEN, 'pool': POOL, 'spent_usd': '100',
                         'wallet': 'wallet-a', 'tx_hash': 'observed-tx-a', 'observed_at': owner.original_time}
             def finish(self, item, result):
@@ -127,12 +130,30 @@ class EntryBudgetTests(unittest.TestCase):
         self.assertEqual(self.finished, [])
         self.assertEqual(result['entry_work']['deferred'], 1)
 
+    def test_configured_historical_fallback_shares_proof_deadline_without_extra_time(self):
+        (self.fixture.root / 'quote-rpc-url.txt').write_text('https://quote.fixture.invalid', encoding='utf-8')
+        def inspect_deadlines(source_rpc, fallback_rpc):
+            self.assertIsNotNone(fallback_rpc)
+            self.assertIsNot(source_rpc, fallback_rpc)
+            self.assertLess(abs(source_rpc._deadline - fallback_rpc._deadline), .1)
+            self.fixture.tick[0] += 26
+        self.prove_hook = inspect_deadlines
+        with self.offline(): result = self.fixture.run_cycle()
+        self.assertEqual(result['fills'], [])
+        self.assertEqual(self.finished, [])
+        self.assertEqual(result['entry_work']['deferred'], 1)
+        self.assertEqual(result['stage_seconds']['funded_buy_proof'], 26)
+        self.assertEqual(result['cycle_duration_seconds'], 26)
+
     def test_completion_audit_follows_successful_primary_publication(self):
         with self.offline(): result = self.fixture.run_cycle()
         records = [json.loads(row[3]) for row in self.image()['events'] if row[1] == 'exploratory_cycle_completed']
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]['primary_completed_at'], result['primary_completed_at'])
         self.assertIn('entry_quote', records[0]['stage_seconds'])
+        self.assertIn('pending_maintenance', records[0]['stage_seconds'])
+        self.assertIn('entry_local_overhead', records[0]['stage_seconds'])
+        self.assertIn('financial_reporting', records[0]['stage_seconds'])
         self.assertEqual(len(result['fills']), 1)
 
 
