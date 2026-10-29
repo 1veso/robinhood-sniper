@@ -235,6 +235,8 @@ class Book:
                             (now, stage, verdict, reason, encode(payload), mint))
             from sniper.paper_events import stage as observed_stage
             observed_stage(self,mint,now,stage,'COMPLETED',verdict=verdict,reason=reason,entry=payload.get('entry',False))
+            from sniper.crew_capture import record
+            record(self, 'candidate:' + mint + ':' + str(now), 'candidate', now, payload)
 
     def _save(self, p):
         self.db.execute('INSERT OR REPLACE INTO positions VALUES (?,?,?)', (p['id'], p['mint'], encode(p)))
@@ -284,7 +286,7 @@ class Book:
             from sniper.jev_lifecycle import enabled_for
             if enabled_for(self.root.parent,self.identity['account_id']):
                 from sniper.jev_admission import paper_guard
-                paper_guard(self,judgment.get('jev_assessment_id'),quote['mint'],quote['pool'],now)
+                paper_guard(self,judgment.get('jev_assessment_id'),quote['mint'],quote['pool'],now,quote=quote)
             failure = self.limits(quote['mint'], now)
             if failure:
                 raise ValueError(failure)

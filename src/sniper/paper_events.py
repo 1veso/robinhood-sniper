@@ -52,6 +52,8 @@ def market(book, quote, now, source):
     payload['price'],payload['liquidity']=str(quote['price']),str(quote['liquidity'])
     payload['source']=source
     emit(book,'market:'+hashlib.sha256(encode(payload).encode()).hexdigest(),'market_observation',at,payload)
+    from .crew_capture import record
+    record(book, 'market:' + hashlib.sha256(encode(quote).encode()).hexdigest(), 'market', now, quote)
 
 
 def costs(root, account_id, *, neon=False):

@@ -184,6 +184,7 @@ def settings(root):
 
 def run(root, *, now=None):
     root = Path(root); now = int(time.time()) if now is None else now
+    worker_started = time.monotonic()
     from rug_desk.book import process_lock, atomic
     folder = root/'runtime/jev-review'; folder.mkdir(parents=True, exist_ok=True)
     with process_lock(folder/'worker.lock'), closing(Journal(root)) as journal:
@@ -225,6 +226,16 @@ def run(root, *, now=None):
             stats['errors'].append({'status':'SOURCE_OR_SETTINGS_ERROR','type':type(exc).__name__})
         finally:
             if budget: budget.close()
+            if (root/'runtime/crew/settings.json').is_file():
+                try:
+                    from .crew import run as run_crew
+                    remaining = 38 - (time.monotonic() - worker_started)
+                    if remaining >= 2:
+                        stats['crew'] = run_crew(root, deadline=time.monotonic()+min(15,remaining))
+                    else:
+                        stats['crew'] = {'status':'DEFERRED','reason':'existing_worker_budget'}
+                except Exception as exc:
+                    stats['errors'].append({'status':'CREW_WORKER_ERROR','type':type(exc).__name__})
             stats['finished_at'] = int(time.time())
             with journal.db:
                 journal.db.execute('UPDATE runs SET finished=?,status=?,detail=? WHERE id=?',
@@ -297,15 +308,22 @@ def view(root):
         readiness=report(root)
     except (OSError,ValueError,KeyError):
         readiness={'stage':state['stage'],'entry_status':'BLOCKED','requirements':[], 'live_execution_ready':False}
+    crew = {'enabled':False,'mode':'COMPARISON_ONLY'}
+    crew_path = root/'runtime/crew/status.json'
+    if crew_path.is_file():
+        try:
+            crew = json.loads(crew_path.read_text(encoding='utf-8'))
+        except (OSError,ValueError):
+            crew = {'enabled':False,'status':'PUBLICATION_UNAVAILABLE'}
     return {'name':'Pump / Jev Review','mode':state['stage'],'promotion':state,'readiness':readiness,
         'assets':[],'cadence_seconds':60,'account_id':state['paper_account_id'] or 'Linked baseline accounts; no fourth balance',
         'enabled':config['enabled'],'external_calls_enabled':config['enabled'] and config['paid_authorized'] and Decimal(config['daily_budget_usd'])>0 and (root/'runtime/typesafe-api-key.txt').is_file(),
         'model':MODEL,'policy':POLICY,'assessments':summaries,'counts':counts,'source_bindings':bindings,
-        'runs':runs,'comparison':paired,'orders_created':0,
+        'runs':runs,'comparison':paired,'crew':crew,'orders_created':0,
         'pump_feed':{'connected':False,'coverage':'Existing Solana candidate journals only; no launch-feed coverage',
             'dependency':'PumpPortal documents creation/migration streams; token/account trade subscriptions require a key and funded paid data access. Not enabled.'},
         'status':{'finished_at':runs[0]['finished'] if runs else None},
-        'blocker':'Paid Jev disabled; complete historical holders, independent-controller evidence, verified venue phase and executable exit-capacity evidence are not connected.'}
+        'blocker':'Paid model gates remain authoritative. Crew collectors preserve unknown controller independence, incomplete timed holder coverage and unsupported or unreviewed exit routes; collection alone cannot authorize an entry.'}
 
 
 def detail(root, identifier):

@@ -21,7 +21,7 @@ def check(book, mint, *, market=None, rugcheck=None, judge=None, clock=time.time
     if not book.claim(mint, now):
         return {'mint': mint, 'stage': 'seen_once', 'verdict': 'SKIP', 'reason': 'Mint was already checked', 'entry': False}
     market, rugcheck, judge = market or Market(costs=bool(book.cost_policy())), rugcheck or Rugcheck(), judge or Judge(book.root)
-    result = {'mint': mint, 'stage': 'limits', 'verdict': 'SKIP', 'entry': False}
+    result = {'mint': mint, 'stage': 'limits', 'verdict': 'SKIP', 'entry': False, 'started_at': now}
     def advance(name):
         book.stage(mint,int(clock()),result['stage'],'PASSED')
         result['stage']=name
@@ -82,7 +82,7 @@ def check(book, mint, *, market=None, rugcheck=None, judge=None, clock=time.time
         original_guard=entry_guard
         def final_guard():
             if original_guard: original_guard()
-            if review is not None: paper_guard(book,review['id'],mint,facts['pool'],int(clock()))
+            if review is not None: paper_guard(book,review['id'],mint,facts['pool'],int(clock()),quote=fresh)
         position = book.open_paper(fresh, judgment, int(clock()),
                                   entry_guard=final_guard, entry_hook=entry_hook)
         result.update(entry=True, position_id=position['id'], reason='Paper entry recorded at refreshed indicative price')

@@ -22,10 +22,16 @@ it cannot silently revert the strategy to baseline. Original exits continue.
 A missing price creates no sale. Code changes invalidate the paper acceptance
 manifest until the new release passes the same integration checks.
 
-Paid Jev and Grok remain disabled by the user's current choice. Complete historical
-holder/price windows, independently supported buyer-controller evidence, venue
-phase and size-bounded exit capacity are not yet connected to the factual builder.
-Fixture enrichment is test injection, not a production data feed. Therefore an
+Paid Jev and Grok remain disabled by the user's current choice. The opt-in
+[GPTHEIST evidence crew](GPTHEIST_CREW.md) now supplies immutable, previously
+received observations to the factual builder. It can establish complete positive
+classic-SPL holder-owner coverage only when a bounded account snapshot reconciles
+the entire minted supply. It supports venue and size-bounded exit calculations
+only for independently reviewed direct classic-SPL Raydium CP-Swap/USDC pools.
+Provider holder totals with unknown source times, incomplete coverage, mismatched
+one-hour endpoints and unreviewed programs remain unknown. No independent
+buyer-controller producer is currently established. Fixture enrichment remains
+test injection. Therefore an
 installed ACTIVE PAPER stage can correctly show **entries BLOCKED**, zero strategy
 fills and an unstarted trial. Setup time is not paper performance evidence.
 
@@ -59,6 +65,13 @@ It does not manufacture baseline outcomes for prospective Jev-rejected candidate
 those require an independently recorded counterfactual price/exit history. The
 reported cohort is a subset, not full-portfolio comparative performance. No profit
 claim or probability-of-profit calibration follows from action-label probabilities.
+
+The separate `runtime/crew-comparison` baseline/full-crew portfolios extend this
+evaluation prospectively using the same source inputs, original Book cost/risk
+controls and exits. They preserve separate accounts, actual decision and processing
+times, rejected-candidate observations and unresolved bills. They inherit the
+source trial gate; initialization does not start a clock or invent a bankroll.
+They do not replace the primary account or the existing matched-fill report.
 
 ## Separate Solana live preparation
 

@@ -1,0 +1,4 @@
+# Public-key parsing and PDA derivation for read-only Solana pool evidence.
+# These libraries do not provision a signer or grant execution authority.
+solders==0.29.0
+jsonalias==0.1.1

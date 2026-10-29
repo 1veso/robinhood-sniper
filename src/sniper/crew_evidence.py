@@ -239,9 +239,11 @@ class Producer:
             and review.get('account_id')==identity['account_id'] and review.get('config_sha256')==identity['config_sha256']
             and isinstance(review.get('review_reference'),str) and bool(review['review_reference'].strip())
             and type(review.get('reviewed_at'))is int and type(review.get('expires_at'))is int
-            and review['reviewed_at']<=int(self.clock())<review['expires_at'] and review.get('program_pins')==pins)
+            and 0<=review['reviewed_at']<=stamp<=int(self.clock())<review['expires_at'] and review.get('program_pins')==pins)
         if not reviewed:
             return {'status':'UNKNOWN','reason':'current_independent_program_review_missing','context':context},unknown('current_independent_program_review_missing')
+        # Publish only the independently reviewed, nonsecret allowlisted contract.
+        review={k:plain(review[k]) for k in ('scope','account_id','config_sha256','review_reference','reviewed_at','expires_at','program_pins')}
         self._check()
         usd=(self.usd_market or DexScreenerClient(timeout=5)).quote(USDC,now=int(self.clock()))
         self._check()
@@ -270,14 +272,15 @@ class Producer:
         recheck=self._rpc('getBlock',[slot,{'commitment':'finalized','transactionDetails':'none','rewards':False}])
         if recheck.get('blockhash')!=block['blockhash']: raise ValueError('Canonical slot changed')
         at=int(self.clock())
+        if at>=review['expires_at']:raise ValueError('Program review expired during collection')
         venue={'status':'VALID','phase':'AMM','observed_at':at,'program':cp.PROGRAM,'context':context,
-               'review_sha256':digest(review),'scope':'Verified direct classic-SPL Raydium CP pool structure and reviewed program pins'}
+               'review_sha256':digest(review),'program_review':review,'scope':'Verified direct classic-SPL Raydium CP pool structure and reviewed program pins'}
         route={'status':'VALID','observed_at':at,'ticket_usd':str(ticket),'input_usdc_raw':str(raw),
             'buy_quantity_raw':str(acquired),'paper_quantity_upper_bound_raw':str(paper_bound),'reference_price_usd':str(reference_price),
             'sell_quantity_raw':str(covered),'sell_output_usdc_raw':str(output),'exit_capacity_usd':str(capacity),
             'exit_price_impact_pct':str(impact),'base_usd':str(usd_price),'base_usd_observed_at':usd.observed_at,
             'state':plain(state),
-            'context':context,'review_sha256':digest(review),'scope':'Deterministic exact-size quote on finalized pinned pool reserves; fees included',
+            'context':context,'review_sha256':digest(review),'program_review':review,'scope':'Deterministic exact-size quote on finalized pinned pool reserves; fees included',
             'state_after_buy_applied':False,'wallet_simulated':False,'network_costs_included':False,'real_money_enabled':False}
         return venue,route
 

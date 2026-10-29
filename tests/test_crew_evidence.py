@@ -156,6 +156,20 @@ class CpEvidenceTests(unittest.TestCase):
         self.assertFalse(row['exit']['wallet_simulated'])
         self.assertFalse(row['exit']['network_costs_included'])
         self.assertLessEqual(row['rpc_calls'],20)
+        self.assertEqual(row['exit']['program_review'],self.review)
+        self.assertEqual(row['exit']['review_sha256'],digest(row['exit']['program_review']))
+        self.assertEqual(row['venue']['program_review'],row['exit']['program_review'])
+    def test_program_review_expiry_and_review_after_canonical_time_fail_closed(self):
+        self.review['expires_at']=self.at
+        self.assertEqual(self.cp_capture()['exit']['status'],'UNKNOWN')
+        self.review['expires_at']=self.at+100
+        self.review['reviewed_at']=self.at+1;self.at+=1
+        self.assertEqual(self.cp_capture()['exit']['status'],'UNKNOWN')
+    def test_only_allowlisted_review_contract_is_published(self):
+        self.review['unrelated_field']='not part of review contract'
+        row=self.cp_capture()
+        self.assertEqual(row['exit']['status'],'VALID')
+        self.assertNotIn('unrelated_field',row['exit']['program_review'])
     def test_missing_or_changed_review_pins_remain_unknown(self):
         self.assertEqual(self.cp_capture(review=False)['exit']['status'],'UNKNOWN')
         self.review['program_pins']={}

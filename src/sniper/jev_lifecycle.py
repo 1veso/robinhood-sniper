@@ -14,7 +14,9 @@ PAPER_CHECKS=('prospective_entry','duplicate_no_extra_order','failure_closed','h
 CODE_FILES=('src/sniper/jev.py','src/sniper/jev_dossier.py','src/sniper/jev_review.py',
     'src/sniper/jev_lifecycle.py','src/sniper/jev_admission.py','rug_desk/check.py',
     'src/sniper/jev_readiness.py','src/sniper/jev_deployment.py','rug_desk/book.py','rug_desk/report.py','solana_executor.py','src/sniper/execution_solana_service.py',
-    'src/sniper/execution_solana.py','src/sniper/solana_cpmm.py','src/sniper/solana_wire.py','src/sniper/live_readiness.py')
+    'src/sniper/execution_solana.py','src/sniper/solana_cpmm.py','src/sniper/solana_wire.py','src/sniper/live_readiness.py',
+    'src/sniper/crew_capture.py','src/sniper/crew_evidence.py','src/sniper/crew_review.py',
+    'src/sniper/crew_comparison.py','src/sniper/crew.py','src/sniper/paper_events.py')
 
 
 def code_binding(root):

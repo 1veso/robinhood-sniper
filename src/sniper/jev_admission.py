@@ -18,7 +18,17 @@ def assessment(root,identity,facts,quote,now,*,client=None,enrich=None,baseline_
          'payload':encode({'facts':facts,'pool':quote,'stage':'judge','entry':False})}
     dossier,baseline=build('rug_desk',identity,row)
     baseline.update(verdict='BUY' if baseline_buy else 'SKIP',prospective=True,at=now)
-    if enrich is not None:dossier=enrich(dossier)  # Injection point for verified observations; no production provider is implied.
+    if enrich is not None:
+        dossier=enrich(dossier)
+    elif (Path(root)/'runtime/crew/evidence.sqlite3').is_file():
+        # Only previously received, immutable, account/pool-bound facts are
+        # consumed here. Collection runs separately and cannot delay entry.
+        from .crew_capture import configuration, CachedEvidence
+        from .crew_evidence import enrich as enrich_recorded
+        from types import SimpleNamespace
+        if configuration(SimpleNamespace(root=Path(root)/'rug_desk',identity=identity)):
+            with closing(CachedEvidence(root)) as evidence:
+                dossier=enrich_recorded(dossier,evidence,now=now)
     config=settings(root);budget=None;real_provider=False
     try:
         if client is None and config['enabled'] and config['paid_authorized'] and Decimal(config['daily_budget_usd'])>0:
@@ -94,12 +104,22 @@ def paper_review(book,facts,quote,now,*,client=None,enrich=None,clock=time.time)
     return assessment(root,book.identity,facts,quote,now,client=client,enrich=enrich,clock=clock)
 
 
-def paper_guard(book,identifier,mint,pool,now):
+def paper_guard(book,identifier,mint,pool,now,*,quote=None):
     root=book.root.parent
     if not enabled_for(root,book.identity['account_id']) or not settings(root)['enabled']:
         raise ValueError('Jev paper authority changed before entry')
     require_paper_acceptance(root,book.identity['account_id'])
-    return require_assessment(root,identifier,book.identity['account_id'],mint,pool,now)
+    result=require_assessment(root,identifier,book.identity['account_id'],mint,pool,now)
+    route=result['dossier'].get('exit_route') or {}
+    if str(route.get('source_ref','')).startswith('rug_desk:crew:'):
+        # A refreshed lower entry price can buy more tokens than an earlier
+        # exit quote covers. Recheck quantity inside the existing transaction.
+        if quote is None:raise ValueError('Fresh quote required for recorded crew exit coverage')
+        from .crew_capture import CachedEvidence
+        from .crew_comparison import require_quantity_coverage
+        with closing(CachedEvidence(root)) as evidence:
+            require_quantity_coverage(result['dossier'],evidence.records_for(result['dossier']),quote,book.cost_policy(),now)
+    return result
 
 
 def require_paper_acceptance(root,account):
