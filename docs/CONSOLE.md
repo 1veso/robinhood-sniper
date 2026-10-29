@@ -4,6 +4,19 @@ The shared console is named **TENDIES TRACKER Observation Console**. Its desktop
 shortcut is **TENDIES TRACKER**. RUG DESK remains the Solana strategy name; existing
 task identifiers, executable paths and account identities remain compatible.
 
+The sidebar uses display names only. Selecting a bot shows its purpose:
+
+| Display name | Selected purpose | Internal bot key |
+|---|---|---|
+| Radeon | Robinhood Sniper | `robinhood` |
+| Xenon | Solana Rug Desk | `solana` |
+| Neon | Solana Leader Follower | `neon` |
+| Argon | Pump/Jev Review | `jev` |
+
+These are presentation aliases, including Neon’s separate workspace. Account
+UUIDs, runtime directories, Windows tasks, strategy rules and the Jev model name
+remain unchanged. Argon's bound paper account is displayed as Xenon's account.
+
 Open **http://127.0.0.1:8765/** on the execution PC. This is a live view of the existing paper accounts, not a demonstration dataset or an order-entry terminal.
 
 The Windows **RUG DESK Console** task runs the installed `console_server.py`, starts at sign-in, restarts after failure and has a five-minute recovery trigger. `IgnoreNew` prevents overlapping service instances. The PC must remain awake, connected and signed in for the paper workers. Closing the browser does not stop those workers. The service binds only to loopback; it is not remotely hosted.

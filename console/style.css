@@ -12,3 +12,5 @@
 [hidden]{display:none!important}.jev-json{max-height:560px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;background:#101815;padding:18px;border:1px solid var(--line)}#jev-panel{padding:20px}#jev-panel h3{margin-top:26px}#jev-panel [data-jev-id]{color:var(--green);text-decoration:underline;text-underline-offset:3px}
 
 .rejection-scope{max-width:145px;padding:6px 8px;border:1px solid var(--line);background:var(--raised);color:var(--text);font-size:11px}
+
+@media(max-width:480px){.rail{gap:4px}.bot-button{min-width:0;min-height:44px;justify-content:center;padding:10px 4px;gap:5px}.bot-button .bot-icon{display:none}.bot-button .dot{margin-left:2px}.bot-button strong{font-size:12px}}
