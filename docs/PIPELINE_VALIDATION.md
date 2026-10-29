@@ -18,7 +18,7 @@ its bounded sample and skipped intervals explicitly. The exploratory log scan co
 1,200-block advance between two-minute runs; longer downtime remains a disclosed gap. A caught-up cursor is not a
 claim that every exchange and every wallet on the chain is covered.
 
-Radeon's `same-interval-pool-followup-v1` collection revision preserves the
+Radeon's `scheduled-bounded-pool-followup-v2` collection revision preserves the
 32-transaction global sample, eight candidate-pool slots and sixteen follow-up
 legs per pool. A newly verified first buyer can schedule follow-up of its saved
 original scan interval, including an unsampled second buyer. Progress lives in
@@ -29,6 +29,15 @@ events survive bounded entry work and transient failures; expired work is
 explicitly recorded as unevaluated. See the [Radeon runner audit](EXPLORATORY_PAPER.md#bounded-evaluation-and-coverage-audit)
 for timing, completion evidence and remaining coverage limits. This changes
 exploratory collection behavior, not strict wallet qualification or entry policy.
+Version v2 schedules one bounded collection pass before pending entry evaluation
+on each eligible cycle; v1 allowed a nonempty pending queue to postpone collection.
+All sample/window bounds, provider roles and canonical admission checks remain.
+The old revision and skipped intervals remain in history. Expiry bookkeeping now
+uses an atomic source-bound rowid checkpoint, at most 500 examined rows and a
+one-second cooperative allowance. It reconciles committed decisions before
+labeling an event unevaluated, preserves original timestamps and restarts its scan
+on a reorg generation change. Trading reports omit expensive historical totals
+explicitly; full backlog counts belong to separate read-only audits.
 
 ## Supplemental safety evidence
 

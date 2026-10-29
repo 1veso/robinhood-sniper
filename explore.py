@@ -513,6 +513,7 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
             {'revision': COLLECTION_REVISION, 'source_id': store.identity,
              'global_transactions': 32, 'followup_pools': 8, 'followup_legs_per_pool': 16,
              'collection_window_blocks': 3000, 'signal_freshness_seconds': 900,
+             'collection_schedule': 'once per eligible cycle before pending entry evaluation',
              'same_interval_followup': True, 'historical_intervals_reconstructed': False,
              'policy_version': policy.version, 'trading_rules_changed': False}, started)
         ledger.record_event('execution-model:affordable-entry-v1', 'execution_model_revision',
@@ -537,7 +538,7 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
         status['stage_seconds']['source_setup'] = round(max(0, time.time() - source_setup_started), 6)
         def pending_stats():
             if callable(getattr(type(source), 'pending_summary', None)):
-                return source.pending_summary()
+                return source.pending_summary(budget_seconds=.25, include_history=False)
             return {'fresh': None}
         def recorded_outcome(event_id):
             row = ledger.conn.execute('SELECT verdict,reason,observed_at FROM decisions WHERE event_id=?', (event_id,)).fetchone()
@@ -546,13 +547,41 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
         maintenance_started = time.time()
         if callable(getattr(type(source), 'expire_pending', None)):
             status['expired_pending_recorded'] = source.expire_pending(resolve_outcome=recorded_outcome)
+            status['expiry_progress'] = source.expiry_progress
         status['pending_before'] = pending_stats()
         status['stage_seconds']['pending_maintenance'] = round(max(0, time.time() - maintenance_started), 6)
         status['collection'] = {'status': 'NOT_RUN_TRIAL_EXPIRED', 'sampled': 0}
         def selected_work():
-            """Persisted fresh work gets priority over another collection pass."""
-            attempted, resumed, collected = set(), False, False
-            status['collection'] = {'status': 'DEFERRED_SELECTED_PENDING_PRIORITY', 'sampled': 0}
+            """Collect once on cadence, then evaluate all fresh work oldest-first.
+
+            A pending queue must not starve the collector until its 3,000-block
+            window drops still-relevant intervals. Collection remains bounded by
+            the same sample, providers and shared entry deadline.
+            """
+            attempted, resumed = set(), False
+            status['collection'] = {'status': 'DEFERRED_ENTRY_BUDGET', 'sampled': 0}
+            if ledger._get('entry_halt') or time.time() >= entry_deadline:
+                return
+            if time.time() < max(status['source_retry_at'], status['quote_retry_at']):
+                status['collection'] = {'status': 'RATE_LIMIT_BACKOFF', 'sampled': 0,
+                    'retry_at': max(status['source_retry_at'], status['quote_retry_at'])}
+                return
+            try:
+                with entry_phase('collection', rpc, 45):
+                    status['collection'] = source.collect(watch_pools=book.watched_pools(int(time.time()), policy.max_confirmation_age_seconds)) if book else source.collect()
+                if store.reorgs(CHAIN_ID):
+                    with ledger.transaction():
+                        ledger._set('entry_halt', 'source_reorganization_requires_review')
+                    return
+            except (EntryWorkDeferred, RpcBudgetExceeded, RequestBudgetExceeded) as exc:
+                defer(exc)
+            except Exception as exc:
+                source_error(exc); defer(exc)
+                if isinstance(exc, ReorgError):
+                    with ledger.transaction():
+                        ledger._set('entry_halt', 'source_reorganization_requires_review')
+                    return
+                status['collection'] = {'status': 'PROVIDER_DEFERRED', 'sampled': 0}
             while time.time() < entry_deadline and not ledger._get('entry_halt'):
                 if time.time() < max(status['source_retry_at'], status['quote_retry_at']):
                     status['collection'] = {'status': 'RATE_LIMIT_BACKOFF', 'sampled': 0,
@@ -570,18 +599,7 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                         with entry_phase('followup_resume', rpc, 15):
                             status['followup_resume'] = source.resume_followups()
                         continue
-                    if collected:
-                        return
-                    collected = True
-                    # Preserve the existing collector allowance, clipped to the
-                    # shared remaining budget; a short fixed cap can starve a
-                    # valid bounded scan that must commit its anchor atomically.
-                    with entry_phase('collection', rpc, 45):
-                        status['collection'] = source.collect(watch_pools=book.watched_pools(int(time.time()), policy.max_confirmation_age_seconds)) if book else source.collect()
-                    if store.reorgs(CHAIN_ID):
-                        with ledger.transaction():
-                            ledger._set('entry_halt', 'source_reorganization_requires_review')
-                        return
+                    return
                 except (EntryWorkDeferred, RpcBudgetExceeded, RequestBudgetExceeded) as exc:
                     defer(exc)
                     return
@@ -839,6 +857,7 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
              'entry_work': status['entry_work'], 'stage_seconds': status['stage_seconds'],
              'pending_before': status['pending_before'], 'pending_after': status['pending_after'],
              'expired_pending_recorded': status.get('expired_pending_recorded', 0),
+             'expiry_progress': status.get('expiry_progress'),
              'collection': status['collection'], 'errors': len(status['errors'])}, primary_completed_at)
         atomic_json(folder / 'status.json', json_safe(status))
         # All primary trades, notifications and publication complete first.

@@ -9,7 +9,8 @@ from .adapters.evm import (CHAIN_ID, FACTORY, WETH, USDG, SWAP_TOPIC, EvmCollect
     RpcError, HistoricalStateUnavailable, ReorgError, address, quantity, decode_swap, verify_purchase, token_units,
     _words, _address_word, hash32, decode_transfer, TRANSFER_TOPIC, ZERO_ADDRESS)
 
-COLLECTION_REVISION = 'same-interval-pool-followup-v1'
+COLLECTION_REVISION = 'scheduled-bounded-pool-followup-v2'
+EXPIRY_CHECKPOINT = 'exploration_expiry_checkpoint_v1'
 
 
 def verify_recipient_acquisition(swap, pool, receipt, transaction):
@@ -111,43 +112,92 @@ class ExploratorySource:
             ORDER BY e.observed_at,e.block_number,e.log_index,e.tx_hash''', (CHAIN_ID, now - 900, now)).fetchall()
         return [json.loads(row['payload']) for row in rows]
 
-    def expire_pending(self, limit=500, resolve_outcome=None):
+    def expire_pending(self, limit=500, resolve_outcome=None, budget_seconds=1, monotonic=time.monotonic):
         """Reconcile committed decisions, then audit genuinely unevaluated expiry.
 
         The optional read-only resolver bridges a crash after the ledger commits
         but before source.finish(). Its recorded verdict/reason remain authoritative;
         expiry must not relabel such an evaluated event as UNEVALUATED. The return
-        count includes only newly recorded signal_expired outcomes.
+        count includes only newly recorded signal_expired outcomes. Scan at most
+        ``limit`` journal rows by rowid, not the historical anti-join. Outcomes
+        and cursor commit together. Stop before a fresh row so it is revisited
+        later, including late-inserted follow-up observations behind that row.
         """
         if type(limit) is not int or not 1 <= limit <= 500:
             raise ValueError('Expiry batch must be between one and 500')
         if resolve_outcome is not None and not callable(resolve_outcome):
             raise ValueError('Outcome resolver must be callable')
+        if isinstance(budget_seconds, bool) or not 0 < budget_seconds <= 1:
+            raise ValueError('Expiry budget must be positive and at most one second')
         now = int(self.clock())
-        rows = self.store.db.execute('''SELECT e.payload FROM evm_events e
-            WHERE e.chain_id=? AND e.kind='sampled_swap' AND e.canonical=1 AND e.observed_at<?
-              AND NOT EXISTS (SELECT 1 FROM exploration_outcomes o WHERE o.event_id=
-                exploration_signal_id(e.tx_hash,e.log_index,e.block_hash))
-            ORDER BY e.observed_at,e.block_number,e.log_index LIMIT ?''', (CHAIN_ID, now - 900, limit)).fetchall()
+        deadline = monotonic() + budget_seconds
+        db = self.store.db
+        busy_timeout = db.execute('PRAGMA busy_timeout').fetchone()[0]
+        stats = self.expiry_progress = {'scanned': 0, 'expired': 0, 'recovered': 0,
+            'row_limit': limit, 'budget_seconds': budget_seconds, 'checkpoint': None,
+            'status': 'COMPLETE_BATCH', 'historical_backlog_complete': False}
         expired = 0
-        with self.store.transaction():
-            for row in rows:
-                swap = json.loads(row['payload'])
-                recorded = resolve_outcome(signal_id(swap)) if resolve_outcome is not None else None
-                if recorded is not None:
-                    if (not isinstance(recorded, dict) or not isinstance(recorded.get('verdict'), str)
-                            or not recorded['verdict'] or not isinstance(recorded.get('reason'), str) or not recorded['reason']):
-                        raise ValueError('Invalid recorded source outcome')
-                    self.finish(swap, {**recorded, 'observed_at': swap['observed_at'],
-                        'recovered_at': now, 'outcome_source': 'existing_ledger_decision'})
-                else:
-                    self.finish(swap, {'verdict': 'UNEVALUATED', 'reason': 'signal_expired',
-                        'observed_at': swap['observed_at'], 'expired_at': now, 'freshness_seconds': 900})
-                    expired += 1
-        self.store.db.execute("UPDATE exploration_followups SET state='EXPIRED',updated_at=? WHERE state='PENDING' AND interval_id IN (SELECT interval_id FROM exploration_intervals WHERE anchor_at<?)", (now, now - 900))
+        db.execute('PRAGMA busy_timeout=0')
+        db.set_progress_handler(lambda: int(monotonic() >= deadline), 1000)
+        try:
+            with self.store.transaction():
+                generation = db.execute('SELECT COALESCE(MAX(id),0) FROM evm_reorgs WHERE chain_id=?', (CHAIN_ID,)).fetchone()[0]
+                row = db.execute('SELECT value FROM evm_metadata WHERE key=?', (EXPIRY_CHECKPOINT,)).fetchone()
+                saved = json.loads(row[0]) if row else None
+                cursor = 0
+                if saved is not None:
+                    if saved.get('source_id') != self.store.identity or type(saved.get('rowid')) is not int or saved['rowid'] < 0:
+                        raise ValueError('Invalid expiry checkpoint binding')
+                    if saved.get('reorg_id') == generation:
+                        cursor = saved['rowid']
+                rows = db.execute('''SELECT rowid AS journal_rowid,chain_id,kind,canonical,
+                    tx_hash,log_index,block_hash,observed_at FROM evm_events
+                    WHERE rowid>? ORDER BY rowid LIMIT ?''', (cursor, limit)).fetchall()
+                # Remaining statements are indexed point reads/writes. Check the
+                # clock between rows, allowing the completed prefix to commit.
+                db.set_progress_handler(None, 0)
+                for swap in rows:
+                    if monotonic() >= deadline:
+                        stats['status'] = 'BUDGET_DEFERRED'
+                        break
+                    selected = swap['chain_id'] == CHAIN_ID and swap['kind'] == 'sampled_swap' and swap['canonical']
+                    if selected and swap['observed_at'] >= now - 900:
+                        stats['status'] = 'WAITING_FOR_EXPIRY'
+                        break  # Never skip a fresh row that will need an expiry audit later.
+                    if selected and db.execute('SELECT 1 FROM exploration_outcomes WHERE event_id=?', (signal_id(swap),)).fetchone() is None:
+                        recorded = resolve_outcome(signal_id(swap)) if resolve_outcome is not None else None
+                        if recorded is not None:
+                            if (not isinstance(recorded, dict) or not isinstance(recorded.get('verdict'), str)
+                                    or not recorded['verdict'] or not isinstance(recorded.get('reason'), str) or not recorded['reason']):
+                                raise ValueError('Invalid recorded source outcome')
+                            self.finish(swap, {**recorded, 'observed_at': swap['observed_at'],
+                                'recovered_at': now, 'outcome_source': 'existing_ledger_decision'})
+                            stats['recovered'] += 1
+                        else:
+                            self.finish(swap, {'verdict': 'UNEVALUATED', 'reason': 'signal_expired',
+                                'observed_at': swap['observed_at'], 'expired_at': now, 'freshness_seconds': 900})
+                            expired += 1
+                    cursor = swap['journal_rowid']
+                    stats['scanned'] += 1
+                # The loop is bounded; let its already-completed work commit even
+                # when its time allowance elapsed. SQLite busy waits stay disabled.
+                db.set_progress_handler(None, 0)
+                db.execute('INSERT OR REPLACE INTO evm_metadata(key,value) VALUES(?,?)',
+                    (EXPIRY_CHECKPOINT, json.dumps({'source_id': self.store.identity,
+                     'reorg_id': generation, 'rowid': cursor}, sort_keys=True)))
+                stats['checkpoint'] = cursor
+        except sqlite3.OperationalError as exc:
+            if getattr(exc, 'sqlite_errorcode', None) not in (sqlite3.SQLITE_INTERRUPT, sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+                raise
+            expired = 0
+            stats.update(scanned=0, recovered=0, checkpoint=None, status='DATABASE_DEFERRED')
+        finally:
+            db.set_progress_handler(None, 0)
+            db.execute(f'PRAGMA busy_timeout={int(busy_timeout)}')
+        stats['expired'] = expired
         return expired
 
-    def pending_summary(self, budget_seconds=2, monotonic=time.monotonic):
+    def pending_summary(self, budget_seconds=2, monotonic=time.monotonic, include_history=True):
         """Read diagnostic totals within a cooperative two-second wall budget.
 
         Fresh work is counted first through its age index. Historical totals may
@@ -179,12 +229,15 @@ class ExploratorySource:
                 (SELECT 1 FROM exploration_outcomes o WHERE o.event_id=
                  exploration_signal_id(e.tx_hash,e.log_index,e.block_hash))''', (CHAIN_ID, now - 900, now))
             result['fresh'] = fresh['count']
+            result['followup_pending'] = read("SELECT COUNT(*) FROM exploration_followups WHERE state='PENDING'")[0]
+            if not include_history:
+                result['summary_unavailable_reason'] = 'historical totals omitted from trading cycle; available in journal audit'
+                return result
             outcomes = read('''SELECT
                 SUM(CASE WHEN json_extract(payload,'$.reason')='signal_expired' THEN 1 ELSE 0 END) AS expired,
                 SUM(CASE WHEN json_extract(payload,'$.outcome_source')='existing_ledger_decision' THEN 1 ELSE 0 END) AS recovered
                 FROM exploration_outcomes''')
             result.update(expired_recorded=outcomes['expired'] or 0, recovered_ledger_outcomes=outcomes['recovered'] or 0)
-            result['followup_pending'] = read("SELECT COUNT(*) FROM exploration_followups WHERE state='PENDING'")[0]
             historical = read('''SELECT COUNT(*) AS count,MIN(e.observed_at) AS oldest
                 FROM evm_events e WHERE e.chain_id=? AND e.kind='sampled_swap' AND e.canonical=1 AND e.observed_at<?
                 AND NOT EXISTS (SELECT 1 FROM exploration_outcomes o WHERE o.event_id=

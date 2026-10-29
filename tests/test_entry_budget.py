@@ -24,6 +24,7 @@ class EntryBudgetTests(unittest.TestCase):
         self.finished, self.proved, self.recorded = [], [], []
         self.original_time = NOW
         self.prove_hook = None
+        self.collect_hook = None
 
     def tearDown(self):
         self.fixture.tearDown()
@@ -39,7 +40,8 @@ class EntryBudgetTests(unittest.TestCase):
                 return [item for item in fixture.pending if not self.store.db.execute(
                     'SELECT 1 FROM exploration_outcomes WHERE event_id=?', (item['id'],)).fetchone()]
             def collect(self, **kwargs):
-                fixture.collections.append(fixture.tick[0]); return {'sampled': 0}
+                fixture.collections.append(fixture.tick[0])
+                return owner.collect_hook(self.store) if owner.collect_hook else {'sampled': 0}
             def prove(self, item, *, fallback_rpc=None):
                 owner.proved.append(item['id'])
                 if owner.prove_hook is not None:
@@ -155,6 +157,48 @@ class EntryBudgetTests(unittest.TestCase):
         self.assertIn('entry_local_overhead', records[0]['stage_seconds'])
         self.assertIn('financial_reporting', records[0]['stage_seconds'])
         self.assertEqual(len(result['fills']), 1)
+
+    def test_persistent_pending_work_cannot_starve_bounded_collection_across_cycles(self):
+        from sniper.exploratory_source import ExploratorySource
+        from sniper.adapters.evm import CHAIN_ID
+        from test_same_interval_followup import Chain
+        chain = Chain()
+        scans = []
+        def collect(store):
+            source = ExploratorySource(RpcClient(transport=chain,max_retries=0),store,None,
+                                       clock=lambda:self.fixture.tick[0])
+            report = source.collect()
+            scans.append(report)
+            return report
+        self.collect_hook = collect
+        def slow_proof(*args):
+            self.assertEqual(len(scans),len(self.proved))  # Collection already committed.
+            self.fixture.tick[0] += worker.ENTRY_WORK_SECONDS
+        self.prove_hook = slow_proof
+        for cycle in range(4):
+            self.fixture.tick[0] = NOW + 120*cycle
+            chain.head = 150 + 1200*cycle
+            with self.offline(): result = self.fixture.run_cycle()
+            self.assertEqual(result['fills'],[])
+            self.assertTrue((self.fixture.folder/'status.json').exists())
+            self.assertEqual(result['entry_work']['deferred'],1)
+        self.assertEqual(len(scans),4)
+        self.assertEqual([r['skipped_blocks'] for r in scans],[0]*4)
+        self.assertTrue(all(r['blocks_scanned']<=3000 and r['global_sampled_transactions']<=32 for r in scans))
+        self.assertEqual(self.finished,[])  # Original fresh event survives every restart.
+
+    def test_collection_timeout_does_not_consume_existing_pending_event_or_exit_reserve(self):
+        def interrupted(store):
+            self.fixture.tick[0] += 45
+            raise RpcBudgetExceeded('isolated collection timeout')
+        self.collect_hook = interrupted
+        self.seed_position('eip155:4663/erc20:'+'33'*20)
+        with self.offline(): result = self.fixture.run_cycle()
+        self.assertEqual(result['entry_work']['deferred'],1)
+        self.assertEqual(len(result['fills']),2)  # Existing holding plus one eligible pending entry.
+        self.assertEqual(len(self.proved),1)
+        self.assertGreaterEqual(sum(bool(r.get('exit_only')) for r in self.fixture.routes),2)
+        self.assertTrue((self.fixture.folder/'report.html').exists())
 
 
 class ProviderBudgetTests(unittest.TestCase):

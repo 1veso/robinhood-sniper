@@ -44,7 +44,11 @@ Files live under `runtime/exploration/`: `trial.json`, `ledger.sqlite3`, `events
 
 ## Bounded evaluation and coverage audit
 
-Selected fresh events are evaluated oldest first before another collection pass.
+Each eligible cycle makes one bounded collection pass before evaluating selected
+fresh events oldest first. Pending entry work cannot starve collection until the
+3,000-block window skips intervening blocks. The unchanged provider backoff,
+reorg halt, trial deadline and shared time budget can still defer collection;
+long outages remain disclosed gaps, not reconstructed coverage.
 Entry work shares an absolute deadline 80 seconds after cycle start, including
 the initial position watch. Provider timeouts and response reads use the remaining
 allowance. The final position watch has up to 25 seconds for quotes, leaving a
@@ -65,21 +69,30 @@ actual lack of affordable capacity remains `risk_or_cash_budget_exhausted`.
 Position-sized sell-only exit quotes are unchanged.
 
 Budget interruptions and transient provider failures leave original timestamps
-and source events pending. Each cycle records up to 500 expired pending events as
-`UNEVALUATED / signal_expired`, with their original observation time. Remaining
+and source events pending. Expiry maintenance scans at most 500 journal rows per
+cycle within a one-second cooperative budget, recording genuine expired events as
+`UNEVALUATED / signal_expired`, with their original observation time. A source-bound
+rowid checkpoint commits atomically with those outcomes; subsequent cycles do not
+rescan the completed prefix. It stops before a fresh row and restarts its scan
+after a journal reorg generation changes. Writer contention defers maintenance
+without waiting ten seconds. Already-processed rows also consume the row bound,
+so advancing the checkpoint is not the same as expiring 500 events. Remaining
 expired backlog is disclosed; neither expiry nor a skipped check becomes a
 safety failure. A decision already committed before interrupted source
 publication is reconciled from the ledger, never relabeled unevaluated.
-Historical backlog summaries have a two-second read budget; if exceeded, their
-totals are explicitly unavailable. They cannot consume an unbounded share of
-exit/publication time. Complete historical counts remain inspectable in SQLite.
+Trading-cycle summaries read only fresh work and pending follow-ups within a
+quarter-second cooperative budget. Historical totals are null with an explicit
+omission reason; they are never reported as zero. Complete historical counts
+remain inspectable in separate read-only SQLite audits. The existing optional
+full source summary retains its two-second read budget.
 `status.json` includes entry-work counts, stage durations,
 pending/expired counts and primary completion time. The ledger's
 `exploratory_cycle_completed` audit is written after successful primary report
 publication. Task state alone is not completion evidence.
 
-Collection revision `same-interval-pool-followup-v1` is recorded separately from
-the unchanged entry policy. New scan intervals save their source identity,
+Collection revision `scheduled-bounded-pool-followup-v2` records the collection
+scheduling repair separately from the unchanged entry policy and retains the
+earlier `same-interval-pool-followup-v1` history. Scan intervals save their source identity,
 canonical anchor and bounds atomically with the main cursor. A pool with a newly
 verified buyer can recover bounded swap legs from that same interval. Follow-up
 resumes per 500-block chunk and rechecks canonical blocks before admission, then
