@@ -166,3 +166,27 @@ class RadeonExitTests(unittest.TestCase):
                        dict(take_profits=[{'gain_pct':'100','fraction':'.8'},{'gain_pct':'100','fraction':'.4'}])]:
             with self.assertRaises(ValueError):validate({**deepcopy(RUNNER),**change})
         self.assertEqual(len(revision(RUNNER)),64)
+
+    def test_parallel_admission_binds_the_ladder_in_the_entry_transaction(self):
+        from test_parallel_entry_engine import ParallelEntryEngineTests
+        from sniper.entry_strategies import rules_hash
+        fixture=ParallelEntryEngineTests();fixture.setUp()
+        try:
+            account=fixture.ledger._get('account_id')
+            manifest=json.loads(fixture.ledger._get('trial_manifest'))
+            manifest.update(account_id=account,policy_version=fixture.policy.version,
+                            entry_revision=rules_hash(fixture.rules))
+            fixture.ledger._set('trial_manifest',json_text(manifest))
+            activate(fixture.ledger,fixture.policy,RUNNER,now=fixture.now,
+                     expected_account=account,expected_source=fixture.store.identity,
+                     expected_entry_revision=rules_hash(fixture.rules),review_reference='isolated integration')
+            result=fixture.engine.consider(fixture.candidate(),fixture.quote(),fixture.now)
+            self.assertEqual(result['verdict'],'PAPER_BUY')
+            position=fixture.ledger._positions()[0]
+            self.assertEqual(binding(fixture.ledger.conn,position['position_id'])['revision'],revision(RUNNER))
+            fixture.now+=1
+            q=fixture.quote(price=str(position['entry_price']*D('2.1')))
+            sale=fixture.engine.watch({q.asset_id:q},fixture.now)[0]
+            self.assertEqual(sale['reason'],'take_profit_1')
+            self.assertEqual(sale['quantity'],position['qty0']*D('.1'))
+        finally:fixture.tearDown()
