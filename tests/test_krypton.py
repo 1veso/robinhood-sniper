@@ -191,5 +191,10 @@ class KryptonTests(unittest.TestCase):
             self.assertTrue(other.watch(q,self.now))
         finally:other.close()
 
+    def test_early_scheduled_profile_poll_defers_without_new_error(self):
+        self.book.provider('profiles',{'retry_after':self.now+1,'state':'OK'})
+        p=Providers(Path(self.tmp.name),self.book,self.clock,lambda *a,**kw:self.fail('Early poll'))
+        self.assertEqual(scan(ROOT,self.book,p,self.model,self.clock),[])
+
 
 if __name__=='__main__':unittest.main()

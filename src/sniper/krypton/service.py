@@ -4,7 +4,13 @@ from sniper.adapters.solana import request_budget
 from .checks import hard_checks,all_pass,first_failure
 from .config import number
 from .grok import Grok
-from .providers import Providers
+from .providers import Providers,ProviderDeferred
+
+
+def error_reason(exc):
+    # Provider transports already redact their URLs/headers. Validation errors
+    # contain field names, not supplied credentials or complete provider bodies.
+    return str(exc)[:250] if isinstance(exc,ValueError) else type(exc).__name__
 
 
 def scan(root,book,providers=None,model=None,clock=time.time):
@@ -15,7 +21,8 @@ def scan(root,book,providers=None,model=None,clock=time.time):
         book.expire_pending(now)
         with request_budget(clock()+43,clock=clock):
             try:book.discover(providers.profiles(),int(clock()))
-            except Exception as exc:errors.append('profiles: '+type(exc).__name__)
+            except ProviderDeferred:pass
+            except Exception as exc:errors.append('profiles: '+error_reason(exc))
             for candidate in book.pending():
                 mint=candidate['mint'];now=int(clock())
                 if now-candidate['first_seen']>book.cfg['candidate_expiry_seconds']:
@@ -26,9 +33,9 @@ def scan(root,book,providers=None,model=None,clock=time.time):
                     cheap=hard_checks(book.cfg,q,{}, {},int(clock()))[:2]
                     if all_pass(cheap):
                         try:evidence['facts']=providers.holders(mint,book.cfg)
-                        except Exception as exc:problems.append('On-chain evidence: '+type(exc).__name__)
+                        except Exception as exc:problems.append('On-chain evidence: '+error_reason(exc))
                         try:evidence['lp']=providers.lp(mint,q['pool'])
-                        except Exception as exc:problems.append('LP provider: '+type(exc).__name__)
+                        except Exception as exc:problems.append('LP provider: '+error_reason(exc))
                     checks=hard_checks(book.cfg,q,evidence['facts'],evidence['lp'],int(clock()))
                     if not all_pass(checks):
                         book.reject(mint,{'checks':checks,'evidence':evidence,'reason':first_failure(checks),'errors':problems},int(clock()));continue
@@ -40,8 +47,8 @@ def scan(root,book,providers=None,model=None,clock=time.time):
                         book.reject(mint,{'checks':checks,'evidence':evidence,'grok':verdict,'reason':'Grok risk or missing data blocks entry'},int(clock()));continue
                     book.enter(mint,evidence,verdict,int(clock()),lambda:model.gate()['enabled'])
                 except Exception as exc:
-                    errors.append('candidate: '+type(exc).__name__)
-                    book.reject(mint,{'reason':'Evidence/model/portfolio unavailable: '+type(exc).__name__,'evidence':evidence,
+                    errors.append('candidate: '+error_reason(exc))
+                    book.reject(mint,{'reason':'Evidence/model/portfolio unavailable: '+error_reason(exc),'evidence':evidence,
                         'checks':hard_checks(book.cfg,evidence['quote'],evidence['facts'],evidence['lp'],int(clock()))},int(clock()),action='ERROR')
     except Exception as exc:errors.append(type(exc).__name__)
     finally:

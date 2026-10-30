@@ -138,6 +138,12 @@ function freshness(){
   $('clock').textContent=new Date().toLocaleTimeString('en-GB',{timeZone:'Europe/Berlin',hour12:false})+' CET';
   $('connection').textContent=error?'Disconnected':state?'Console connected':'Connecting…';$('connection').className='connection'+(error?' negative':'');
   if(!state)return;
+  if(bot==='krypton'){
+    const workers=state.status.worker_completions||{},issues=state.status.provider_errors||[];
+    $('worker-freshness').textContent=`Scan completed ${age(workers.scan)} ago · exits ${age(workers.watch)} ago${issues.length?' · provider issue: '+issues.join(', '):''}`;
+    $('worker-freshness').className='context-status'+(issues.length||state.status.overdue_workers?.length||state.error_count?' warning':'');
+    return;
+  }
   const finished=state.status.finished_at,old=!finished||Date.now()/1000-finished>state.cadence_seconds*3;
   $('worker-freshness').textContent=`Worker completed ${age(finished)} ago${old?' · overdue':''}${state.error_count?' · '+state.error_count+' operational error'+(state.error_count===1?'':'s'):''}${state.cycle_issues?.some(i=>i.stage==='position_exit'&&i.code==='route_unavailable')?' · exit route unavailable':''}`;$('worker-freshness').className='context-status'+(old||state.error_count||state.snapshot?.unresolved_positions?' warning':'');
   if(bot==='jev'||bot==='neon'||bot==='krypton')return;
@@ -304,8 +310,9 @@ function drawEquity(){
 }
 
 document.querySelectorAll('[data-bot]').forEach(button=>button.addEventListener('click',()=>{
+  if(bot===button.dataset.bot)return;
   $('krypton-panel').hidden=true;
-  if(bot===button.dataset.bot)return;bot=button.dataset.bot;window.NeonWorkspace.setActive(bot==='neon');history.replaceState(null,'','?bot='+bot);generation++;neonRefreshQueued=false;neonRefreshGeneration=-1;selectedAsset='';chart=null;state=null;loading=false;error=false;query='';wallets=null;walletError=false;walletLoading=false;selectedWallet='';walletDetail=null;walletDetailError=false;walletDetailLoading='';$('filter').value='';$('offline').hidden=true;
+  bot=button.dataset.bot;window.NeonWorkspace.setActive(bot==='neon');history.replaceState(null,'','?bot='+bot);generation++;neonRefreshQueued=false;neonRefreshGeneration=-1;selectedAsset='';chart=null;state=null;loading=false;error=false;query='';wallets=null;walletError=false;walletLoading=false;selectedWallet='';walletDetail=null;walletDetailError=false;walletDetailLoading='';$('filter').value='';$('offline').hidden=true;
   document.querySelectorAll('[data-bot]').forEach(b=>{b.classList.toggle('selected',b===button);b.setAttribute('aria-pressed',String(b===button));});
   renderBotIdentity();$('account-id').textContent='Reading selected account…';$('account-id').title='';$('strategy-note').textContent='Reading account policy…';$('worker-freshness').textContent='Waiting for worker status';$('trial-state').textContent='Reading trial status';$('trial-deadline').textContent='—';$('quote-price').textContent='—';$('quote-change').textContent='Loading selected account';$('quote-age').textContent='—';$('instrument-state').textContent='LOADING';html('asset-select','<option>Loading coins…</option>');$('asset-select').disabled=true;for(const id of ['guardrails','health-mini','evidence','rejections','ta'])html(id,'');for(const id of ['open-count','fill-count','trial-return'])$(id).textContent='—';$('trial-detail').textContent='Reading separate account';$('footer-id').textContent='Loading selected account';$('notice').textContent='Observation only · reading separate account';clearCanvas($('equity-chart'));html('metrics',metric('Account','Loading…','Reading separate persistent account'));html('activity','<div class="empty">Reading selected account…</div>');$('chart-empty').hidden=false;$('chart-empty').textContent='Loading selected account…';clearCanvas($('price-chart'));refresh();
 }));

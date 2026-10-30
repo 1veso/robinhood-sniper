@@ -10,6 +10,10 @@ from .config import number, digest
 from .checks import TOKEN_PROGRAM, holder_facts, parsed
 
 
+class ProviderDeferred(ValueError):
+    """A scheduled recurrence arrived before the persisted retry/poll time."""
+
+
 def settings(root):
     path=Path(root)/'krypton_bot/.env'
     values={}
@@ -57,7 +61,7 @@ class Providers:
 
     def request(self,provider,url,body=None):
         now=int(self.clock()); prior=self.book.provider(provider)
-        if prior and prior.get('retry_after',0)>now: raise ValueError(provider+' backoff active')
+        if prior and prior.get('retry_after',0)>now: raise ProviderDeferred(provider+' backoff active')
         # Persist BEFORE the request. Interrupted calls also respect this bound.
         self.book.provider(provider,{'attempted_at':now,'retry_after':now+(60 if provider=='profiles' else 0),'state':'RUNNING'})
         try:

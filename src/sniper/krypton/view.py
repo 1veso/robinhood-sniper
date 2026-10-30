@@ -40,18 +40,20 @@ def snapshot(db,now):
     workers={kind:next((r for r in completed if r['kind']==kind),{}) for kind in ('scan','watch')}
     overdue=[k for k,r in workers.items() if not r.get('finished_at') or now-r['finished_at']>180]
     error_count=sum(len(r.get('payload',{}).get('errors',[])) for r in workers.values())
+    providers={r[0]:json.loads(r[1]) for r in db.execute('SELECT name,payload FROM providers')}
+    provider_errors=[k for k,v in providers.items() if v.get('state')=='ERROR']
     daily=db.execute('SELECT * FROM days ORDER BY day DESC LIMIT 1').fetchone()
     wins=[p for p in closed if p>0];losses=[p for p in closed if p<0]
     status={'finished_at':min((r['finished_at'] for r in workers.values() if r.get('finished_at')),default=None),'cadence_seconds':60,'error_count':error_count,
-        'overdue_workers':overdue,'worker_completions':{k:r.get('finished_at') for k,r in workers.items()},
-        'health':'DEGRADED' if unresolved or error_count or overdue else 'SETUP_BLOCKED',
+        'overdue_workers':overdue,'worker_completions':{k:r.get('finished_at') for k,r in workers.items()},'provider_errors':provider_errors,
+        'health':'DEGRADED' if unresolved or error_count or overdue or provider_errors else 'SETUP_BLOCKED',
         'model_gate':meta.get('model_gate',{'enabled':False,'blockers':['Paid Grok calls disabled']}),
         'signing_calls':0,'broadcast_calls':0,'external_model_attempts':attempts,'live_execution_ready':False}
     return {'account_id':meta['account_id'],'config_hash':meta['config_hash'],'created_at':meta['created_at'],
         'demo':meta['demo'],'execution_mode':'paper','title':'Krypton','purpose':'Solana New-Token Scanner',
         'status':status,'config':cfg,'cost_policy':meta['cost_policy'],'positions':positions,'decisions':decisions,
         'fills':list(reversed(fills[-50:])),'decision_counts':counts,'check_counts':checks,'runs':runs,
-        'providers':{r[0]:json.loads(r[1]) for r in db.execute('SELECT name,payload FROM providers')},
+        'providers':providers,
         'candidate_counts':dict(db.execute('SELECT state,count(*) FROM candidates GROUP BY state')),
         'daily':dict(daily) if daily else None,'assets':[],
         'summary':{'starting_cash':cfg['starting_cash_usd'],'cash':str(cash),'equity':str(equity),
