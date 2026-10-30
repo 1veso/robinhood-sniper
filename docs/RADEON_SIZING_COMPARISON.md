@@ -40,6 +40,16 @@ quotes precede entries, with up to two holdings per account rotating through a
 bounded run; coverage gaps and unresolved marks remain visible. This is bounded
 paper monitoring, not continuous prices or guaranteed exit latency.
 
+After exits, the scheduled worker polls the local tape every half second for up
+to 55 seconds from its start, within the existing 100-second work budget and
+110-second child limit. This avoids an unnecessary full-minute wait for inputs
+captured after the first tape read. Empty polls make no provider requests. The
+500-row and one-candidate limits apply across the entire run, failed attempts
+wait for a later run, and newly published primary provider backoff is honored.
+Task recurrence and overlap rules are unchanged. Startup gaps, host contention
+and sequential exact-size quotes can still let a signal expire; no latency or
+trade is guaranteed.
+
 Fresh safety evidence does not extend a purchase signal's 900-second life. If
 all captured purchase proofs have expired before processing, the worker records
 `candidate_signal_expired` and advances atomically without RPC/quote requests or

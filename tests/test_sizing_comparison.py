@@ -1,5 +1,6 @@
 """Isolated real admission, sizing, exits and restart; zero external calls."""
 from dataclasses import replace
+from contextlib import ExitStack, nullcontext
 from decimal import Decimal as D
 import hashlib
 import json
@@ -226,11 +227,128 @@ class SizingComparisonTests(unittest.TestCase):
         self.study.close(); self.study = self.open()
         with patch.object(radeon_sizing.time, 'time', return_value=self.now), patch.object(radeon_sizing, 'RpcClient') as rpc:
             rpc.return_value.url = 'https://example.invalid'
-            result = radeon_sizing.run(self.root)
+            result = radeon_sizing.run(self.root, intake_wait_seconds=0)
             rpc.return_value.call.assert_not_called()
         self.assertIsInstance(result['finished_at'], int)
         self.assertEqual(result['errors'], [])
         self.assertEqual(result['processed'], {'control': 0, 'usd25': 0})
+
+    def run_waiting_worker(self, on_sleep=None, wait=55):
+        """Real study/engine with a virtual clock and explicitly mocked providers."""
+        import radeon_sizing as worker
+        owner = self
+        tick = [float(self.now)]
+        (self.root/'runtime/exploration/status.json').write_text('{}')
+        rpc = CanonicalRpc()
+        rpc.url = 'https://example.invalid'
+        rpc.budget = lambda *_: nullcontext()
+        class Route:
+            def __init__(self, *_): self.last_evidence = {}
+            def quote(self, token, pool, *, max_notional, **kwargs):
+                q, self.last_evidence = owner.request('eip155:4663/erc20:'+token, pool, max_notional)
+                return q
+        def sleep(seconds):
+            tick[0] += seconds
+            owner.now = int(tick[0])
+            if on_sleep: on_sleep(tick[0])
+        with ExitStack() as stack:
+            stack.enter_context(patch.object(worker.time, 'time', lambda: tick[0]))
+            stack.enter_context(patch.object(worker, 'RpcClient', return_value=rpc))
+            stack.enter_context(patch.object(worker, 'V3RouteClient', Route))
+            stack.enter_context(patch.object(worker, 'Study', side_effect=lambda root, clock:
+                Study(root, clock=clock, registry_loader=lambda *_: {**self.fixture.registry,
+                    'checked_at': self.now, 'updated_at': self.now})))
+            network = stack.enter_context(patch('urllib.request.urlopen', side_effect=AssertionError('No external calls')))
+            result = worker.run(self.root, intake_wait_seconds=wait, sleep=sleep)
+            network.assert_not_called()
+        return result, rpc
+
+    def test_candidate_arriving_after_start_is_admitted_before_purchase_expiry(self):
+        # The original one-shot worker exited before this input existed. A
+        # minute-later invocation would find its purchase proof expired.
+        proof_at = min(p['observed_at'] for p in signal_proofs(self.candidate.metadata['strategy_signals']))
+        self.now = proof_at + 893
+        start = self.now
+        primary_before = list(self.study.primary.iterdump())
+        captured = []
+        def arrive(now):
+            if now >= start + 2 and not captured:
+                c = replace(self.candidate, safety=replace(self.candidate.safety, observed_at=self.now),
+                    metadata={**self.candidate.metadata, 'decision_at': self.now})
+                captured.append(self.row(c))
+        result, rpc = self.run_waiting_worker(arrive)
+        self.assertEqual(result['errors'], [])
+        self.assertGreater(result['intake_polls'], 1)
+        self.assertLess(result['finished_at'] - start, 7)
+        self.assertTrue(rpc.calls)
+        for ledger, _ in self.study.portfolios.values():
+            self.assertEqual(ledger.conn.execute('SELECT COUNT(*) FROM fills').fetchone()[0], 1)
+            event = json.loads(ledger.conn.execute("SELECT payload FROM events WHERE event_id='sizing-input:1'").fetchone()[0])
+            self.assertLessEqual(event['processed_at'] - event['captured_at'], 1)
+        self.assertEqual(primary_before, list(self.study.primary.iterdump()))
+
+    def test_arrival_after_purchase_expiry_is_still_a_gap_without_provider_calls(self):
+        proof_at = max(p['observed_at'] for p in signal_proofs(self.candidate.metadata['strategy_signals']))
+        self.now = proof_at + 900
+        captured = []
+        def arrive(now):
+            if self.now > proof_at + 900 and not captured:
+                c = replace(self.candidate, safety=replace(self.candidate.safety, observed_at=self.now),
+                    metadata={**self.candidate.metadata, 'decision_at': self.now})
+                captured.append(self.row(c))
+        result, rpc = self.run_waiting_worker(arrive)
+        self.assertEqual(result['processed'], {'control': 1, 'usd25': 1})
+        self.assertEqual(rpc.calls, [])
+        self.assertEqual(self.requests, [])
+        for ledger, _ in self.study.portfolios.values():
+            self.assertEqual(ledger.conn.execute('SELECT COUNT(*) FROM fills').fetchone()[0], 0)
+            gap = json.loads(ledger.conn.execute("SELECT payload FROM events WHERE event_id='sizing-gap:1'").fetchone()[0])
+            self.assertEqual(gap['reason'], 'candidate_signal_expired')
+
+    def test_empty_polling_is_bounded_and_never_calls_providers(self):
+        start = self.now
+        result, rpc = self.run_waiting_worker(wait=500)
+        self.assertEqual(result['finished_at'] - start, 55)
+        self.assertGreater(result['intake_polls'], 1)
+        self.assertEqual(result['processed'], {'control': 0, 'usd25': 0})
+        self.assertEqual(rpc.calls, [])
+        self.assertEqual(self.requests, [])
+
+    def test_new_primary_backoff_during_wait_retains_candidate_without_calls(self):
+        start = self.now
+        captured = []
+        def arrive(now):
+            if not captured:
+                captured.append(self.row())
+                (self.root/'runtime/exploration/status.json').write_text(json.dumps({'source_retry_at': start+60}))
+        result, rpc = self.run_waiting_worker(arrive)
+        self.assertEqual(result['processed'], {'control': 0, 'usd25': 0})
+        self.assertEqual(rpc.calls, [])
+        self.assertEqual(self.requests, [])
+        self.assertEqual(self.study.portfolios['control'][0]._get('comparison_cursor'), '0')
+
+    def test_one_candidate_per_account_limit_survives_multiple_polls(self):
+        arrived = []
+        def arrive(now):
+            if not arrived:
+                arrived.extend([self.row(), self.row(replace(self.candidate, event_id='second'), cycle=2)])
+        result, _ = self.run_waiting_worker(arrive)
+        self.assertEqual(result['processed'], {'control': 1, 'usd25': 1})
+        for ledger, _ in self.study.portfolios.values():
+            self.assertEqual(ledger._get('comparison_cursor'), '1')
+            self.assertEqual(ledger.conn.execute('SELECT COUNT(*) FROM fills').fetchone()[0], 1)
+
+    def test_provider_failure_is_not_retried_in_poll_loop(self):
+        arrived = []
+        def arrive(now):
+            if not arrived: arrived.append(self.row())
+        with patch.object(Study, 'process', side_effect=OSError('mock outage')) as process:
+            result, rpc = self.run_waiting_worker(arrive)
+        self.assertEqual(process.call_count, 2)
+        self.assertEqual(len(result['errors']), 2)
+        self.assertEqual(rpc.calls, [])
+        for ledger, _ in self.study.portfolios.values():
+            self.assertEqual(ledger._get('comparison_cursor'), '0')
 
 
 if __name__ == '__main__': unittest.main()

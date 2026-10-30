@@ -16,7 +16,7 @@ from sniper.adapters.solana import DexScreenerClient, request_budget
 from sniper.adapters.v3_route import V3RouteClient
 
 
-def run(root):
+def run(root, *, intake_wait_seconds=55, sleep=time.sleep):
     root = Path(root)
     runtime, folder = root / 'runtime', root / 'runtime/radeon-sizing'
     previous = json.loads((folder / 'status.json').read_text()) if (folder / 'status.json').exists() else {}
@@ -33,7 +33,15 @@ def run(root):
     primary = json.loads((runtime / 'exploration/status.json').read_text(encoding='utf-8'))
     quote_retry = max(status['retry_at'], primary.get('quote_retry_at', 0))
     source_retry = max(status['retry_at'], primary.get('source_retry_at', 0))
+    def refresh_backoff():
+        nonlocal quote_retry, source_retry
+        # Intake can now remain alive while a primary cycle publishes new
+        # backoff. Re-read the local view before making another provider call.
+        current = json.loads((runtime / 'exploration/status.json').read_text(encoding='utf-8'))
+        quote_retry = max(quote_retry, status['retry_at'], current.get('quote_retry_at', 0))
+        source_retry = max(source_retry, status['retry_at'], current.get('source_retry_at', 0))
     def route(asset, pool, size, *, deadline=None, quantity=Decimal(0)):
+        refresh_backoff()
         if time.time() < quote_retry:
             raise RuntimeError('Quote provider backoff')
         route_rpc = RpcClient(quote_url, timeout=8, max_retries=0)
@@ -80,27 +88,46 @@ def run(root):
             engine.watch(quotes, int(time.time()))
             with ledger.transaction():
                 ledger._set('sizing_watch_offset', str(offset + attempted))
-        for name in names:
-            ledger, _ = study.portfolios[name]
-            rows = study.tape.execute('SELECT * FROM observations WHERE seq>? ORDER BY seq LIMIT 500',
-                (int(ledger._get('comparison_cursor')),)).fetchall()
-            count = 0
-            candidate_count = 0
-            for row in rows:
-                if time.time() > deadline - 5:
-                    break
-                if row['kind'] == 'candidate':
-                    if candidate_count or time.time() < max(source_retry, quote_retry, status['retry_at']):
+        # A single snapshot followed by exit could add almost a minute to
+        # candidates captured with only seconds left on their purchase proofs.
+        # Watch the local tape for a bounded part of this existing minute job.
+        # Empty polls make no provider requests. Per-run limits span all polls.
+        intake_until = min(started + max(0, min(55, intake_wait_seconds)), deadline - 5)
+        candidate_counts = {name: 0 for name in names}
+        status['processed'] = {name: 0 for name in names}
+        status['intake_polls'] = 0
+        status['intake_wait_seconds'] = max(0, intake_until - started)
+        failed = set()
+        while True:
+            status['intake_polls'] += 1
+            for name in names:
+                if name in failed:
+                    continue
+                ledger, _ = study.portfolios[name]
+                remaining = 500 - status['processed'][name]
+                rows = study.tape.execute('SELECT * FROM observations WHERE seq>? ORDER BY seq LIMIT ?',
+                    (int(ledger._get('comparison_cursor')), remaining)).fetchall()
+                for row in rows:
+                    if time.time() > deadline - 5:
                         break
-                    candidate_count += 1
-                try:
-                    with request_budget(deadline - 3, clock=time.time), rpc.budget(max(.001, deadline-3-time.time())):
-                        study.process(name, row, rpc=rpc, quote_request=route)
-                    count += 1
-                except Exception as exc:
-                    failure(study, ledger, name + ':input:' + str(row['seq']), exc)
-                    break
-            status['processed'][name] = count
+                    if row['kind'] == 'candidate':
+                        refresh_backoff()
+                        if candidate_counts[name] or time.time() < max(source_retry, quote_retry, status['retry_at']):
+                            break
+                        candidate_counts[name] += 1
+                    try:
+                        with request_budget(deadline - 3, clock=time.time), rpc.budget(max(.001, deadline-3-time.time())):
+                            study.process(name, row, rpc=rpc, quote_request=route)
+                        status['processed'][name] += 1
+                    except Exception as exc:
+                        failure(study, ledger, name + ':input:' + str(row['seq']), exc)
+                        failed.add(name)
+                        break
+            if (time.time() >= intake_until or time.time() >= deadline - 5
+                    or all(name in failed or candidate_counts[name] or status['processed'][name] >= 500
+                           for name in names)):
+                break
+            sleep(min(.5, max(0, intake_until - time.time())))
         study.publish()
         status['finished_at'] = int(time.time())
         status['duration_seconds'] = time.time() - started
