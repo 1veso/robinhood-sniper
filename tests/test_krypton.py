@@ -124,6 +124,7 @@ class KryptonTests(unittest.TestCase):
         accounts=[{'pubkey':address(n),'account':parsed('account',{'mint':mint,'owner':address(n+50),'tokenAmount':{'amount':'2','decimals':0}})} for n in range(10,60)]
         calls=[]
         def transport(method,url,body=None,headers=None,timeout=None):
+            self.assertEqual(headers['Content-Type'],'application/json');self.assertIn('Krypton',headers['User-Agent'])
             method=body['method'];calls.append(method)
             values={'getTokenSupply':{'amount':'100','decimals':0},'getTokenLargestAccounts':[{'address':a['pubkey']} for a in accounts[:20]],
                 'getMultipleAccounts':[ma]+[a['account'] for a in accounts[:20]],'getProgramAccounts':accounts,'getAccountInfo':ma}
@@ -179,6 +180,16 @@ class KryptonTests(unittest.TestCase):
         self.book.expire_pending(self.now);self.book.expire_pending(self.now)
         self.assertEqual([r['mint'] for r in self.book.pending()],[address(3)])
         self.assertEqual(self.book.db.execute('SELECT count(*) FROM decisions').fetchone()[0],2)
+
+    def test_exit_policy_is_read_from_immutable_ledger(self):
+        from sniper.krypton.paper import bound_config
+        self.entry();cfg=bound_config(self.book.folder)
+        self.assertEqual(cfg['stop_loss_pct'],'0.25');self.assertEqual(cfg['take_profit_pct'],'0.50')
+        other=Paper(self.book.folder,cfg,demo=True)
+        try:
+            q=self.providers.costs(self.providers.quote(address(1)));q['price']='.5'
+            self.assertTrue(other.watch(q,self.now))
+        finally:other.close()
 
 
 if __name__=='__main__':unittest.main()

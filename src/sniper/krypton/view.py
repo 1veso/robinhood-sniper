@@ -37,10 +37,14 @@ def snapshot(db,now):
             r=dict(row);r['payload']=json.loads(r['payload']);runs.append(r)
     completed=[r for r in runs if r['finished_at'] is not None]
     latest=max(completed,key=lambda r:r['finished_at']) if completed else {}
+    workers={kind:next((r for r in completed if r['kind']==kind),{}) for kind in ('scan','watch')}
+    overdue=[k for k,r in workers.items() if not r.get('finished_at') or now-r['finished_at']>180]
+    error_count=sum(len(r.get('payload',{}).get('errors',[])) for r in workers.values())
     daily=db.execute('SELECT * FROM days ORDER BY day DESC LIMIT 1').fetchone()
     wins=[p for p in closed if p>0];losses=[p for p in closed if p<0]
-    status={'finished_at':latest.get('finished_at'),'cadence_seconds':60,'error_count':len(latest.get('payload',{}).get('errors',[])),
-        'health':'DEGRADED' if unresolved or latest.get('state')=='ERROR' else 'SETUP_BLOCKED',
+    status={'finished_at':min((r['finished_at'] for r in workers.values() if r.get('finished_at')),default=None),'cadence_seconds':60,'error_count':error_count,
+        'overdue_workers':overdue,'worker_completions':{k:r.get('finished_at') for k,r in workers.items()},
+        'health':'DEGRADED' if unresolved or error_count or overdue else 'SETUP_BLOCKED',
         'model_gate':meta.get('model_gate',{'enabled':False,'blockers':['Paid Grok calls disabled']}),
         'signing_calls':0,'broadcast_calls':0,'external_model_attempts':attempts,'live_execution_ready':False}
     return {'account_id':meta['account_id'],'config_hash':meta['config_hash'],'created_at':meta['created_at'],

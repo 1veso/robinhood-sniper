@@ -72,8 +72,8 @@ seven-day clock is inherited from another account.
 
 Before `init`, thresholds are in `config.json`. After initialization the exact
 configuration is ledger-bound. Changing it requires an explicit account migration;
-editing the file alone stops workers safely rather than rewriting history. Existing
-positions retain their original exits. There is no console policy editor.
+editing the file alone blocks scans rather than rewriting history. The independent
+watcher reads the ledger-bound policy and keeps the original exits running. There is no console policy editor.
 
 ## Evidence limits
 

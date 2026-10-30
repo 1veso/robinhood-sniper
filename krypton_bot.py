@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parent
 sys.path.insert(0,str(ROOT/'src'))
 from rug_desk.book import process_lock
 from sniper.krypton.config import load,encode
-from sniper.krypton.paper import Paper
+from sniper.krypton.paper import Paper,bound_config
 
 
 def main(argv=None):
@@ -27,7 +27,8 @@ def main(argv=None):
     if args.command=='status':
         from sniper.krypton.view import view
         print(encode(view(ROOT)));return 0
-    cfg=load(ROOT/'krypton_bot');folder=ROOT/'krypton_bot/runtime'
+    folder=ROOT/'krypton_bot/runtime'
+    cfg=bound_config(folder) if args.command=='watch' else load(ROOT/'krypton_bot')
     if args.command=='init':
         with process_lock(folder/'worker.lock'):
             book=Paper(folder,cfg,initialize=True)
@@ -40,7 +41,7 @@ def main(argv=None):
     from sniper.krypton.service import scan,watch
     def once(command):
         with process_lock(folder/(command+'.lock')):
-            book=Paper(folder,cfg)
+            book=Paper(folder,bound_config(folder) if command=='watch' else load(ROOT/'krypton_bot'))
             try:return (scan if command=='scan' else watch)(ROOT,book)
             finally:book.close()
     if args.command=='run':

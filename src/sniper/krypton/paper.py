@@ -18,6 +18,18 @@ from .checks import hard_checks, all_pass
 def day(now): return datetime.fromtimestamp(now,ZoneInfo('Europe/Berlin')).date().isoformat()
 
 
+def bound_config(folder):
+    """Exit workers retain approved exits even when the editable config drifts."""
+    path=Path(folder)/'book.sqlite3'
+    db=sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=3)
+    try:
+        rows=dict(db.execute("SELECT key,value FROM meta WHERE key IN ('config','config_hash')"))
+        cfg=json.loads(rows['config'])
+        if digest(cfg)!=json.loads(rows['config_hash']):raise ValueError('Stored account policy binding invalid')
+        return cfg
+    finally:db.close()
+
+
 class Paper:
     def __init__(self,folder,cfg,*,initialize=False,demo=False,clock=time.time):
         self.folder,self.cfg,self.clock=Path(folder),cfg,clock

@@ -61,7 +61,9 @@ class Providers:
         # Persist BEFORE the request. Interrupted calls also respect this bound.
         self.book.provider(provider,{'attempted_at':now,'retry_after':now+(60 if provider=='profiles' else 0),'state':'RUNNING'})
         try:
-            result=self.transport('POST' if body else 'GET',url,body=body,headers={},timeout=8)
+            headers={'Accept':'application/json','User-Agent':'sniper-paper/0.1 Krypton'}
+            if body is not None:headers['Content-Type']='application/json'
+            result=self.transport('POST' if body is not None else 'GET',url,body=body,headers=headers,timeout=8)
         except Exception as exc:
             code=exc.code if isinstance(exc,HTTPError) else None
             self.book.provider(provider,{'attempted_at':now,'finished_at':int(self.clock()),'state':'ERROR',
