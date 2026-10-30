@@ -40,6 +40,11 @@ quotes precede entries, with up to two holdings per account rotating through a
 bounded run; coverage gaps and unresolved marks remain visible. This is bounded
 paper monitoring, not continuous prices or guaranteed exit latency.
 
+Fresh safety evidence does not extend a purchase signal's 900-second life. If
+all captured purchase proofs have expired before processing, the worker records
+`candidate_signal_expired` and advances atomically without RPC/quote requests or
+a fill. The original timestamps and any earlier failed attempts remain intact.
+
 `runtime/radeon-sizing/manifest.json` binds the two account IDs, source UUID,
 source-tape identity, original deadline and immutable policies. Each subfolder
 has its own `ledger.sqlite3`. `status.json` records actual worker completion;

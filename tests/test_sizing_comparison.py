@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from sniper.ledger import json_text
+from sniper.parallel_entry import signal_proofs
 from sniper.radeon_exits import activate, RUNNER, binding
 from sniper.sizing_comparison import Study, initialize
 import test_parallel_entry_engine as fixture_module
@@ -137,6 +138,39 @@ class SizingComparisonTests(unittest.TestCase):
         ledger, _ = self.study.portfolios['usd25']
         self.assertEqual(ledger.positions(), [])
         self.assertEqual(ledger._get('comparison_cursor'), '1')
+
+    def test_fresh_safety_with_expired_purchases_advances_once_without_network(self):
+        proofs = signal_proofs(self.candidate.metadata['strategy_signals'])
+        self.now = max(p['observed_at'] for p in proofs) + 901
+        candidate = replace(self.candidate, safety=replace(self.candidate.safety, observed_at=self.now))
+        row = self.row(candidate)
+        primary_before = list(self.study.primary.iterdump())
+        for name in ('control', 'usd25'):
+            with patch.object(self.study.portfolios[name][1], 'confirm_proofs',
+                              side_effect=AssertionError('Expired proof must not use RPC')):
+                self.process(name, row)
+            ledger, _ = self.study.portfolios[name]
+            self.assertEqual(ledger._get('comparison_cursor'), '1')
+            self.assertEqual(ledger.positions(), [])
+            self.assertEqual(ledger.conn.execute('SELECT COUNT(*) FROM fills').fetchone()[0], 0)
+            reason = json.loads(ledger.conn.execute("SELECT payload FROM events WHERE event_id='sizing-gap:1'").fetchone()[0])
+            self.assertEqual(reason['reason'], 'candidate_signal_expired')
+        self.assertEqual(self.requests, [])
+        self.assertEqual(primary_before, list(self.study.primary.iterdump()))
+        self.study.close(); self.study = self.open()
+        self.process('usd25', row)
+        self.assertEqual(self.study.portfolios['usd25'][0].conn.execute(
+            "SELECT COUNT(*) FROM events WHERE event_id='sizing-gap:1'").fetchone()[0], 1)
+
+    def test_purchase_at_exact_confirmation_boundary_still_gets_checked(self):
+        proofs = signal_proofs(self.candidate.metadata['strategy_signals'])
+        self.now = min(p['observed_at'] for p in proofs) + 900
+        candidate = replace(self.candidate, safety=replace(self.candidate.safety, observed_at=self.now))
+        engine = self.study.portfolios['control'][1]
+        with patch.object(engine, 'confirm_proofs', wraps=engine.confirm_proofs) as confirm:
+            self.process('control', self.row(candidate))
+            confirm.assert_called_once()
+        self.assertTrue(self.requests)
 
     def test_wrong_pool_quote_is_not_substituted(self):
         row = self.row()

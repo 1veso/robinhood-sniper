@@ -187,8 +187,18 @@ class Study:
                 'source_known_safety_failure' if metadata(self.primary).get('safety_rejection:' + candidate.asset_id.split(':')[-1]) else
                 entry_account_blocker(engine, candidate.asset_id, now))
             if not reason:
+                proofs = signal_proofs(candidate.metadata['strategy_signals'])
+                # A newly captured candidate can carry older purchases. Once
+                # every supplied proof has expired, no entry path can qualify.
+                # Record that terminal outcome instead of retrying a canonical
+                # binding failure until the separate safety report also ages out.
+                if proofs and all(type(p.get('observed_at')) is int and
+                        now - p['observed_at'] > engine.policy.max_confirmation_age_seconds
+                        for p in proofs):
+                    reason = 'candidate_signal_expired'
+            if not reason:
                 # Never treat a saved process's receipt or smaller quote as current evidence.
-                checked = engine.confirm_proofs(signal_proofs(candidate.metadata['strategy_signals']), rpc)
+                checked = engine.confirm_proofs(proofs, rpc)
                 quote, evidence = sized_entry_quote(engine, lambda size, **kw:
                     quote_request(candidate.asset_id, source_quote.pool_id, size, **kw), clock=self.clock)
                 candidate = replace(candidate, metadata={**candidate.metadata, 'canonical_checked_at': checked,
