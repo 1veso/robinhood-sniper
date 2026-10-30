@@ -55,6 +55,14 @@ recurrence, 30-second boot trigger, 110-second child limit and three-minute task
 limit. Overlapping recurrences do not run a second instance. No primary schedule
 changes. Reports are read-only at `/radeon-sizing` and `/api/radeon-sizing`.
 
+Radeon's main workspace shows a prominent `$25 paper comparison` panel directly
+under its account heading. It polls the derived report independently of the main
+account request and compares both portfolios' P&L, equity, modeled costs,
+observed drawdown and entry/close counts. Empty cohorts are labeled explicitly;
+unavailable fields are not converted to zero. Report timestamps, backlog and
+stale/disconnected states remain visible. The panel is hidden immediately when
+selecting another bot; its full-report link remains available in the panel.
+
 No Telegram delivery, paid models, live signer, broadcast or automatic promotion
 exists in this study. Synthetic tests remain outside all production accounts.
 The archived installer is not rebuilt by this source installation.

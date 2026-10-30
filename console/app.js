@@ -21,6 +21,38 @@ function renderBotIdentity(){const label=botLabels[bot];$('account-title').textC
 let neonRefreshQueued=false,neonRefreshGeneration=-1;
 let wallets=null, walletError=false, walletLoading=false, selectedWallet='', walletDetail=null, walletDetailError=false, walletDetailRequest=0, walletDetailLoading='';
 let jevDetail=null,jevDetailError='',jevLoading=false;
+let sizingReport=null,sizingLoading=false,sizingError=false;
+
+function setSizingActive(){
+  $('sizing-study-panel').hidden=bot!=='robinhood';
+  if(bot==='robinhood')renderSizing();
+}
+async function refreshSizing(){
+  if(bot!=='robinhood'||sizingLoading)return;
+  sizingLoading=true;const token=generation;
+  try{
+    const next=await fetchJSON('/api/radeon-sizing');
+    if(token!==generation||bot!=='robinhood')return;
+    const c=next.variants?.control,v=next.variants?.usd25;
+    if(next.format!=='radeon_size_comparison_v1'||!c||!v||!c.account_id||!v.account_id||c.account_id===v.account_id||c.account_id!==next.accounts?.control||v.account_id!==next.accounts?.usd25||[c.account_id,v.account_id].includes(next.source_account_id))throw new Error('Comparison identity unavailable');
+    if(state?.bot==='robinhood'&&state.account_id!==next.source_account_id)throw new Error('Comparison belongs to another source account');
+    sizingReport=next;sizingError=false;
+  }catch(e){if(token===generation)sizingError=true;}
+  finally{sizingLoading=false;if(token===generation&&bot==='robinhood')renderSizing();}
+}
+function renderSizing(){
+  if(bot!=='robinhood')return;
+  if(!sizingReport){html('sizing-study-content',`<p class="sizing-message${sizingError?' warning':''}">${sizingError?'Comparison unavailable. Retrying automatically; no zero results are assumed.':'Reading the comparison ledgers…'}</p>`);return;}
+  const r=sizingReport,c=r.variants.control,v=r.variants.usd25;
+  const empty=[c,v].every(x=>finite(x.new_entries)&&Number(x.new_entries)===0);
+  const overdue=!r.as_of||Date.now()/1000-Number(r.as_of)>180;
+  const status=sizingError?'Update interrupted':overdue?'Report overdue':empty?'Waiting for first trade':'Collecting paper results';
+  const row=(label,field,format=usd)=>`<tr><th scope="row">${label}</th><td>${format(c[field])}</td><td>${format(v[field])}</td></tr>`;
+  const drawdown=x=>`${usd(x.max_observed_drawdown_usd)}<small>${finite(x.max_observed_drawdown_pct)?number(x.max_observed_drawdown_pct)+'%':'—'}</small>`;
+  const limits=x=>{const p=x.policy||{},base=Number(x.seed_equity);return finite(x.seed_equity)&&finite(p.per_position_risk_pct)&&finite(p.max_account_risk_pct)?`${usd(base*Number(p.per_position_risk_pct)/100)} per position · ${usd(base*Number(p.max_account_risk_pct)/100)} aggregate`:'Limits unavailable';};
+  const backlog=[c,v].every(x=>finite(x.backlog))?Number(c.backlog)+Number(v.backlog):null;
+  html('sizing-study-content',`<div class="sizing-status-line"><strong class="${sizingError||overdue?'warning':''}">${status}</strong><span>Report ${stamp(r.as_of,true)} Berlin · ${age(r.as_of)} ago</span></div>${sizingError||overdue?'<p class="sizing-message warning">Last recorded values below are not current. Automatic retries continue.</p>':''}<table class="sizing-metrics" aria-label="Control versus $25 paper comparison"><thead><tr><th scope="col">Performance</th><th scope="col">Control<small>Original size limits</small></th><th scope="col">$25 variant<small>Larger size limits</small></th></tr></thead><tbody>${row('Net paper P&amp;L','net_pnl',signed)}${row('Realized P&amp;L','realized_pnl',signed)}${row('Modeled trading costs','modeled_costs')}${row('Conservative equity','conservative_equity')}<tr><th scope="row">Max observed drawdown</th><td>${drawdown(c)}</td><td>${drawdown(v)}</td></tr><tr><th scope="row">Entries / closed trades</th><td>${number(c.new_entries,0)} / ${number(c.new_closed_positions,0)}</td><td>${number(v.new_entries,0)} / ${number(v.new_closed_positions,0)}</td></tr></tbody></table><div class="sizing-limits"><span><b>Control</b> ${limits(c)}</span><span><b>$25 variant</b> ${limits(v)}</span></div><p class="sizing-note">Initial limits include modeled costs and reserves; actual size can be lower. Both retain a 2% daily loss halt.</p><div class="sizing-bottom"><p>${empty?'No trades yet. These zero results are an empty sample, not evidence of profitability.':'Results include open positions and modeled costs. A small sample does not establish an edge.'}${[c,v].some(x=>x.valuation_complete===false)?' Unresolved marks make equity conservative; no sale is inferred.':''}</p><span>${backlog===null?'Backlog unknown':backlog?'Pending inputs: '+number(backlog,0):'Caught up · no backlog'}</span></div><p class="sizing-note">Uses prospective candidates from Radeon’s sampled intake. Source gaps remain recorded; drawdown is observed, not continuous. <a href="/api/radeon-sizing" download>Download full metrics</a></p>`);
+}
 
 async function loadJevDetail(id){
   jevLoading=true;jevDetail=null;jevDetailError='';if(bot==='jev'&&state?.bot==='jev')renderJev();
@@ -47,6 +79,7 @@ function renderJev(){
 
 async function fetchJSON(path){const response=await fetch(path,{cache:'no-store',signal:AbortSignal.timeout(18000)});const data=await response.json();if(!response.ok)throw new Error(data.error||'Console connection interrupted');return data;}
 async function refresh(){
+  if(bot==='robinhood')void refreshSizing();
   if(loading){if(bot==='neon'){neonRefreshQueued=true;neonRefreshGeneration=generation;}return;}loading=true;const token=generation;let completed=false;
   try{
     const next=await fetchJSON('/api/state?bot='+bot);
@@ -97,7 +130,7 @@ function metric(label,value,detail,cls=''){return `<div class="metric"><span>${e
 function key(label,value,cls=''){return `<div class="key-row"><span>${esc(label)}</span><b class="${cls}">${value}</b></div>`;}
 function ack(q){if(!q?.available)return '<span class="warning">Unavailable</span>';const pending=Object.entries(q.counts).filter(([k])=>!['sent','suppressed','expired'].includes(k)).reduce((n,[,v])=>n+v,0);return `<span class="${pending?'warning':'positive'}">${q.counts.sent||0} acknowledged${pending?' · '+pending+' unresolved':''}</span>`;}
 function render(){
-  $('sizing-study-link').hidden=bot!=='robinhood';
+  setSizingActive();
   window.NeonWorkspace.setActive(bot==='neon');
   window.HeliumView.setActive(bot==='helium');
   document.querySelectorAll('.market-grid,.ledger-panel,.detail-grid').forEach(el=>{el.hidden=bot==='jev'||bot==='krypton'||bot==='helium';});
@@ -329,6 +362,7 @@ function drawEquity(){
 
 document.querySelectorAll('[data-bot]').forEach(button=>button.addEventListener('click',()=>{
   if(bot===button.dataset.bot)return;
+  $('sizing-study-panel').hidden=button.dataset.bot!=='robinhood';
   $('krypton-panel').hidden=true;
   $('helium-panel').hidden=true;
   bot=button.dataset.bot;window.NeonWorkspace.setActive(bot==='neon');window.HeliumView.setActive(bot==='helium');history.replaceState(null,'','?bot='+bot);generation++;neonRefreshQueued=false;neonRefreshGeneration=-1;selectedAsset='';chart=null;state=null;loading=false;error=false;query='';wallets=null;walletError=false;walletLoading=false;selectedWallet='';walletDetail=null;walletDetailError=false;walletDetailLoading='';$('filter').value='';$('offline').hidden=true;
@@ -349,6 +383,6 @@ $('price-chart').addEventListener('pointerleave',()=>{$('chart-tip').hidden=true
 let resizeTimer;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{if(state){drawChart();drawEquity();}},100);});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
 renderBotIdentity();window.NeonWorkspace.configure({refresh:()=>{if(bot==='neon')refresh();}});window.NeonWorkspace.setActive(bot==='neon');window.HeliumView.setActive(bot==='helium');document.querySelectorAll('[data-bot]').forEach(b=>{b.classList.toggle('selected',b.dataset.bot===bot);b.setAttribute('aria-pressed',String(b.dataset.bot===bot));});
-setInterval(()=>{if(!document.hidden)refresh();},5000);setInterval(freshness,1000);refresh();
+setSizingActive();setInterval(()=>{if(!document.hidden)refresh();},5000);setInterval(freshness,1000);refresh();
 
 $('rejection-scope').addEventListener('change',event=>{rejectionScope=event.target.value;if(state&&state.rejection_scopes)renderReasons();});

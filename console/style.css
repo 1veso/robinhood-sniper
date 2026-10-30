@@ -14,3 +14,45 @@
 .rejection-scope{max-width:145px;padding:6px 8px;border:1px solid var(--line);background:var(--raised);color:var(--text);font-size:11px}
 
 @media(max-width:480px){.rail{gap:4px}.bot-button{min-width:0;min-height:44px;justify-content:center;padding:10px 4px;gap:5px}.bot-button .bot-icon{display:none}.bot-button .dot{margin-left:2px}.bot-button strong{font-size:12px}}
+
+/* The isolated size study is a primary Radeon panel, separate from its account. */
+.sizing-study{margin:22px 0 26px;border-color:#52716a;border-top:3px solid var(--green);scroll-margin-top:20px}
+.sizing-study-heading{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px 20px 0}
+.sizing-eyebrow{display:block;color:var(--green);font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;margin-bottom:7px}
+.sizing-study-heading h2{font-size:21px;font-weight:600;letter-spacing:-.3px}
+.sizing-study-heading>a{display:inline-flex;align-items:center;gap:16px;padding:11px 14px;border:1px solid #52716a;border-radius:5px;background:#20312b;font-size:12px;font-weight:600;text-decoration:none;white-space:nowrap}
+.sizing-study-heading>a:hover{background:#2a4036}
+.sizing-intro{font-size:11px;color:var(--muted);line-height:1.6;margin:10px 20px 15px}
+.sizing-status-line{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 20px;background:#1d2926;border-top:1px solid var(--line);font-size:11px;flex-wrap:wrap}
+.sizing-status-line>span{color:var(--muted);font-size:10px}
+.sizing-metrics{table-layout:fixed;white-space:normal}
+.sizing-metrics th,.sizing-metrics td{padding:10px 20px;text-align:right;vertical-align:middle}
+.sizing-metrics th:first-child{width:40%;text-align:left}
+.sizing-metrics th:not(:first-child){font-size:12px;color:var(--text);font-weight:600}
+.sizing-metrics tbody th{background:transparent;border-top:1px solid var(--line);font-size:11px}
+.sizing-metrics td{font-family:Consolas,"Cascadia Mono",monospace;font-size:15px}
+.sizing-metrics small{display:block;margin-top:3px;font:10px "Segoe UI",system-ui,sans-serif;color:var(--muted);font-weight:400}
+.sizing-limits{display:flex;gap:10px 24px;flex-wrap:wrap;padding:13px 20px 0;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}
+.sizing-limits b{color:var(--text);font-weight:600;margin-right:5px}
+.sizing-note{margin:8px 20px 14px;color:var(--muted);font-size:10px;line-height:1.6}
+.sizing-bottom{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 20px 0;font-size:11px;line-height:1.6}
+.sizing-bottom p{margin:0;max-width:75ch}
+.sizing-bottom>span{color:var(--muted);white-space:nowrap;font-size:10px}
+.sizing-message{padding:5px 20px;font-size:12px;line-height:1.7}
+@media(max-width:760px){
+  .sizing-study{margin:18px 0 22px}
+  .sizing-study-heading{align-items:flex-start;flex-direction:column;gap:12px;padding:15px 14px 0}
+  .sizing-study-heading h2{font-size:20px}
+  .sizing-study-heading>a{width:100%;justify-content:space-between}
+  .sizing-intro{margin:10px 14px 13px}
+  .sizing-status-line{padding:11px 14px;gap:5px}
+  .sizing-metrics th,.sizing-metrics td{padding:10px 10px}
+  .sizing-metrics th:first-child{padding-left:14px;width:42%}
+  .sizing-metrics th:not(:first-child){font-size:11px}
+  .sizing-metrics td{font-size:13px;overflow-wrap:anywhere}
+  .sizing-metrics tbody th{font-size:10px;line-height:1.5}
+  .sizing-metrics small{font-size:9px;line-height:1.5}
+  .sizing-limits{padding:13px 14px 0;gap:8px;font-size:10px}
+  .sizing-note{margin:8px 14px 13px}
+  .sizing-bottom{margin:13px 14px 0;align-items:flex-start;flex-direction:column;gap:6px}
+}
