@@ -29,6 +29,8 @@ JOBS = {
     'neon-signals': ('NEON Paper Signals', 1, 170, ['neon_bot.py', 'signals']),
     'neon-watch': ('NEON Paper Watch', 10, 480, ['neon_bot.py', 'watch']),
     'jev-review': ('Pump Jev Shadow Review', 1, 50, ['jev_review.py', 'once']),
+    'krypton-scan': ('KRYPTON Paper Scan', 1, 50, ['krypton_bot.py', 'scan']),
+    'krypton-watch': ('KRYPTON Paper Watch', 1, 50, ['krypton_bot.py', 'watch']),
 }
 
 
@@ -62,6 +64,12 @@ def initialize(root=ROOT):
         book.close()
     from sniper.neon import initialize as initialize_neon
     initialize_neon(root)
+    if (root/'krypton_bot/config.json').is_file():
+        from sniper.krypton.config import load
+        from sniper.krypton.paper import Paper
+        krypton=Paper(root/'krypton_bot/runtime',load(root/'krypton_bot'),initialize=True)
+        try:krypton.publish()
+        finally:krypton.close()
     return status(root)
 
 

@@ -33,7 +33,7 @@ def source_files(root=ROOT):
             continue
         if not path.is_file() or path.is_symlink():
             continue
-        if (len(rel.parts) == 1 and (path.suffix in ('.py', '.toml') or path.name=='requirements-executor.txt')) or (
+        if (len(rel.parts) == 1 and (path.suffix in ('.py', '.toml') or path.name in ('requirements-executor.txt','requirements-krypton.txt'))) or rel.as_posix() in ('krypton_bot/config.json','krypton_bot/README.md','krypton_bot/.env.example') or (
                 rel.parts[0] in ('src', 'rug_desk', 'console', 'config', 'docs', 'scripts')
                 and path.suffix in ('.py', '.json', '.toml', '.html', '.js', '.css', '.svg', '.md', '.ps1')):
             if any(x in path.name.lower() for x in ('api-key', 'trading-address', 'recipient', 'token.txt')):

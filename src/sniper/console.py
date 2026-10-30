@@ -170,7 +170,7 @@ class ConsoleData:
     def _inspect_jobs(self):
         if os.name != 'nt':
             return {'available': False, 'items': [], 'checked_at': None, 'error': 'unsupported_platform'}
-        command = "$ErrorActionPreference='Stop'; Get-ScheduledTask -TaskName 'SNIPER*','RUG DESK*','NEON*','Pump Jev*' | Where-Object { $_.TaskName -in @('SNIPER Exploratory Paper','SNIPER Paper Research','SNIPER Telegram Monitor','SNIPER Automatic Executor Shadow','RUG DESK Watch','RUG DESK Scan','RUG DESK Report','RUG DESK Console','NEON Paper Signals','NEON Paper Watch','Pump Jev Shadow Review') } | ForEach-Object { $i=$_ | Get-ScheduledTaskInfo; [pscustomobject]@{name=$_.TaskName;state=[string]$_.State;last_result=$i.LastTaskResult;last_run=$i.LastRunTime.ToUniversalTime().ToString('o');next_run=$i.NextRunTime.ToUniversalTime().ToString('o');working_directory=($_.Actions | Select-Object -First 1).WorkingDirectory} } | ConvertTo-Json -Compress"
+        command = "$ErrorActionPreference='Stop'; Get-ScheduledTask -TaskName 'SNIPER*','RUG DESK*','NEON*','Pump Jev*','KRYPTON*' | Where-Object { $_.TaskName -in @('SNIPER Exploratory Paper','SNIPER Paper Research','SNIPER Telegram Monitor','SNIPER Automatic Executor Shadow','RUG DESK Watch','RUG DESK Scan','RUG DESK Report','RUG DESK Console','NEON Paper Signals','NEON Paper Watch','Pump Jev Shadow Review','KRYPTON Paper Scan','KRYPTON Paper Watch') } | ForEach-Object { $i=$_ | Get-ScheduledTaskInfo; [pscustomobject]@{name=$_.TaskName;state=[string]$_.State;last_result=$i.LastTaskResult;last_run=$i.LastRunTime.ToUniversalTime().ToString('o');next_run=$i.NextRunTime.ToUniversalTime().ToString('o');working_directory=($_.Actions | Select-Object -First 1).WorkingDirectory} } | ConvertTo-Json -Compress"
         result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', command], capture_output=True, timeout=25, creationflags=subprocess.CREATE_NO_WINDOW)
         if result.returncode:
             raise ValueError('Task inspection unavailable')
@@ -223,10 +223,15 @@ class ConsoleData:
             return value
 
     def state(self, bot='robinhood'):
-        if bot not in ('robinhood', 'solana', 'neon', 'jev'):
+        if bot not in ('robinhood', 'solana', 'neon', 'jev', 'krypton'):
             raise ValueError('Unknown bot')
         def load():
-            if bot == 'jev':
+            if bot == 'krypton':
+                from .krypton.view import view
+                data = view(self.root)
+                data['cadence_seconds'] = 60
+                data['error_count'] = data.get('status', {}).get('error_count', 0)
+            elif bot == 'jev':
                 from .jev_review import view
                 data = view(self.root)
             elif bot == 'neon':
@@ -253,7 +258,7 @@ class ConsoleData:
                         if job.get('name')=='NEON Paper Signals':worker['next_scan_at']=planned
                         if job.get('name')=='NEON Paper Watch':worker['next_watch_at']=planned
             from .switchover import inventory
-            if bot not in ('neon','jev'):
+            if bot not in ('neon','jev','krypton'):
                 data['switchover'] = inventory(self.root, 'evm' if bot=='robinhood' else 'solana')
             if bot=='robinhood':
                 try:
@@ -513,7 +518,8 @@ def make_server(root, host='127.0.0.1', port=8765):
     data = ConsoleData(root)
     static = Path(__file__).resolve().parents[2] / 'console'
     files = {'/': ('index.html','text/html; charset=utf-8'), '/app.js': ('app.js','text/javascript; charset=utf-8'), '/style.css': ('style.css','text/css; charset=utf-8'), '/favicon.svg': ('favicon.svg','image/svg+xml'),
-             '/neon.js':('neon.js','text/javascript; charset=utf-8'),'/neon.css':('neon.css','text/css; charset=utf-8')}
+             '/neon.js':('neon.js','text/javascript; charset=utf-8'),'/neon.css':('neon.css','text/css; charset=utf-8'),
+             '/krypton.js':('krypton.js','text/javascript; charset=utf-8'),'/krypton.css':('krypton.css','text/css; charset=utf-8')}
     event_waiters=threading.BoundedSemaphore(8)
 
     class Handler(BaseHTTPRequestHandler):
@@ -599,9 +605,10 @@ def make_server(root, host='127.0.0.1', port=8765):
                     self.send(200, data.wallet_csv(), 'text/csv; charset=utf-8', 'wallet-evidence.csv')
                 elif url.path == '/api/health':
                     from .solana_console import discover
+                    from .krypton.view import health as krypton_health
                     self.send(200, json_text({'service':'TENDIES TRACKER Observation Console','version':__version__,'read_only':True,'at':int(time.time()),
-                        'paper_views':['robinhood','solana','neon','jev'],'event_stream_version':1,
-                        'event_stream_bots':['solana','neon'],'accounts':discover(data.root)}).encode())
+                        'paper_views':['robinhood','solana','neon','jev','krypton'],'event_stream_version':1,
+                        'event_stream_bots':['solana','neon'],'accounts':dict(discover(data.root),krypton=krypton_health(data.root))}).encode())
                 elif url.path == '/api/jev-assessment':
                     from .jev_review import detail
                     self.send(200, json_text(detail(data.root, params.get('id',[''])[0])).encode())

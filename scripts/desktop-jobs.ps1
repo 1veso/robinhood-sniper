@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$AppRoot, [Parameter(Mandatory=$true)][string]$Python, [switch]$Remove, [switch]$CheckOnly, [switch]$NeonOnly, [switch]$JevOnly)
+param([Parameter(Mandatory=$true)][string]$AppRoot, [Parameter(Mandatory=$true)][string]$Python, [switch]$Remove, [switch]$CheckOnly, [switch]$NeonOnly, [switch]$JevOnly, [switch]$KryptonOnly)
 $ErrorActionPreference = 'Stop'
 $app = (Resolve-Path -LiteralPath $AppRoot).Path
 $pythonExe = (Resolve-Path -LiteralPath $Python).Path
@@ -12,8 +12,12 @@ $names = @{
 }
 $minutes = @{paper=2;research=1;monitor=2;shadow=1;watch=10;scan=30;report=1;console=5;'neon-signals'=1;'neon-watch'=10;'jev-review'=1}
 $limits = @{paper=5;research=5;monitor=3;shadow=3;watch=9;scan=21;report=5;console=0;'neon-signals'=3;'neon-watch'=9;'jev-review'=2}
+$names['krypton-scan']='KRYPTON Paper Scan'; $names['krypton-watch']='KRYPTON Paper Watch'
+$minutes['krypton-scan']=1; $minutes['krypton-watch']=1
+$limits['krypton-scan']=2; $limits['krypton-watch']=2
 if ($NeonOnly) { $names = @{'neon-signals'='NEON Paper Signals';'neon-watch'='NEON Paper Watch'} }
 if ($JevOnly) { $names = @{'jev-review'='Pump Jev Shadow Review'} }
+if ($KryptonOnly) { $names = @{'krypton-scan'='KRYPTON Paper Scan';'krypton-watch'='KRYPTON Paper Watch'} }
 # COM avoids repeated CIM/module startup and keeps validation and mutation in one session.
 $service = New-Object -ComObject 'Schedule.Service'
 $service.Connect()
@@ -44,6 +48,15 @@ foreach ($key in $names.Keys) {
         $definition.Principal.UserId = $owner
         $definition.Principal.LogonType = 3
         $definition.Principal.RunLevel = 0
+        $logonType = 3
+        if ($key.StartsWith('krypton-')) {
+            $logonType = 2
+            $definition.Principal.LogonType = 2
+            $definition.RegistrationInfo.Description = 'Krypton standalone PAPER worker. Same-user S4U background execution; no live or paid authorization.'
+            $definition.Settings.Priority = 4
+            $boot = $definition.Triggers.Create(8)
+            $boot.Delay = 'PT30S'
+        }
         $definition.Settings.MultipleInstances = 2
         $definition.Settings.StartWhenAvailable = $true
         $definition.Settings.DisallowStartIfOnBatteries = $false
@@ -66,8 +79,8 @@ foreach ($key in $names.Keys) {
         $action.Arguments = '"' + (Join-Path $app 'desktop.py') + '" worker ' + $key
         $action.WorkingDirectory = $app
         # TASK_CREATE, never overwrite a task that appeared after preflight.
-        $old = $folder.RegisterTaskDefinition($name,$definition,2,$owner,$null,3)
+        $old = $folder.RegisterTaskDefinition($name,$definition,2,$owner,$null,$logonType)
     }
-    if ($key -in @('console','paper','watch','scan','shadow','neon-signals','neon-watch','jev-review')) { $old.Run($null) | Out-Null }
+    if ($key -in @('console','paper','watch','scan','shadow','neon-signals','neon-watch','jev-review','krypton-scan','krypton-watch')) { $old.Run($null) | Out-Null }
 }
 Write-Output 'Task ownership checked; operation completed.'

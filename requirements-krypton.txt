@@ -1,0 +1,2 @@
+# Optional .env support; all trading/state code uses the standard library and existing app.
+python-dotenv==1.2.4
