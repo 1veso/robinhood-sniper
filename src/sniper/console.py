@@ -574,6 +574,14 @@ def make_server(root, host='127.0.0.1', port=8765):
                     self.send(200, (static / name).read_bytes(), mime)
                 elif url.path == '/api/state':
                     self.send(200, json_text(data.state(params.get('bot', ['robinhood'])[0])).encode())
+                elif url.path in ('/radeon-sizing', '/api/radeon-sizing'):
+                    # Fixed derived files only. Reads cannot initialize or run the study.
+                    name = 'report.html' if url.path == '/radeon-sizing' else 'report.json'
+                    path = data.root / 'runtime/radeon-sizing' / name
+                    if not path.is_file():
+                        self.send(404, b'{"error":"Sizing study not initialized"}')
+                    else:
+                        self.send(200, path.read_bytes(), 'text/html; charset=utf-8' if name.endswith('.html') else 'application/json')
                 elif url.path == '/api/events':
                     from .solana_console import events
                     bot=params.get('bot',['solana'])[0]

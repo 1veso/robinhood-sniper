@@ -7,8 +7,12 @@ from .models import WalletConfirmation
 
 
 class ConfirmationBook:
-    def __init__(self, store):
+    def __init__(self, store, *, read_only=False):
         self.store = store
+        if read_only:
+            # Comparison consumers may only inspect an already initialized source.
+            store.db.execute('SELECT event_id FROM paper_confirmations LIMIT 0')
+            return
         store.db.execute('''CREATE TABLE IF NOT EXISTS paper_confirmations (
             event_id TEXT PRIMARY KEY, token TEXT NOT NULL, pool TEXT NOT NULL,
             observed_at INTEGER NOT NULL, tx_hash TEXT NOT NULL, log_index INTEGER NOT NULL,

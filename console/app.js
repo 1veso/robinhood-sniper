@@ -97,6 +97,7 @@ function metric(label,value,detail,cls=''){return `<div class="metric"><span>${e
 function key(label,value,cls=''){return `<div class="key-row"><span>${esc(label)}</span><b class="${cls}">${value}</b></div>`;}
 function ack(q){if(!q?.available)return '<span class="warning">Unavailable</span>';const pending=Object.entries(q.counts).filter(([k])=>!['sent','suppressed','expired'].includes(k)).reduce((n,[,v])=>n+v,0);return `<span class="${pending?'warning':'positive'}">${q.counts.sent||0} acknowledged${pending?' · '+pending+' unresolved':''}</span>`;}
 function render(){
+  $('sizing-study-link').hidden=bot!=='robinhood';
   window.NeonWorkspace.setActive(bot==='neon');
   window.HeliumView.setActive(bot==='helium');
   document.querySelectorAll('.market-grid,.ledger-panel,.detail-grid').forEach(el=>{el.hidden=bot==='jev'||bot==='krypton'||bot==='helium';});

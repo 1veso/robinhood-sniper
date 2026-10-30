@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$AppRoot, [Parameter(Mandatory=$true)][string]$Python, [switch]$Remove, [switch]$CheckOnly, [switch]$NeonOnly, [switch]$JevOnly, [switch]$KryptonOnly, [switch]$HeliumOnly)
+param([Parameter(Mandatory=$true)][string]$AppRoot, [Parameter(Mandatory=$true)][string]$Python, [switch]$Remove, [switch]$CheckOnly, [switch]$NeonOnly, [switch]$JevOnly, [switch]$KryptonOnly, [switch]$HeliumOnly, [switch]$SizingOnly)
 $ErrorActionPreference = 'Stop'
 $app = (Resolve-Path -LiteralPath $AppRoot).Path
 $pythonExe = (Resolve-Path -LiteralPath $Python).Path
@@ -22,10 +22,17 @@ if ($heliumInitialized -or $HeliumOnly -or $Remove -or $CheckOnly) {
 }
 $minutes['helium-scan']=1; $minutes['helium-watch']=1
 $limits['helium-scan']=2; $limits['helium-watch']=2
+$sizingInitialized = Test-Path -LiteralPath (Join-Path $app 'runtime/radeon-sizing/manifest.json') -PathType Leaf
+if ($sizingInitialized -or $SizingOnly -or $Remove -or $CheckOnly) { $names['radeon-sizing']='RADEON Paper Size Comparison' }
+$minutes['radeon-sizing']=1; $limits['radeon-sizing']=3
 if ($NeonOnly) { $names = @{'neon-signals'='NEON Paper Signals';'neon-watch'='NEON Paper Watch'} }
 if ($JevOnly) { $names = @{'jev-review'='Pump Jev Shadow Review'} }
 if ($KryptonOnly) { $names = @{'krypton-scan'='KRYPTON Paper Scan';'krypton-watch'='KRYPTON Paper Watch'} }
 if ($HeliumOnly) { $names = @{'helium-scan'='HELIUM Paper Scan';'helium-watch'='HELIUM Paper Watch'} }
+if ($SizingOnly) { $names = @{'radeon-sizing'='RADEON Paper Size Comparison'} }
+if ($SizingOnly -and -not $sizingInitialized -and -not $Remove -and -not $CheckOnly) {
+    throw 'Initialize the separate sizing study explicitly before installing its worker'
+}
 if ($HeliumOnly -and -not $heliumInitialized -and -not $Remove -and -not $CheckOnly) {
     throw 'Initialize Helium explicitly with python helium_bot.py init before installing its workers'
 }
@@ -60,10 +67,10 @@ foreach ($key in $names.Keys) {
         $definition.Principal.LogonType = 3
         $definition.Principal.RunLevel = 0
         $logonType = 3
-        if ($key.StartsWith('krypton-') -or $key.StartsWith('helium-')) {
+        if ($key.StartsWith('krypton-') -or $key.StartsWith('helium-') -or $key -eq 'radeon-sizing') {
             $logonType = 2
             $definition.Principal.LogonType = 2
-            $botLabel = if ($key.StartsWith('helium-')) { 'Helium' } else { 'Krypton' }
+            $botLabel = if ($key -eq 'radeon-sizing') { 'Radeon isolated size comparison' } elseif ($key.StartsWith('helium-')) { 'Helium' } else { 'Krypton' }
             $definition.RegistrationInfo.Description = $botLabel + ' standalone PAPER worker. Same-user S4U background execution; no live or paid authorization.'
             $definition.Settings.Priority = 4
             $boot = $definition.Triggers.Create(8)

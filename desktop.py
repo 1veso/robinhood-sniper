@@ -33,6 +33,7 @@ JOBS = {
     'krypton-watch': ('KRYPTON Paper Watch', 1, 50, ['krypton_bot.py', 'watch']),
     'helium-scan': ('HELIUM Paper Scan', 1, 50, ['helium_bot.py', 'scan']),
     'helium-watch': ('HELIUM Paper Watch', 1, 50, ['helium_bot.py', 'watch']),
+    'radeon-sizing': ('RADEON Paper Size Comparison', 1, 110, ['radeon_sizing.py', 'once']),
 }
 
 

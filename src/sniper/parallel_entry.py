@@ -66,11 +66,11 @@ def record_signals(ledger, event_id, asset_id, revision, signals, now, *,
 
 class ParallelEntryEngine(BoundRadeonExits, ExploratoryEngine):
     """The old engine family and monetary policy remain pinned, not duplicated."""
-    def __init__(self, ledger, policy, *, entry_rules, runtime, store, registry_loader=load_wallet_registry, clock=time.time):
+    def __init__(self, ledger, policy, *, entry_rules, runtime, store, registry_loader=load_wallet_registry, clock=time.time, read_only_source=False):
         self.entry_rules = deepcopy(entry_rules)
         self.entry_revision = rules_hash(self.entry_rules)
         self.runtime, self.registry_loader = runtime, registry_loader
-        self.store, self.book, self.clock = store, ConfirmationBook(store), clock
+        self.store, self.book, self.clock = store, ConfirmationBook(store, read_only=read_only_source), clock
         self._canonical_receipts = {}
         self._evaluated = {}
         self._admitted = {}
