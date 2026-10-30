@@ -31,6 +31,8 @@ JOBS = {
     'jev-review': ('Pump Jev Shadow Review', 1, 50, ['jev_review.py', 'once']),
     'krypton-scan': ('KRYPTON Paper Scan', 1, 50, ['krypton_bot.py', 'scan']),
     'krypton-watch': ('KRYPTON Paper Watch', 1, 50, ['krypton_bot.py', 'watch']),
+    'helium-scan': ('HELIUM Paper Scan', 1, 50, ['helium_bot.py', 'scan']),
+    'helium-watch': ('HELIUM Paper Watch', 1, 50, ['helium_bot.py', 'watch']),
 }
 
 

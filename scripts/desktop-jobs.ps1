@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$AppRoot, [Parameter(Mandatory=$true)][string]$Python, [switch]$Remove, [switch]$CheckOnly, [switch]$NeonOnly, [switch]$JevOnly, [switch]$KryptonOnly)
+param([Parameter(Mandatory=$true)][string]$AppRoot, [Parameter(Mandatory=$true)][string]$Python, [switch]$Remove, [switch]$CheckOnly, [switch]$NeonOnly, [switch]$JevOnly, [switch]$KryptonOnly, [switch]$HeliumOnly)
 $ErrorActionPreference = 'Stop'
 $app = (Resolve-Path -LiteralPath $AppRoot).Path
 $pythonExe = (Resolve-Path -LiteralPath $Python).Path
@@ -15,9 +15,20 @@ $limits = @{paper=5;research=5;monitor=3;shadow=3;watch=9;scan=21;report=5;conso
 $names['krypton-scan']='KRYPTON Paper Scan'; $names['krypton-watch']='KRYPTON Paper Watch'
 $minutes['krypton-scan']=1; $minutes['krypton-watch']=1
 $limits['krypton-scan']=2; $limits['krypton-watch']=2
+$heliumInitialized = Test-Path -LiteralPath (Join-Path $app 'helium_bot/runtime/book.sqlite3') -PathType Leaf
+# General desktop setup must not initialize or start a separate Helium account.
+if ($heliumInitialized -or $HeliumOnly -or $Remove -or $CheckOnly) {
+    $names['helium-scan']='HELIUM Paper Scan'; $names['helium-watch']='HELIUM Paper Watch'
+}
+$minutes['helium-scan']=1; $minutes['helium-watch']=1
+$limits['helium-scan']=2; $limits['helium-watch']=2
 if ($NeonOnly) { $names = @{'neon-signals'='NEON Paper Signals';'neon-watch'='NEON Paper Watch'} }
 if ($JevOnly) { $names = @{'jev-review'='Pump Jev Shadow Review'} }
 if ($KryptonOnly) { $names = @{'krypton-scan'='KRYPTON Paper Scan';'krypton-watch'='KRYPTON Paper Watch'} }
+if ($HeliumOnly) { $names = @{'helium-scan'='HELIUM Paper Scan';'helium-watch'='HELIUM Paper Watch'} }
+if ($HeliumOnly -and -not $heliumInitialized -and -not $Remove -and -not $CheckOnly) {
+    throw 'Initialize Helium explicitly with python helium_bot.py init before installing its workers'
+}
 # COM avoids repeated CIM/module startup and keeps validation and mutation in one session.
 $service = New-Object -ComObject 'Schedule.Service'
 $service.Connect()
@@ -49,10 +60,11 @@ foreach ($key in $names.Keys) {
         $definition.Principal.LogonType = 3
         $definition.Principal.RunLevel = 0
         $logonType = 3
-        if ($key.StartsWith('krypton-')) {
+        if ($key.StartsWith('krypton-') -or $key.StartsWith('helium-')) {
             $logonType = 2
             $definition.Principal.LogonType = 2
-            $definition.RegistrationInfo.Description = 'Krypton standalone PAPER worker. Same-user S4U background execution; no live or paid authorization.'
+            $botLabel = if ($key.StartsWith('helium-')) { 'Helium' } else { 'Krypton' }
+            $definition.RegistrationInfo.Description = $botLabel + ' standalone PAPER worker. Same-user S4U background execution; no live or paid authorization.'
             $definition.Settings.Priority = 4
             $boot = $definition.Triggers.Create(8)
             $boot.Delay = 'PT30S'
@@ -81,6 +93,6 @@ foreach ($key in $names.Keys) {
         # TASK_CREATE, never overwrite a task that appeared after preflight.
         $old = $folder.RegisterTaskDefinition($name,$definition,2,$owner,$null,$logonType)
     }
-    if ($key -in @('console','paper','watch','scan','shadow','neon-signals','neon-watch','jev-review','krypton-scan','krypton-watch')) { $old.Run($null) | Out-Null }
+    if ($key -in @('console','paper','watch','scan','shadow','neon-signals','neon-watch','jev-review','krypton-scan','krypton-watch','helium-scan','helium-watch')) { $old.Run($null) | Out-Null }
 }
 Write-Output 'Task ownership checked; operation completed.'

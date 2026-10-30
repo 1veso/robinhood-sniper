@@ -52,3 +52,15 @@ Neon bot is the third separate account ($1,000 paper cash). Its one-minute
 research worker and ten-minute exit watcher run in the background. Grok stays
 disabled; complete trader histories and funded authorized model evidence are
 required before its own seven-day clock starts. See app/docs/NEON_BOT.md.
+
+Helium is the sixth standalone paper trader, using Krypton's existing Solana
+settings with its own internal research/decision team and account. Initialize
+explicitly with python helium_bot.py init, then inspect helium_bot.py status.
+Its Grok and Jev paid settings start disabled. Install only its independent
+minute scan/watch jobs with scripts/desktop-jobs.ps1 -HeliumOnly after init.
+General desktop setup never creates its account. See app/docs/HELIUM_BOT.md.
+Open http://127.0.0.1:8765/?bot=helium for its NEON-based trading cockpit.
+Equity, prices, pipeline activity and fill notices come from the Helium journal.
+Market freshness, paper execution and worker health are shown separately.
+The live-account control remains unavailable until a Helium live adapter and
+account are implemented and validated. This screen does not enable paid calls.

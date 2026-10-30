@@ -33,7 +33,7 @@ def source_files(root=ROOT):
             continue
         if not path.is_file() or path.is_symlink():
             continue
-        if (len(rel.parts) == 1 and (path.suffix in ('.py', '.toml') or path.name in ('requirements-executor.txt','requirements-krypton.txt'))) or rel.as_posix() in ('krypton_bot/config.json','krypton_bot/README.md','krypton_bot/.env.example') or (
+        if (len(rel.parts) == 1 and (path.suffix in ('.py', '.toml') or path.name in ('requirements-executor.txt','requirements-krypton.txt'))) or rel.as_posix() in ('krypton_bot/config.json','krypton_bot/README.md','krypton_bot/.env.example','helium_bot/config.json','helium_bot/README.md') or (
                 rel.parts[0] in ('src', 'rug_desk', 'console', 'config', 'docs', 'scripts')
                 and path.suffix in ('.py', '.json', '.toml', '.html', '.js', '.css', '.svg', '.md', '.ps1')):
             if any(x in path.name.lower() for x in ('api-key', 'trading-address', 'recipient', 'token.txt')):
@@ -82,12 +82,12 @@ def build():
                 z.write(p, p.relative_to(stage))
     setup = stage.parent / (stage.name + '-Setup.cs')
     setup.write_text((ROOT / 'packaging/Setup.cs').read_text().replace('PAYLOAD_HASH', digest(payload)))
-    output = ROOT / 'dist/RUG-DESK-Setup-0.1.22-win-x64.exe'
+    output = ROOT / 'dist/RUG-DESK-Setup-0.1.23-win-x64.exe'
     output.parent.mkdir(exist_ok=True)
     subprocess.run([str(csc), '/nologo', '/target:winexe', '/platform:x64', '/out:' + str(output),
                    *references, '/r:System.IO.Compression.dll', '/r:System.IO.Compression.FileSystem.dll',
                    '/resource:' + str(payload) + ',payload.zip', str(setup)], check=True)
-    result = {'version': '0.1.22', 'exe': str(output), 'sha256': digest(output), 'bytes': output.stat().st_size,
+    result = {'version': '0.1.23', 'exe': str(output), 'sha256': digest(output), 'bytes': output.stat().st_size,
               'python_archive_sha256': PYTHON_HASH, 'python_version': '3.14.10', 'dependencies': deps,
               'stage': str(stage), 'source_files': len(source_files()), 'payload_files': len(manifest),
               'runtime_data_included': False, 'signed': False}

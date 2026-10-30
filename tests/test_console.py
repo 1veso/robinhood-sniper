@@ -126,6 +126,64 @@ class ConsoleTests(unittest.TestCase):
         (self.folder / 'trial.json').write_text(json.dumps({'account_id':'other'}))
         with self.assertRaises(ValueError): self.data.robinhood()
 
+    def test_helium_missing_account_never_reads_or_initializes_another_bot(self):
+        before = self.ledger.conn.total_changes
+        with patch.object(self.data, 'jobs', return_value={'available':False,'items':[]}), \
+             patch.object(self.data, 'robinhood', side_effect=AssertionError('Wrong account')), \
+             patch.object(self.data, 'solana', side_effect=AssertionError('Wrong account')):
+            out = self.data.state('helium')
+        self.assertEqual(out['bot'], 'helium')
+        self.assertFalse(out['initialized'])
+        self.assertIsNone(out['account_id'])
+        self.assertTrue(out['read_only'])
+        self.assertFalse(out['real_money_enabled'])
+        self.assertFalse((self.root / 'helium_bot').exists())
+        self.assertEqual(self.ledger.conn.total_changes, before)
+
+    def test_helium_view_matches_risk_equity_and_preserves_unknown_bills(self):
+        from sniper.helium.paper import Paper
+        from sniper.helium.view import snapshot
+        from sniper.krypton.config import load, encode
+        cfg = load(Path(__file__).resolve().parents[1] / 'krypton_bot')
+        book = Paper(self.root / 'helium_bot/runtime', cfg, initialize=True)
+        try:
+            for request_id, payload in (
+                ('known', {'usage': {'billed_usd': '.12'}}),
+                ('estimated', {'usage': {'billed_usd': None, 'estimated_usd': '.01'}}),
+                ('helium:grok:unresolved', {'state': 'RESERVED'}),
+            ):
+                book.db.execute('INSERT INTO api_requests VALUES(?,?)', (request_id, encode(payload)))
+            changes = book.db.total_changes
+            out = snapshot(book.db, NOW)
+            self.assertEqual(D(out['summary']['equity']), book.equity(NOW)[0])
+            self.assertEqual(out['summary']['cash'], cfg['starting_cash_usd'])
+            self.assertEqual(D(out['summary']['estimated_model_costs']), D('.51'))
+            self.assertIsNone(out['summary']['net_pnl'])
+            self.assertEqual(out['team']['policy']['review_model'], book.get('team_policy')['model'])
+            self.assertEqual(out['team']['policy']['min_probability'], book.get('team_policy')['jev_probability_min'])
+            self.assertEqual(book.db.total_changes, changes)
+            self.assertFalse(out['status']['team_gate']['enabled'])
+            for gate in ('model_gate', 'reviewer_gate', 'team_gate'):
+                book.set(gate, {'enabled': True, 'blockers': []})
+            self.assertTrue(snapshot(book.db, NOW)['status']['team_gate']['enabled'])
+            book.set('team_policy_hash', 'changed-policy')
+            changed = snapshot(book.db, NOW)
+            self.assertFalse(changed['status']['team_gate']['enabled'])
+            self.assertFalse(changed['team']['binding_current'])
+        finally:
+            book.close()
+
+    def test_helium_view_rejects_a_foreign_account_at_its_path(self):
+        from sniper.krypton.paper import Paper
+        from sniper.krypton.config import load
+        from sniper.helium.view import view, health
+        cfg = load(Path(__file__).resolve().parents[1] / 'krypton_bot')
+        book = Paper(self.root / 'helium_bot/runtime', cfg, initialize=True)
+        book.close()
+        with self.assertRaises(ValueError):
+            view(self.root)
+        self.assertFalse(health(self.root)['available'])
+
     def test_chart_uses_quote_time_and_pinned_pool_and_excludes_raw_evidence(self):
         q = quote(now=NOW+3,price='2')
         self.ledger.record_event('quote-other-recorded-at','market_mark',q.as_dict(),NOW+8)
@@ -175,6 +233,43 @@ class ConsoleTests(unittest.TestCase):
 
     def test_public_bind_is_refused(self):
         with self.assertRaises(ValueError):make_server(self.root,host='0.0.0.0')
+
+    def test_helium_http_state_health_and_assets_are_read_only(self):
+        server = make_server(self.root, port=0)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        def request(path, method='GET'):
+            client = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=5)
+            try:
+                client.request(method, path)
+                response = client.getresponse()
+                return response.status, response.read()
+            finally:
+                client.close()
+        try:
+            with patch.object(ConsoleData, 'jobs', return_value={'available':False,'items':[]}):
+                code, body = request('/api/state?bot=helium')
+            self.assertEqual(code, 200)
+            state = json.loads(body)
+            self.assertEqual(state['bot'], 'helium')
+            self.assertFalse(state['initialized'])
+            self.assertTrue(state['read_only'])
+            self.assertEqual(request('/api/state?bot=helium', 'POST')[0], 501)
+            code, body = request('/api/health')
+            self.assertEqual(code, 200)
+            health = json.loads(body)
+            self.assertEqual(health['paper_views'], ['robinhood','solana','neon','jev','krypton','helium'])
+            self.assertFalse(health['accounts']['helium']['available'])
+            code, body = request('/helium.js')
+            self.assertEqual(code, 200)
+            self.assertIn(b'window.HeliumView', body)
+            self.assertEqual(request('/api/chart?bot=helium&asset=other&pool=other')[0], 409)
+            self.assertEqual(request('/helium_bot/runtime/book.sqlite3')[0], 404)
+            self.assertFalse((self.root / 'helium_bot').exists())
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(5)
 
     def test_slow_view_does_not_block_other_views_and_same_view_loads_once(self):
         entered, release = threading.Event(), threading.Event()
