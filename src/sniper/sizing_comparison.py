@@ -232,8 +232,7 @@ class Study:
             rows.append('<tr>' + ''.join('<td>' + html.escape(str(c)) + '</td>' for c in cells) + '</tr>')
         _atomic_text(self.folder / 'report.html', '<!doctype html><html lang="en"><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1"><title>Radeon size study</title>'
-            '<style>body{font:16px system-ui;background:#111820;color:#eee;margin:2rem}section{overflow:auto}'
-            'td,th{padding:.8rem;text-align:left;border-bottom:1px solid #596070}p{max-width:75ch;line-height:1.6}</style>'
+            '<link rel="stylesheet" href="/sizing.css">'
             '<h1>Radeon · $25 paper sizing study</h1><p>Fresh $1,000 control and $1,000 size variant. '
             'Control: up to $5 per position / $20 aggregate. Variant: up to $25 / $100. '
             'Both retain a 2% daily equity-loss entry halt and identical bound entry/runner exits. '

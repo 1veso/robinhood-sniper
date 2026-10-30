@@ -539,7 +539,8 @@ def make_server(root, host='127.0.0.1', port=8765):
     files = {'/': ('index.html','text/html; charset=utf-8'), '/app.js': ('app.js','text/javascript; charset=utf-8'), '/style.css': ('style.css','text/css; charset=utf-8'), '/favicon.svg': ('favicon.svg','image/svg+xml'),
              '/neon.js':('neon.js','text/javascript; charset=utf-8'),'/neon.css':('neon.css','text/css; charset=utf-8'),
              '/krypton.js':('krypton.js','text/javascript; charset=utf-8'),'/krypton.css':('krypton.css','text/css; charset=utf-8'),
-             '/helium.js':('helium.js','text/javascript; charset=utf-8'),'/helium.css':('helium.css','text/css; charset=utf-8')}
+             '/helium.js':('helium.js','text/javascript; charset=utf-8'),'/helium.css':('helium.css','text/css; charset=utf-8'),
+             '/sizing.css':('sizing.css','text/css; charset=utf-8')}
     event_waiters=threading.BoundedSemaphore(8)
 
     class Handler(BaseHTTPRequestHandler):

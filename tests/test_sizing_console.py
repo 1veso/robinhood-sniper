@@ -29,6 +29,9 @@ class SizingConsoleTests(unittest.TestCase):
                 (folder/'report.html').write_text('<h1>Separate size study</h1>')
                 self.assertEqual(get('/api/radeon-sizing'), (200, b'{"excluded_from_strategy":true}'))
                 self.assertEqual(get('/radeon-sizing'), (200, b'<h1>Separate size study</h1>'))
+                status, css = get('/sizing.css')
+                self.assertEqual(status, 200)
+                self.assertIn(b'overflow:auto', css)
                 self.assertFalse(list(root.rglob('*.sqlite3')))
             finally:
                 server.shutdown(); worker.join(5); server.server_close()

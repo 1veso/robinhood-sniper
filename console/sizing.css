@@ -1,0 +1,9 @@
+html{color-scheme:dark;background:#111820;color:#eee}
+body{font:16px system-ui;margin:clamp(1rem,4vw,2rem);max-width:1200px}
+h1{font-size:clamp(1.6rem,4vw,2rem);line-height:1.2}
+section{overflow:auto;width:100%;border:1px solid #354653;border-radius:12px;background:#17212c}
+table{border-collapse:collapse;width:100%}
+td,th{padding:.8rem;text-align:left;border-bottom:1px solid #354653;white-space:nowrap}
+th{font-size:.8rem;color:#9fb8cb}td{font-variant-numeric:tabular-nums}
+p{max-width:75ch;line-height:1.6;color:#bdcbd6}
+a{color:#94d6ff}
