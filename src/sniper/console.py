@@ -291,6 +291,9 @@ class ConsoleData:
             snapshot['return_pct'] = snapshot['net_pnl'] / snapshot['starting_cash'] * 100
             snapshot['as_of'] = int(view._get('last_processed_at') or 0)
             policy = json.loads(view._get('policy'))
+            from .radeon_exits import binding as exit_binding, KEY as EXIT_KEY
+            active_exits = json.loads(view._get(EXIT_KEY) or 'null')
+            exit_policy = selected(active_exits, ('revision','policy','activated_at')) if active_exits else None
             for p in snapshot['positions']:
                 p['unrealized_pnl'] = p['liquidation_value'] - p['remaining_basis']
                 p['unrealized_pct'] = p['unrealized_pnl'] / p['remaining_basis'] * 100 if p['remaining_basis'] else None
@@ -298,6 +301,17 @@ class ConsoleData:
                 p['stop_price'] = p['entry_price'] * (1 - decimal(policy['stop_loss_pct']) / 100)
                 p['take_price'] = p['entry_price'] * (1 + decimal(policy['take_profit_pct']) / 100)
                 p['trailing_price'] = p['peak_price'] * (1 - decimal(policy['trailing_stop_pct']) / 100) if p['tp_done'] else None
+                bound = exit_binding(c, p['position_id'])
+                if bound:
+                    spec, stage = bound['policy'], bound['tp_stage']
+                    p.update(exit_revision=bound['revision'], exit_policy_name=spec['name'],
+                             inherited_original_exits=bool(bound['inherited']), tp_stage=stage,
+                             profit_protection_armed=bound['armed_at'] is not None and stage == 0,
+                             exit_policy=spec)
+                    p['stop_price'] = p['entry_price'] * (1 - decimal(spec['stop_loss_pct']) / 100)
+                    levels = spec['take_profits']
+                    p['take_price'] = p['entry_price'] * (1 + decimal(levels[stage]['gain_pct']) / 100) if stage < len(levels) else None
+                    p['trailing_price'] = p['peak_price'] * (1 - decimal(spec['trailing_stop_pct']) / 100) if stage else None
             fills = rows(c, 'SELECT * FROM fills ORDER BY id DESC LIMIT 500')
             closed = rows(c, 'SELECT * FROM closed_positions ORDER BY closed_at DESC LIMIT 200')
             origins = {}
@@ -415,7 +429,7 @@ class ConsoleData:
                 'status': selected(status, ('started_at','finished_at','trial_state','entry_halt','collection','source_retry_at','quote_retry_at')),
                 'error_count': len(status.get('errors', [])), 'trial': selected(trial, ('started_at','ends_at','revision_started_at','policy_version','entry_revision','entry_revision_started_at')),
                 'cycle_issues': [selected(i, ('stage','asset_id','pool_id','code','severity','attempts','observed_at')) for i in status.get('cycle_issues', [])],
-                'snapshot': snapshot, 'policy': policy, 'assets': list(assets.values()), 'fills': fills, 'closed': closed,
+                'snapshot': snapshot, 'policy': policy, 'exit_policy': exit_policy, 'assets': list(assets.values()), 'fills': fills, 'closed': closed,
                 'decisions': decisions, 'entry_strategies': entry_strategies, 'reasons': reasons, 'rejection_scopes': rejection_scopes, 'equity_history': equity, 'screens': screens,
                 'market': market, 'event_counts': event_counts, 'gaps': gaps, 'policy_revisions': revisions,
                 'daily': daily[0] if daily else None, 'research': research, 'collector': collector, 'repairs': repairs,

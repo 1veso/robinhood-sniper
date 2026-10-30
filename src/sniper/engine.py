@@ -348,6 +348,22 @@ class PaperEngine:
     def _additional_exit(self, position: dict[str, Any], quote: MarketQuote, now: int) -> tuple[Decimal, str] | None:
         return None
 
+    def _exit_order(self, p, quote, now, peak):
+        """Original exits; account-specific revisions override this decision only."""
+        gain = (quote.price_usd / p["entry_price"] - ONE) * HUNDRED
+        additional = self._additional_exit(p, quote, now)
+        if gain <= -self.policy.stop_loss_pct:
+            return p["qty"], "stop_loss"
+        if additional is not None:
+            return additional
+        if p["tp_done"] and quote.price_usd <= peak * (ONE - self.policy.trailing_stop_pct / HUNDRED):
+            return p["qty"], "trailing_stop"
+        if not p["tp_done"] and gain >= self.policy.take_profit_pct:
+            return min(p["qty"], p["qty0"] * self.policy.take_profit_fraction), "take_profit"
+        if now - p["opened_at"] >= self.policy.time_stop_seconds and gain < self.policy.time_stop_min_gain_pct:
+            return p["qty"], "time_stop"
+        return ZERO, None
+
     def _fill(self, position_id: str, event_id: str, asset_id: str, symbol: str, strategy: str,
               action: str, now: int, qty: Decimal, reference: Decimal, price: Decimal,
               gross: Decimal, friction: Decimal, gas: Decimal, cash_delta: Decimal,
@@ -431,20 +447,7 @@ class PaperEngine:
                                          mark_at=?,mark_status='ok',peak_price=? WHERE position_id=?""",
                                          (str(quote.price_usd), str(quote.liquidity_usd), str(quote.sell_cost_bps),
                                           str(quote.gas_usd), quote.observed_at, str(peak), p["position_id"]))
-                gain = (quote.price_usd / p["entry_price"] - ONE) * HUNDRED
-                age = now - p["opened_at"]
-                qty, reason = ZERO, None
-                additional = self._additional_exit(p, quote, now)
-                if gain <= -self.policy.stop_loss_pct:
-                    qty, reason = p["qty"], "stop_loss"
-                elif additional is not None:
-                    qty, reason = additional
-                elif p["tp_done"] and quote.price_usd <= peak * (ONE - self.policy.trailing_stop_pct / HUNDRED):
-                    qty, reason = p["qty"], "trailing_stop"
-                elif not p["tp_done"] and gain >= self.policy.take_profit_pct:
-                    qty, reason = min(p["qty"], p["qty0"] * self.policy.take_profit_fraction), "take_profit"
-                elif age >= self.policy.time_stop_seconds and gain < self.policy.time_stop_min_gain_pct:
-                    qty, reason = p["qty"], "time_stop"
+                qty, reason = self._exit_order(p, quote, now, peak)
                 if reason:
                     results.append(self._sell(p, qty, quote, now, reason))
             self._daily_halt(now)

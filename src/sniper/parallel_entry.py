@@ -16,6 +16,7 @@ from .entry_strategies import evaluate_signals, load_wallet_registry, rules_hash
 from .exploration import ExploratoryEngine
 from .ledger import json_text
 from .models import WalletConfirmation
+from .radeon_exits import BoundRadeonExits
 
 
 PROFILE = 'parallel-whale-v1'
@@ -63,7 +64,7 @@ def record_signals(ledger, event_id, asset_id, revision, signals, now, *,
         ledger.record_event('entry-signal:' + digest, 'entry_strategy_signal', payload, now)
 
 
-class ParallelEntryEngine(ExploratoryEngine):
+class ParallelEntryEngine(BoundRadeonExits, ExploratoryEngine):
     """The old engine family and monetary policy remain pinned, not duplicated."""
     def __init__(self, ledger, policy, *, entry_rules, runtime, store, registry_loader=load_wallet_registry, clock=time.time):
         self.entry_rules = deepcopy(entry_rules)
