@@ -5,6 +5,8 @@ There are no copied trades, scaled fills, notifications, model calls or signers.
 """
 from dataclasses import replace
 from decimal import Decimal
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import hashlib
 import html
 import json
@@ -226,18 +228,20 @@ class Study:
         result = {**self.manifest, 'as_of': now, 'variants': results}
         _atomic(self.folder / 'report.json', result)
         rows = []
+        stamp = lambda value: datetime.fromtimestamp(value, ZoneInfo('Europe/Berlin')).strftime('%d %b %Y, %H:%M:%S %Z')
         for name, r in results.items():
             cells = [name, r['net_pnl'], r['realized_pnl'], r['modeled_costs'], r['max_observed_drawdown_pct'],
                      r['new_entries'], r['closed_win_rate_denominator'], len(r['unresolved_positions']), r['backlog']]
             rows.append('<tr>' + ''.join('<td>' + html.escape(str(c)) + '</td>' for c in cells) + '</tr>')
         _atomic_text(self.folder / 'report.html', '<!doctype html><html lang="en"><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1"><title>Radeon size study</title>'
-            '<link rel="stylesheet" href="/sizing.css">'
+            '<link rel="stylesheet" href="/sizing.css"><link rel="icon" href="/favicon.svg" type="image/svg+xml">'
             '<h1>Radeon · $25 paper sizing study</h1><p>Fresh $1,000 control and $1,000 size variant. '
             'Control: up to $5 per position / $20 aggregate. Variant: up to $25 / $100. '
             'Both retain a 2% daily equity-loss entry halt and identical bound entry/runner exits. '
-            'Limits include modeled costs and reserves and can shrink with equity.</p><p>Updated UTC epoch '
-            + str(now) + '. Entry deadline ' + str(self.manifest['entry_deadline']) + '.</p><section><table><tr>'
+            'Limits include modeled costs and reserves and can shrink with equity.</p><p>Updated '
+            + stamp(now) + '. Entries stop ' + stamp(self.manifest['entry_deadline'])
+            + '.</p><p><a href="/radeon-sizing">Refresh report</a> · <a href="/api/radeon-sizing" download>Full metrics JSON</a></p><section><table><tr>'
             '<th>Portfolio</th><th>Conservative P&amp;L</th><th>Realized</th><th>Fill costs</th><th>Drawdown %</th>'
             '<th>Entries</th><th>Closed</th><th>Unresolved</th><th>Backlog</th></tr>' + ''.join(rows)
             + '</table></section><p>' + html.escape(SCOPE) + '</p><p>Zero samples do not show an edge. '
