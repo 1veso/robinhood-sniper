@@ -314,6 +314,28 @@ class SizingComparisonTests(unittest.TestCase):
         self.assertEqual(rpc.calls, [])
         self.assertEqual(self.requests, [])
 
+    def test_slow_child_start_does_not_extend_scheduled_wait_window(self):
+        start = self.now
+        wrapper = self.root/'runtime/desktop/radeon-sizing.json'
+        wrapper.parent.mkdir()
+        wrapper.write_text(json.dumps({'job': 'radeon-sizing', 'phase': 'STARTING_CHILD',
+            'started_at': start-10, 'finished_at': None}))
+        result, rpc = self.run_waiting_worker()
+        self.assertEqual(result['finished_at'], start+45)
+        self.assertEqual(result['intake_wait_seconds'], 45)
+        self.assertEqual(rpc.calls, [])
+
+    def test_completed_or_stale_wrapper_cannot_change_wait_window(self):
+        wrapper = self.root/'runtime/desktop/radeon-sizing.json'
+        wrapper.parent.mkdir()
+        for phase, age, finished in [('COMPLETE', 10, self.now), ('STARTING_CHILD', 111, None)]:
+            start = self.now
+            wrapper.write_text(json.dumps({'job': 'radeon-sizing', 'phase': phase,
+                'started_at': start-age, 'finished_at': finished}))
+            result, rpc = self.run_waiting_worker()
+            self.assertEqual(result['finished_at'], start+55)
+            self.assertEqual(rpc.calls, [])
+
     def test_new_primary_backoff_during_wait_retains_candidate_without_calls(self):
         start = self.now
         captured = []

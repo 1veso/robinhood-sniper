@@ -40,8 +40,9 @@ quotes precede entries, with up to two holdings per account rotating through a
 bounded run; coverage gaps and unresolved marks remain visible. This is bounded
 paper monitoring, not continuous prices or guaranteed exit latency.
 
-After exits, the scheduled worker polls the local tape every half second for up
-to 55 seconds from its start, within the existing 100-second work budget and
+After exits, the scheduled worker polls the local tape every half second until
+55 seconds after the scheduled wrapper started (including child startup time),
+within the existing 100-second work budget and
 110-second child limit. This avoids an unnecessary full-minute wait for inputs
 captured after the first tape read. Empty polls make no provider requests. The
 500-row and one-candidate limits apply across the entire run, failed attempts

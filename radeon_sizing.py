@@ -21,6 +21,17 @@ def run(root, *, intake_wait_seconds=55, sleep=time.sleep):
     runtime, folder = root / 'runtime', root / 'runtime/radeon-sizing'
     previous = json.loads((folder / 'status.json').read_text()) if (folder / 'status.json').exists() else {}
     started, deadline = int(time.time()), time.time() + 100
+    intake_start = started
+    wrapper_path = runtime / 'desktop/radeon-sizing.json'
+    if wrapper_path.exists():
+        wrapper = json.loads(wrapper_path.read_text(encoding='utf-8'))
+        wrapper_started = wrapper.get('started_at')
+        if (wrapper.get('job') == 'radeon-sizing' and wrapper.get('phase') == 'STARTING_CHILD'
+                and wrapper.get('finished_at') is None and type(wrapper_started) is int
+                and 0 <= started - wrapper_started <= 110):
+            # Include Python startup in the wait window. Otherwise a slow cold
+            # start plus 55 seconds waiting can skip the next minute trigger.
+            intake_start = wrapper_started
     status = {'started_at': started, 'finished_at': None, 'errors': [], 'processed': {},
               'mode': 'ISOLATED_PAPER_COMPARISON', 'paid_calls': 0, 'signing_calls': 0, 'broadcast_calls': 0,
               'retry_at': previous.get('retry_at', 0)}
@@ -92,7 +103,7 @@ def run(root, *, intake_wait_seconds=55, sleep=time.sleep):
         # candidates captured with only seconds left on their purchase proofs.
         # Watch the local tape for a bounded part of this existing minute job.
         # Empty polls make no provider requests. Per-run limits span all polls.
-        intake_until = min(started + max(0, min(55, intake_wait_seconds)), deadline - 5)
+        intake_until = min(intake_start + max(0, min(55, intake_wait_seconds)), deadline - 5)
         candidate_counts = {name: 0 for name in names}
         status['processed'] = {name: 0 for name in names}
         status['intake_polls'] = 0
