@@ -14,8 +14,8 @@ class ProviderDeferred(ValueError):
     """A scheduled recurrence arrived before the persisted retry/poll time."""
 
 
-def settings(root):
-    path=Path(root)/'krypton_bot/.env'
+def settings(root, folder='krypton_bot'):
+    path=Path(root)/folder/'.env'
     values={}
     if path.exists():
         from dotenv import dotenv_values
@@ -52,9 +52,12 @@ def lp_evidence(report,mint,pool,now):
 
 
 class Providers:
+    settings_folder = 'krypton_bot'
+    agent_name = 'Krypton'
+
     def __init__(self,root,book,clock=time.time,transport=request_json):
         self.root,self.book,self.clock,self.transport=Path(root),book,clock,transport
-        values=settings(root)
+        values=settings(root, self.settings_folder)
         saved=self.root/'runtime/solana-rpc-url.txt'
         self.rpc_url=values.get('SOLANA_RPC_URL') or (saved.read_text().strip() if saved.exists() else 'https://api.mainnet.solana.com')
         self.native_cache=None
@@ -65,7 +68,7 @@ class Providers:
         # Persist BEFORE the request. Interrupted calls also respect this bound.
         self.book.provider(provider,{'attempted_at':now,'retry_after':now+(60 if provider=='profiles' else 0),'state':'RUNNING'})
         try:
-            headers={'Accept':'application/json','User-Agent':'sniper-paper/0.1 Krypton'}
+            headers={'Accept':'application/json','User-Agent':'sniper-paper/0.1 '+self.agent_name}
             if body is not None:headers['Content-Type']='application/json'
             result=self.transport('POST' if body is not None else 'GET',url,body=body,headers=headers,timeout=8)
         except Exception as exc:

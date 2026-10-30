@@ -71,7 +71,8 @@ class NeonTests(unittest.TestCase):
         try:self.assertNotEqual(initial,other.identity)
         finally:other.close()
     def test_persistence_in_another_process(self):
-        code="import sys;from sniper.neon import NeonBook;from pathlib import Path;b=NeonBook(Path(sys.argv[1]));print(b.identity['account_id']);b.close()"
+        # The child interpreter does not inherit run_tests.py's source path.
+        code="import sys;sys.path.insert(0,'src');from sniper.neon import NeonBook;from pathlib import Path;b=NeonBook(Path(sys.argv[1]));print(b.identity['account_id']);b.close()"
         out=subprocess.check_output([sys.executable,'-c',code,str(self.book.root)],text=True,cwd=Path(__file__).parents[1])
         self.assertEqual(out.strip(),self.book.identity['account_id'])
     def test_disabled_model_never_reads_key_or_calls_network(self):

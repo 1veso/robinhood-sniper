@@ -31,10 +31,19 @@ def bound_config(folder):
 
 
 class Paper:
+    account_kind = 'krypton'
+
     def __init__(self,folder,cfg,*,initialize=False,demo=False,clock=time.time):
         self.folder,self.cfg,self.clock=Path(folder),cfg,clock
         path=self.folder/'book.sqlite3'
         if not path.exists() and not initialize: raise ValueError('Initialize Krypton explicitly before running workers')
+        if path.exists():
+            probe=sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True,timeout=3)
+            try:
+                row=probe.execute("SELECT value FROM meta WHERE key='bot_id'").fetchone()
+                kind=json.loads(row[0]) if row else 'krypton'
+                if kind!=self.account_kind:raise ValueError('Account belongs to another bot')
+            finally:probe.close()
         self.folder.mkdir(parents=True,exist_ok=True)
         self.db=sqlite3.connect(path,timeout=3,isolation_level=None); self.db.row_factory=sqlite3.Row
         self.db.execute('PRAGMA journal_mode=WAL');self.db.execute('PRAGMA foreign_keys=ON')
@@ -51,7 +60,7 @@ class Paper:
             CREATE TABLE IF NOT EXISTS api_requests(id TEXT PRIMARY KEY,payload TEXT NOT NULL);''')
             with self.transaction():
                 if self.get('account_id') is None:
-                    for k,v in {'account_id':str(uuid.uuid4()),'config':cfg,'config_hash':digest(cfg),
+                    for k,v in {'account_id':str(uuid.uuid4()),'bot_id':self.account_kind,'config':cfg,'config_hash':digest(cfg),
                         'cost_policy':cost_policy(),'cash':cfg['starting_cash_usd'],'rent_reserved':'0',
                         'created_at':int(clock()),'demo':demo,'execution_mode':'paper','log_cursor':0}.items():self.set(k,v)
         if self.get('config_hash')!=digest(cfg) or self.get('execution_mode')!='paper' or self.get('demo') is not demo:
@@ -129,6 +138,9 @@ class Paper:
         self.set('last_equity',{'at':now,'equity':str(equity)})
         return {'day':date,'baseline':str(baseline),'equity':str(equity),'halted':halted}
 
+    def _validate_admission(self,mint,evidence,verdict,now):
+        """Optional strategy-specific evidence guard, inside the entry transaction."""
+
     def enter(self,mint,evidence,verdict,now,gate):
         q=evidence['quote']
         if verdict.get('demo') is True and not self.demo:raise ValueError('Demo evidence cannot enter a production account')
@@ -152,6 +164,7 @@ class Paper:
             fill=simulate(self.costs,'buy',q,amount,now)
             basis=amount+number(fill['explicit_fee_usd']);rent=number(fill['rent_capital_reserved_usd'])
             if basis+rent>cash or basis+rent>cap:raise ValueError('Final cash/size limit')
+            self._validate_admission(mint,evidence,verdict,now)
             p={'mint':mint,'pool':q['pool'],'symbol':q['symbol'],'opened_at':now,'quantity':fill['quantity'],
                 'basis':str(basis),'entry_price':fill['fill_price'],'rent_reserved':str(rent),
                 'entry_costs':fill,'entry_evidence_hash':digest(evidence),'mark':None}
@@ -196,11 +209,14 @@ class Paper:
         row=self.db.execute('SELECT payload FROM runs WHERE id=?',(rid,)).fetchone();payload=json.loads(row[0]);payload['errors']=errors
         self.db.execute('UPDATE runs SET finished_at=?,state=?,payload=? WHERE id=?',(now,'ERROR' if errors else 'OK',encode(payload),rid))
 
-    def publish(self):
+    def snapshot(self,now):
         from .view import snapshot
+        return snapshot(self.db,now)
+
+    def publish(self):
         with process_lock(self.folder/'publish.lock'):
             self.db.execute('BEGIN')
-            try:data=snapshot(self.db,int(self.clock()))
+            try:data=self.snapshot(int(self.clock()))
             finally:self.db.rollback()
             atomic(self.folder/'account.json',encode({k:data[k] for k in ('account_id','config_hash','created_at','demo')}))
             atomic(self.folder/'paper_state.json',encode(data))

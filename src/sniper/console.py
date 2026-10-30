@@ -170,7 +170,7 @@ class ConsoleData:
     def _inspect_jobs(self):
         if os.name != 'nt':
             return {'available': False, 'items': [], 'checked_at': None, 'error': 'unsupported_platform'}
-        command = "$ErrorActionPreference='Stop'; Get-ScheduledTask -TaskName 'SNIPER*','RUG DESK*','NEON*','Pump Jev*','KRYPTON*' | Where-Object { $_.TaskName -in @('SNIPER Exploratory Paper','SNIPER Paper Research','SNIPER Telegram Monitor','SNIPER Automatic Executor Shadow','RUG DESK Watch','RUG DESK Scan','RUG DESK Report','RUG DESK Console','NEON Paper Signals','NEON Paper Watch','Pump Jev Shadow Review','KRYPTON Paper Scan','KRYPTON Paper Watch') } | ForEach-Object { $i=$_ | Get-ScheduledTaskInfo; [pscustomobject]@{name=$_.TaskName;state=[string]$_.State;last_result=$i.LastTaskResult;last_run=$i.LastRunTime.ToUniversalTime().ToString('o');next_run=$i.NextRunTime.ToUniversalTime().ToString('o');working_directory=($_.Actions | Select-Object -First 1).WorkingDirectory} } | ConvertTo-Json -Compress"
+        command = "$ErrorActionPreference='Stop'; Get-ScheduledTask -TaskName 'SNIPER*','RUG DESK*','NEON*','Pump Jev*','KRYPTON*','HELIUM*' | Where-Object { $_.TaskName -in @('SNIPER Exploratory Paper','SNIPER Paper Research','SNIPER Telegram Monitor','SNIPER Automatic Executor Shadow','RUG DESK Watch','RUG DESK Scan','RUG DESK Report','RUG DESK Console','NEON Paper Signals','NEON Paper Watch','Pump Jev Shadow Review','KRYPTON Paper Scan','KRYPTON Paper Watch','HELIUM Paper Scan','HELIUM Paper Watch') } | ForEach-Object { $i=$_ | Get-ScheduledTaskInfo; [pscustomobject]@{name=$_.TaskName;state=[string]$_.State;last_result=$i.LastTaskResult;last_run=$i.LastRunTime.ToUniversalTime().ToString('o');next_run=$i.NextRunTime.ToUniversalTime().ToString('o');working_directory=($_.Actions | Select-Object -First 1).WorkingDirectory} } | ConvertTo-Json -Compress"
         result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', command], capture_output=True, timeout=25, creationflags=subprocess.CREATE_NO_WINDOW)
         if result.returncode:
             raise ValueError('Task inspection unavailable')
@@ -223,11 +223,14 @@ class ConsoleData:
             return value
 
     def state(self, bot='robinhood'):
-        if bot not in ('robinhood', 'solana', 'neon', 'jev', 'krypton'):
+        if bot not in ('robinhood', 'solana', 'neon', 'jev', 'krypton', 'helium'):
             raise ValueError('Unknown bot')
         def load():
-            if bot == 'krypton':
-                from .krypton.view import view
+            if bot in ('krypton', 'helium'):
+                if bot == 'helium':
+                    from .helium.view import view
+                else:
+                    from .krypton.view import view
                 data = view(self.root)
                 data['cadence_seconds'] = 60
                 data['error_count'] = data.get('status', {}).get('error_count', 0)
@@ -243,10 +246,12 @@ class ConsoleData:
                          'refresh_seconds': 5, 'read_only': True, 'real_money_enabled': False,
                          'execution_target': 'automatic', 'live_execution_ready': False,
                          'jobs': self.jobs()})
-            if bot=='neon' and data.get('neon_workspace'):
-                worker=data['neon_workspace']['worker'];jobs=data['jobs']
+            workspace_key = {'neon': 'neon_workspace', 'helium': 'helium_workspace'}.get(bot)
+            if workspace_key and data.get(workspace_key):
+                worker=data[workspace_key]['worker'];jobs=data['jobs']
                 worker['schedule_observed_at']=jobs.get('checked_at')
-                if not data['neon_workspace'].get('replay') and jobs.get('checked_at') and 0<=int(time.time())-jobs['checked_at']<=90:
+                task_names = ('NEON Paper Signals', 'NEON Paper Watch') if bot == 'neon' else ('HELIUM Paper Scan', 'HELIUM Paper Watch')
+                if not (data[workspace_key].get('replay') or data.get('demo')) and jobs.get('checked_at') and 0<=int(time.time())-jobs['checked_at']<=90:
                     for job in jobs.get('items',[]):
                         if not job.get('account_root_bound'):continue
                         from datetime import datetime
@@ -255,10 +260,10 @@ class ConsoleData:
                             planned=int(planned.timestamp()) if planned.tzinfo else None
                         except (ValueError,TypeError,KeyError):planned=None
                         if planned is not None and planned<=int(time.time()):planned=None
-                        if job.get('name')=='NEON Paper Signals':worker['next_scan_at']=planned
-                        if job.get('name')=='NEON Paper Watch':worker['next_watch_at']=planned
+                        if job.get('name')==task_names[0]:worker['next_scan_at']=planned
+                        if job.get('name')==task_names[1]:worker['next_watch_at']=planned
             from .switchover import inventory
-            if bot not in ('neon','jev','krypton'):
+            if bot not in ('neon','jev','krypton','helium'):
                 data['switchover'] = inventory(self.root, 'evm' if bot=='robinhood' else 'solana')
             if bot=='robinhood':
                 try:
@@ -275,7 +280,7 @@ class ConsoleData:
                 for decision in data.get('decisions',[]):
                     decision['jev'] = linked.get(decision.get('asset_id'))
             return data
-        return self.cached(('state', bot), .15 if bot=='neon' else 3, load)
+        return self.cached(('state', bot), .15 if bot in ('neon', 'helium') else 3, load)
 
     def robinhood(self):
         folder = self.root / 'runtime/exploration'
@@ -533,7 +538,8 @@ def make_server(root, host='127.0.0.1', port=8765):
     static = Path(__file__).resolve().parents[2] / 'console'
     files = {'/': ('index.html','text/html; charset=utf-8'), '/app.js': ('app.js','text/javascript; charset=utf-8'), '/style.css': ('style.css','text/css; charset=utf-8'), '/favicon.svg': ('favicon.svg','image/svg+xml'),
              '/neon.js':('neon.js','text/javascript; charset=utf-8'),'/neon.css':('neon.css','text/css; charset=utf-8'),
-             '/krypton.js':('krypton.js','text/javascript; charset=utf-8'),'/krypton.css':('krypton.css','text/css; charset=utf-8')}
+             '/krypton.js':('krypton.js','text/javascript; charset=utf-8'),'/krypton.css':('krypton.css','text/css; charset=utf-8'),
+             '/helium.js':('helium.js','text/javascript; charset=utf-8'),'/helium.css':('helium.css','text/css; charset=utf-8')}
     event_waiters=threading.BoundedSemaphore(8)
 
     class Handler(BaseHTTPRequestHandler):
@@ -608,6 +614,16 @@ def make_server(root, host='127.0.0.1', port=8765):
                 elif url.path == '/api/neon-candidate':
                     from .neon_workspace import candidate
                     self.send(200,json_text(candidate(data.root,params.get('mint',[''])[0])).encode())
+                elif url.path == '/api/helium-journal':
+                    from .helium.cockpit import journal
+                    self.send(200,json_text(journal(data.root,
+                        after=params.get('after',[''])[0],limit=int(params.get('limit',['200'])[0]),
+                        reason_filter=params.get('reason',[''])[0],
+                        stage_filter=params.get('stage',[''])[0],
+                        before=int(params['before'][0]) if 'before' in params else None)).encode())
+                elif url.path == '/api/helium-candidate':
+                    from .helium.cockpit import candidate
+                    self.send(200,json_text(candidate(data.root,params.get('mint',[''])[0])).encode())
                 elif url.path == '/api/chart':
                     self.send(200, json_text(data.chart(params.get('bot', ['robinhood'])[0], params.get('asset', [''])[0], params.get('pool', [''])[0])).encode())
                 elif url.path == '/api/wallets':
@@ -620,9 +636,10 @@ def make_server(root, host='127.0.0.1', port=8765):
                 elif url.path == '/api/health':
                     from .solana_console import discover
                     from .krypton.view import health as krypton_health
+                    from .helium.view import health as helium_health
                     self.send(200, json_text({'service':'TENDIES TRACKER Observation Console','version':__version__,'read_only':True,'at':int(time.time()),
-                        'paper_views':['robinhood','solana','neon','jev','krypton'],'event_stream_version':1,
-                        'event_stream_bots':['solana','neon'],'accounts':dict(discover(data.root),krypton=krypton_health(data.root))}).encode())
+                        'paper_views':['robinhood','solana','neon','jev','krypton','helium'],'event_stream_version':1,
+                        'event_stream_bots':['solana','neon'],'journal_bots':['helium'],'accounts':dict(discover(data.root),krypton=krypton_health(data.root),helium=helium_health(data.root))}).encode())
                 elif url.path == '/api/jev-assessment':
                     from .jev_review import detail
                     self.send(200, json_text(detail(data.root, params.get('id',[''])[0])).encode())

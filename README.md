@@ -5,7 +5,17 @@ Robinhood Chain events, checks supplied wallet and token evidence, models entrie
 and exits, and keeps a durable account ledger. Solana screening and optional Grok
 research annotation are included as separate adapters.
 
-This is version **0.1.16**: runnable software for testing the proposed strategy.
+This is version **0.1.23**: runnable software for testing the proposed strategy.
+
+[Helium — Bot 6](helium_bot/README.md) is a standalone Solana paper trader with
+its own account and internal research team. It inherits Krypton's trading rules
+unchanged, adds a bound Jev review of the Grok assessment, and has independent
+scan/watch workers and a sixth console view. Its [trading cockpit](docs/HELIUM_BOT.md#trading-cockpit)
+adapts NEON's responsive presentation to Helium's recorded equity, market prices,
+internal pipeline, decisions, positions and committed paper fills. Run
+`python helium_bot.py --demo` for the isolated offline lifecycle. Paid model
+calls and live execution are not enabled by installation; see
+[Helium operations](docs/HELIUM_BOT.md).
 
 [Solana trader selection and signals](docs/TRADER_SIGNALS.md) reuse the history analyser, model budget and paper pipeline. Versioned leader selections fail closed; manual/replayed events deduplicate before entry and never replace position exits. CopyFomo has no verified external approval/order/fill connection here. Paid model calls and live copying remain disabled. Run `python rug_desk/trader_acceptance.py` for the isolated six-case demonstration.
 

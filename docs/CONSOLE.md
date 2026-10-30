@@ -12,6 +12,8 @@ The sidebar uses display names only. Selecting a bot shows its purpose:
 | Xenon | Solana Rug Desk | `solana` |
 | Neon | Solana Leader Follower | `neon` |
 | Argon | Pump/Jev Review | `jev` |
+| Krypton | Solana New-Token Scanner | `krypton` |
+| Helium | Standalone Solana Trading Team | `helium` |
 
 These are presentation aliases, including Neon’s separate workspace. Account
 UUIDs, runtime directories, Windows tasks, strategy rules and the Jev model name
@@ -58,7 +60,26 @@ Solana and NEON share a read-only position, fill, cost and observation adapter. 
 
 The HTTP server exposes fixed assets, read-only account/chart/health/evidence endpoints, linked Jev assessments, the JSON/SSE `/api/events` stream, and the fixed public `/api/wallet-export.csv` download. Address detail accepts only a valid public EVM address; `download=1` adds an attachment disposition. It does not serve arbitrary runtime paths, raw provider proofs or credentials, accept writes, send Telegram messages, change configuration, call paid APIs, or expose signing controls. Database access is `mode=ro` plus `query_only`, with no writable account/outbox constructors. Host and Origin validation, no CORS, and a restrictive content-security policy protect the loopback service from unrelated web pages. Other programs running as this Windows user can access local resources; localhost is not a multi-user authentication system.
 
-Snapshot requests are cached for three seconds, chart requests for five, and Windows task inspection for thirty. Display limits: latest 500 fills, 200 closed-position records, 80 decisions, 4,000 equity observations and 12,000 selected-pool marks. Aggregate account P&L and decision reason counts are computed from the full ledger. These display limits do not cap trading or delete historical data from the authoritative databases.
+Snapshot requests are cached for three seconds (150 milliseconds for NEON and Helium), chart requests for five, and Windows task inspection for thirty. Display limits: latest 500 fills, 200 closed-position records, 80 decisions, 4,000 equity observations and 12,000 selected-pool marks for the original account views; each independent cockpit declares its own bounded journal/history window. Aggregate account P&L and decision reason counts are computed from the full ledger. These display limits do not cap trading or delete historical data from the authoritative databases.
+
+## Helium trading cockpit
+
+The sixth view at `/?bot=helium` carries NEON's responsive presentation into
+Helium's independent account: recorded performance history, timestamped market
+tape, Scout → Filter → Analyst → Execution → Guard, decision stream, rejection
+drilldown and position cards. Market freshness, PAPER EXECUTION and worker
+health are separate. New stage events highlight the corresponding responsibility;
+only committed fills generate trade notifications. Initial history does not
+replay alerts. The original Krypton-derived stop and full take-profit remain
+unchanged; partial/trailing exits are explicitly unavailable in this baseline.
+
+`/api/helium-journal` supports bounded, account-bound cursor reads and optional
+stage/reason filters. `/api/helium-candidate` returns the matching evidence and
+fill history. Both are read-only and use the console's existing origin checks.
+The chart reads worker-persisted observations and leaves unavailable valuations
+and monitoring gaps unfilled. Viewing the page never initializes or upgrades an
+account. See [Helium operations](HELIUM_BOT.md#trading-cockpit) for worker setup,
+model blockers, isolated replay verification and the future live-mode boundary.
 
 The wallet index is fetched only while its tab is selected and cached for five seconds. Its API is capped at 10,000 addresses; the table shows the first 200 matching addresses, prioritizing research candidates and recent observations. Narrow the search to find another address. Address details and their JSON downloads contain at most the newest 200 observations. JSON input is bounded to 16 MB and the aggregate CSV download to 64 MB. Limits are visible; the full journal and exports remain on disk. Export age, observation time and canonical-check time remain separate.
 

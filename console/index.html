@@ -5,10 +5,11 @@
   <title>TENDIES TRACKER Observation Console</title>
   <link rel="stylesheet" href="/neon.css">
   <link rel="stylesheet" href="/krypton.css">
-  <link rel="stylesheet" href="/krypton.css">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/helium.css">
   <script src="/neon.js" defer></script>
   <script src="/krypton.js" defer></script>
+  <script src="/helium.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -20,12 +21,13 @@
 </header>
 <div class="shell">
 <aside class="rail" aria-label="Bot navigation">
-  <div class="rail-title">Your bots <span>05</span></div>
+  <div class="rail-title">Your bots <span>06</span></div>
   <button class="bot-button selected" data-bot="robinhood" aria-label="Radeon" aria-pressed="true"><span class="bot-icon" aria-hidden="true">R</span><span><strong>Radeon</strong></span><i class="dot" aria-hidden="true"></i></button>
   <button class="bot-button" data-bot="solana" aria-label="Xenon" aria-pressed="false"><span class="bot-icon sol" aria-hidden="true">X</span><span><strong>Xenon</strong></span><i class="dot amber" aria-hidden="true"></i></button>
   <button class="bot-button" data-bot="neon" aria-label="Neon" aria-pressed="false"><span class="bot-icon sol" aria-hidden="true">N</span><span><strong>Neon</strong></span><i class="dot amber" aria-hidden="true"></i></button>
   <button class="bot-button" data-bot="jev" aria-label="Argon" aria-pressed="false"><span class="bot-icon sol" aria-hidden="true">A</span><span><strong>Argon</strong></span><i class="dot amber" aria-hidden="true"></i></button>
   <button class="bot-button" data-bot="krypton" aria-label="Krypton" aria-pressed="false"><span class="bot-icon sol" aria-hidden="true">K</span><span><strong>Krypton</strong></span><i class="dot amber" aria-hidden="true"></i></button>
+  <button class="bot-button" data-bot="helium" aria-label="Helium" aria-pressed="false"><span class="bot-icon sol" aria-hidden="true">H</span><span><strong>Helium</strong></span><i class="dot amber" aria-hidden="true"></i></button>
   <div class="rail-rule"></div><p class="rail-caption">Strategy accounts stay separate.</p>
   <div class="rail-bottom"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6l-8-3Zm-4 9 3 3 5-6"/></svg><strong>Observation only</strong><p>Automatic paper trading.<br>Real money is disabled.</p><span id="version">LOCAL CONSOLE</span></div>
 </aside>
@@ -38,6 +40,7 @@
   <div id="notice" class="notice">Live market observations · simulated fills · no wallet transactions</div>
   <section id="jev-panel" class="panel detail-panel" aria-label="Pump Jev review" hidden></section>
   <section id="krypton-panel" aria-label="Krypton paper workspace" hidden></section>
+  <section id="helium-panel" aria-label="Helium trading cockpit" hidden></section>
   <div class="market-grid">
     <section class="panel chart-panel" aria-label="Market observations">
       <div class="panel-heading chart-heading"><div class="instrument"><label class="sr-only" for="asset-select">Traded coin</label><select id="asset-select"><option>Loading coins…</option></select><span id="instrument-state" class="tag">—</span></div><div class="chart-modes" aria-label="Chart time range"><button data-range="3600" aria-pressed="false">1H</button><button data-range="21600" aria-pressed="true" class="active">6H</button><button data-range="86400" aria-pressed="false">24H</button><button data-range="0" aria-pressed="false">ALL</button></div></div>
