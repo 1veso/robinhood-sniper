@@ -1,4 +1,5 @@
 """Persistence, provenance and read-only guarantees for Helium's cockpit."""
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -85,15 +86,15 @@ class HeliumCockpitBackendTests(unittest.TestCase):
     def test_read_only_old_account_view_does_not_migrate_or_backfill(self):
         self.entry();identity=self.book.identity;cash=self.book.get('cash')
         self.book.close();path=self.root/'helium_bot/runtime/book.sqlite3'
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             for table in ('cockpit_events','account_observations','market_observations'):
                 db.execute('DROP TABLE '+table)
             db.execute("DELETE FROM meta WHERE key LIKE 'cockpit_%'")
-        with sqlite3.connect(path) as db:before='\n'.join(db.iterdump())
+        with closing(sqlite3.connect(path)) as db:before='\n'.join(db.iterdump())
         old=view(self.root,self.now)
         self.assertEqual(old['account_id'],identity);self.assertEqual(old['equity_history'],[])
         self.assertFalse(old['helium_workspace']['recording_ready'])
-        with sqlite3.connect(path) as db:self.assertEqual(before,'\n'.join(db.iterdump()))
+        with closing(sqlite3.connect(path)) as db:self.assertEqual(before,'\n'.join(db.iterdump()))
         self.now+=1
         self.book=Paper(path.parent,self.cfg,demo=True,clock=self.clock)
         migrated=self.state()

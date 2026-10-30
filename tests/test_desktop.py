@@ -119,13 +119,13 @@ class HeliumCliTests(unittest.TestCase):
                 settings = json.loads((folder/name).read_text())
                 self.assertIs(settings['enabled'], False)
                 self.assertIs(settings['operator_authorized'], False)
-            with sqlite3.connect(folder/'book.sqlite3') as db:
+            with contextlib.closing(sqlite3.connect(folder/'book.sqlite3')) as db, db:
                 identity = db.execute("SELECT value FROM meta WHERE key='account_id'").fetchone()[0]
                 db.execute("UPDATE meta SET value=? WHERE key='cash'", (json.dumps('900'),))
             saved_authorization = '{"enabled":false,"operator_authorized":false,"reference":"preserve me"}'
             (folder/'paid-jev.json').write_text(saved_authorization)
             self.assertEqual(helium_bot.main(['init', '--root', str(root)]), 0)
-            with sqlite3.connect(folder/'book.sqlite3') as db:
+            with contextlib.closing(sqlite3.connect(folder/'book.sqlite3')) as db:
                 self.assertEqual(db.execute("SELECT value FROM meta WHERE key='account_id'").fetchone()[0], identity)
                 self.assertEqual(json.loads(db.execute("SELECT value FROM meta WHERE key='cash'").fetchone()[0]), '900')
                 self.assertEqual(db.execute('SELECT COUNT(*) FROM fills').fetchone()[0], 0)

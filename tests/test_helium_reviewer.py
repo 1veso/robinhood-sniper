@@ -1,4 +1,5 @@
 import copy
+from contextlib import closing
 from decimal import Decimal
 import json
 from pathlib import Path
@@ -213,7 +214,7 @@ class HeliumReviewerTests(unittest.TestCase):
             self.ask('candidate-3')
         self.assertEqual(len(self.calls), 2)
         self.assertEqual(self.audit('candidate-3')['reservation_usd'], '0')
-        with sqlite3.connect(self.book.folder / 'jev-budget.sqlite3') as db:
+        with closing(sqlite3.connect(self.book.folder / 'jev-budget.sqlite3')) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM advisory_reservations').fetchone()[0], 2)
             self.assertEqual(db.execute('SELECT count(*) FROM advisory_usage').fetchone()[0], 0)
 
