@@ -1,5 +1,9 @@
 # Radeon runner ladder
 
+This document records the historical runner revision. The reviewed successor for
+new primary positions is documented in [Radeon strategy management](RADEON_STRATEGIES.md).
+Existing runner-bound positions and the sizing experiment retain this revision.
+
 The separately activated `runner-ladder-v1` paper exit revision targets stronger
 participation in exceptional runners while adding protection before the first
 profit take. Merely installing the code does not activate it.

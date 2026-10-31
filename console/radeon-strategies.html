@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Radeon strategies · TENDIES TRACKER</title><link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/radeon-strategies.css"><script src="/radeon-strategies.js" defer></script></head>
+<body><header><a href="/?bot=robinhood">Back to Radeon</a><span>Automatic paper trading · real money disabled</span></header>
+<main><h1>Radeon strategies &amp; comparisons</h1>
+<p class="intro">One primary account, two entry rules. Two separate experiments answer different questions. Their balances and results are never added together.</p>
+<div id="load-state" role="status">Reading each account’s ledger…</div>
+<section aria-labelledby="overview-title"><h2 id="overview-title">Which account produced the result?</h2>
+<p>Choose an account to see its trades and entry switches. Results below include only trades opened in that account’s test period; copied starting trades are excluded.</p>
+<div id="overview" class="scroll-table"></div></section>
+<section id="selected-account" aria-labelledby="selected-title"><h2 id="selected-title">Select an account</h2>
+<div id="account-context"></div><div id="entry-paths"></div>
+<details id="entry-settings"><summary>Entry switches · existing exits always continue</summary>
+<form id="control-form"><label><input id="account-enabled" type="checkbox"> Allow new entries in this account</label>
+<fieldset id="path-settings"><legend>Primary entry rules · either enabled rule may open one shared position</legend>
+<label><input id="whale-enabled" type="checkbox"> Whale-follow</label><label><input id="two-wallet-enabled" type="checkbox"> Two-wallet confirmation</label></fieldset>
+<p id="control-note">Enabling entries does not bypass eligibility, safety, daily halts or the original trial deadline. Resuming requires newly observed candidates.</p>
+<button id="save-controls" type="submit" disabled>Save entry switches</button><span id="control-status" role="status"></span></form></details>
+<h3>Trades in this account</h3><div class="filters">
+<label>Entry rule<select id="entry-filter"><option value="">All entry rules</option></select></label>
+<label>Exit policy<select id="exit-filter"><option value="">All exit policies</option></select></label>
+<label>Status<select id="status-filter"><option value="">All states</option><option>CLOSED</option><option>OPEN</option><option>UNRESOLVED</option></select></label>
+<label>Coin or address<input id="trade-search" type="search" placeholder="Search this account"></label>
+<label class="check"><input id="include-seed" type="checkbox"> Include copied starting trades</label></div>
+<div id="trades" class="scroll-table"></div><p class="muted">Expand a trade to inspect every fill, its costs, account, source candidate and rule revisions. Unavailable marks retain the holding and basis; they are not executed losses.</p></section>
+<section aria-labelledby="matched-title"><h2 id="matched-title">Compare the same completed candidates</h2><div id="matched"></div>
+<p class="muted">These small, selected subsets do not establish an edge. Different entry timing, missed candidates, costs and unresolved positions still matter. The full account results above remain authoritative.</p></section>
+<footer><a href="/api/radeon-strategies" download="radeon-strategies.json">Download account and trade attribution</a><button id="refresh" type="button">Refresh results</button><span id="as-of"></span></footer>
+</main></body></html>

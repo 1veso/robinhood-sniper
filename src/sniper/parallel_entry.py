@@ -202,7 +202,11 @@ class ParallelEntryEngine(BoundRadeonExits, ExploratoryEngine):
         except (KeyError, TypeError, ValueError, StopIteration):
             self._resolution_error = 'entry_confirmation_evidence_mismatch'
             return candidate
-        eligible = qualified_signals(signals)
+        from .radeon_controls import path_enabled
+        qualified = qualified_signals(signals)
+        eligible = [s for s in qualified if path_enabled(self.ledger, s['strategy_id'], candidate)]
+        if qualified and not eligible:
+            self._resolution_error = 'operator_entry_path_paused_or_predates_resume'
         if not eligible:
             return candidate
         selected = eligible[0]

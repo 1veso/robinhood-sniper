@@ -202,6 +202,9 @@ class PaperEngine:
     def _entry_candidate(self, candidate: Candidate, now: int) -> Candidate:
         return candidate
 
+    def _entry_control_reason(self, candidate: Candidate) -> str | None:
+        return None
+
     def consider(self, candidate: Candidate, quote: MarketQuote, now: int) -> dict[str, Any]:
         timestamp(now)
         if not isinstance(candidate, Candidate):
@@ -221,6 +224,9 @@ class PaperEngine:
                 return self._finish_decision(candidate, now, {"verdict": "SKIP", "reason": reason, **extra}, quote)
             if candidate.strategy != self.strategy_name:
                 return reject("unsupported_strategy")
+            control_reason = self._entry_control_reason(candidate)
+            if control_reason:
+                return reject(control_reason)
             if self.ledger._get("entry_halt"):
                 return reject("manual_entry_halt")
             if self._daily_halt(now):

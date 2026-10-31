@@ -17,6 +17,15 @@ RUNNER = {
     'protect_gain_pct': '40', 'time_stop_seconds': 21600,
     'time_stop_min_gain_pct': '20',
 }
+HARVEST = {
+    'name': 'harvest-ladder-v1',
+    'take_profits': [{'gain_pct': '40', 'fraction': '0.50'},
+                     {'gain_pct': '80', 'fraction': '0.25'},
+                     {'gain_pct': '160', 'fraction': '0.15'}],
+    'stop_loss_pct': '35', 'trailing_stop_pct': '20',
+    'protect_gain_pct': '20', 'time_stop_seconds': 21600,
+    'time_stop_min_gain_pct': '20',
+}
 
 
 def validate(spec):
@@ -87,7 +96,8 @@ def _bind(ledger, position, spec, *, inherited):
          int(inherited), int(bool(position['tp_done'])) if inherited else 0))
 
 
-def activate(ledger, policy, spec, *, now, expected_account, expected_source, expected_entry_revision, review_reference):
+def activate(ledger, policy, spec, *, now, expected_account, expected_source, expected_entry_revision, review_reference,
+             expected_previous_revision=None):
     """Caller holds controller + worker locks. Existing positions are never repriced."""
     timestamp(now)
     spec = validate(spec)
@@ -105,20 +115,27 @@ def activate(ledger, policy, spec, *, now, expected_account, expected_source, ex
     old = ledger._get(KEY)
     if old:
         current = json.loads(old)
-        if current['revision'] != rev or current['policy'] != spec:
-            raise ValueError('A different exit revision is already active; explicit migration required')
+        previous_rev = current['revision']
         event = ledger.conn.execute('SELECT payload FROM events WHERE event_id=? AND kind=?',
-                                    ('exit-policy-revision:' + rev, 'exit_policy_revision')).fetchone()
+                                    ('exit-policy-revision:' + previous_rev, 'exit_policy_revision')).fetchone()
         if (current['account_id'] != expected_account or current['source_id'] != expected_source
                 or current['entry_revision'] != expected_entry_revision
-                or manifest.get('exit_revision') != rev or event is None
+                or previous_rev != revision(current['policy'])
+                or manifest.get('exit_revision') != previous_rev or event is None
                 or json.loads(event[0])['new_trial'] != manifest or not table_exists(ledger.conn)):
             raise ValueError('Existing exit revision evidence is inconsistent')
         for position in ledger._positions():
             saved = binding(ledger.conn, position['position_id'])
             if saved is None or saved['asset_id'] != position['asset_id'] or saved['pool_id'] != position['pool_id']:
                 raise ValueError('Existing position exit binding is missing or inconsistent')
-        return manifest
+        if previous_rev == rev and current['policy'] == spec:
+            return manifest
+        if expected_previous_revision != previous_rev:
+            raise ValueError('A different exit revision is already active; explicit migration required')
+        if ledger.conn.execute('SELECT 1 FROM events WHERE event_id=?', ('exit-policy-revision:' + rev,)).fetchone():
+            raise ValueError('A historical exit revision cannot be silently reactivated')
+    elif expected_previous_revision is not None:
+        raise ValueError('Expected previous exit revision is missing')
     if now >= manifest['ends_at'] or now < int(ledger._get('last_processed_at') or 0):
         raise ValueError('Exit activation is outside the current trial time')
     active = {'revision': rev, 'policy': spec, 'activated_at': now,
@@ -126,15 +143,18 @@ def activate(ledger, policy, spec, *, now, expected_account, expected_source, ex
               'entry_revision': expected_entry_revision, 'review_reference': review_reference}
     updated = {**manifest, 'exit_revision': rev, 'exit_revision_started_at': now}
     with ledger.transaction():
-        ledger.conn.execute(f'''CREATE TABLE {TABLE} (
+        if not old:
+            ledger.conn.execute(f'''CREATE TABLE {TABLE} (
             position_id TEXT PRIMARY KEY, asset_id TEXT NOT NULL, pool_id TEXT NOT NULL,
             revision TEXT NOT NULL, policy_json TEXT NOT NULL, inherited INTEGER NOT NULL,
             tp_stage INTEGER NOT NULL DEFAULT 0, armed_at INTEGER, last_tp_quote_at INTEGER)''')
-        for position in ledger._positions():
-            _bind(ledger, position, legacy_policy(policy), inherited=True)
+            for position in ledger._positions():
+                _bind(ledger, position, legacy_policy(policy), inherited=True)
         ledger.record_event('exit-policy-revision:' + rev, 'exit_policy_revision',
                             {**active, 'previous_trial': manifest, 'new_trial': updated,
-                             'existing_positions_keep_original_exits': True}, now)
+                             'previous_exit_revision': json.loads(old)['revision'] if old else None,
+                             **({'existing_positions_keep_bound_exits': True} if old else
+                                {'existing_positions_keep_original_exits': True})}, now)
         ledger._set(KEY, json_text(active))
         ledger._set('trial_manifest', json.dumps(updated, sort_keys=True))
     return updated

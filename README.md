@@ -80,16 +80,17 @@ per-position allowance is about $5 **including modeled costs and exit reserves**
 Unresolved holdings retain their basis and consume risk capacity even when their
 conservative mark is zero. Sizing does not assume a stop guarantees an exit.
 
-New positions bind **`runner-ladder-v1`** atomically with entry:
+New primary positions bind the reviewed **`harvest-ladder-v1`** successor atomically
+with entry after activation. The sizing experiment retains its original runner revision:
 
 | Recorded condition | Bound exit behavior |
 | --- | --- |
-| +40% before the first profit take | Arm cost-aware break-even protection |
-| +100% | Sell 10% of original quantity |
-| +300% | Sell 20% of original quantity |
-| +600% | Sell 20% of original quantity |
-| Remaining 50% | Retain as a runner, subject to the bound exits |
-| After the first profit take | Trail at a 30% decline from the recorded high |
+| +20% before the first profit take | Arm cost-aware break-even protection |
+| +40% | Sell 50% of original quantity |
+| +80% | Sell 25% of original quantity |
+| +160% | Sell 15% of original quantity |
+| Remaining 10% | Retain as a runner, subject to the bound exits |
+| After the first profit take | Trail at a 20% decline from the recorded high |
 | −35% | Hard stop retains precedence |
 | Six hours with gain below +20% | Time exit |
 
@@ -106,8 +107,14 @@ exits. It is not the current Radeon profile. Account revisions preserve cash,
 holdings, history and the original trial deadline; entries stop at that deadline
 while exits continue.
 
+The **Strategies & paper comparisons** link in Radeon separates the primary
+entry paths, the old exit/re-entry experiment and the sizing experiment. Every
+trade has account, entry-rule and exit-policy attribution. Account and primary
+entry-path switches pause only new entries; existing exits continue. See
+[strategy management and measurement](docs/RADEON_STRATEGIES.md).
+
 Details: [parallel entries](docs/PARALLEL_ENTRIES.md),
-[runner exits](docs/RADEON_EXIT_REVIEW.md),
+[historical runner review](docs/RADEON_EXIT_REVIEW.md),
 [paper operations](docs/EXPLORATORY_PAPER.md).
 
 ## Isolated paper comparisons

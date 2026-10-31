@@ -1,4 +1,4 @@
-"""Local observation console. No trading, configuration or notification mutations."""
+"""Local observation console with bounded Radeon paper entry switches."""
 from pathlib import Path
 import sys
 

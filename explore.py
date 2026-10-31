@@ -342,6 +342,10 @@ def entry_account_blocker(engine, asset, now):
     """Only definite account blockers; no replacement for final admission."""
     ledger, policy = engine.ledger, engine.policy
     with ledger.transaction():
+        from sniper.radeon_controls import account_blocker
+        control_reason = account_blocker(ledger)
+        if control_reason:
+            return control_reason
         engine._expire_marks(now)
         if ledger._get('entry_halt'):
             return 'manual_entry_halt'

@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT/'src'))
 from supervise import atomic_json, instance_lock
 from sniper.ledger import Ledger
 from sniper.policy import RiskPolicy
-from sniper.radeon_exits import RUNNER, activate, revision
+from sniper.radeon_exits import RUNNER, HARVEST, activate, revision
 
 
 def main():
@@ -23,9 +23,12 @@ def main():
     parser.add_argument('--source')
     parser.add_argument('--entry-revision')
     parser.add_argument('--review', type=Path)
+    parser.add_argument('--policy', choices=('runner','harvest'), default='runner')
+    parser.add_argument('--previous-exit-revision')
     args = parser.parse_args()
+    spec = HARVEST if args.policy == 'harvest' else RUNNER
     if not args.activate:
-        print(json.dumps({'paper_only': True, 'policy': RUNNER, 'revision': revision(RUNNER),
+        print(json.dumps({'paper_only': True, 'policy': spec, 'revision': revision(spec),
                           'active_state_changed': False}, indent=2))
         return 0
     if not all((args.account,args.source,args.entry_revision,args.review)):
@@ -48,18 +51,19 @@ def main():
                 bound = json.loads(ledger._get('trial_manifest'))
                 # Only the previous publication of this exact revision may be recovered.
                 old = ledger.conn.execute("SELECT payload FROM events WHERE event_id=?",
-                                          ('exit-policy-revision:'+revision(RUNNER),)).fetchone()
+                                          ('exit-policy-revision:'+revision(spec),)).fetchone()
                 prior = json.loads(old[0])['previous_trial'] if old else None
                 if disk != bound and disk != prior:
                     raise ValueError('Unrecorded trial manifest change')
-                updated = activate(ledger,policy,RUNNER,now=int(time.time()),expected_account=args.account,
+                updated = activate(ledger,policy,spec,now=int(time.time()),expected_account=args.account,
                     expected_source=args.source,expected_entry_revision=args.entry_revision,
+                    expected_previous_revision=args.previous_exit_revision,
                     review_reference=str(args.review.resolve())+'#sha256='+evidence_hash)
                 atomic_json(folder/'trial.json',updated)
             finally:
                 ledger.close()
     print(json.dumps({'activated_exit_revision':updated['exit_revision'],'account_id':updated['account_id'],
-                      'ends_at':updated['ends_at'],'policy':RUNNER,'trade_cycle_run':False},indent=2))
+                      'ends_at':updated['ends_at'],'policy':spec,'trade_cycle_run':False},indent=2))
     return 0
 
 

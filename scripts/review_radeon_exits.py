@@ -22,18 +22,18 @@ class ReplayEngine(BoundRadeonExits, PaperEngine):
     """Isolated engine only. Entries are fixed to the original audited fills."""
 
 
-def replay(entry, decision, quotes, *, revised):
+def replay(entry, decision, quotes, *, revised=False, spec=None):
     policy=RiskPolicy(**decision['policy'])
     ledger=Ledger(':memory:',policy.starting_cash_usd)
     engine=ReplayEngine(ledger,policy)
     at=entry['observed_at']
     try:
-        if revised:
+        if revised or spec is not None:
             account=ledger._get('account_id')
             manifest={'account_id':account,'source_id':'offline-review','entry_revision':'offline-review',
                       'policy_version':policy.version,'started_at':at,'ends_at':at+604800}
             ledger._set('trial_manifest',json.dumps(manifest,sort_keys=True));ledger._set('entry_revision','offline-review')
-            activate(ledger,policy,RUNNER,now=at,expected_account=account,expected_source='offline-review',
+            activate(ledger,policy,RUNNER if spec is None else spec,now=at,expected_account=account,expected_source='offline-review',
                      expected_entry_revision='offline-review',review_reference='Isolated historical replay; excluded from strategy')
         q=MarketQuote.from_dict(decision['quote'])
         qty=D(entry['quantity']);basis=-D(entry['cash_delta'])

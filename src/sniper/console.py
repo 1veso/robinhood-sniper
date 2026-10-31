@@ -1,7 +1,7 @@
-"""Allowlisted, loopback-only observation API over the existing paper accounts.
+"""Allowlisted loopback observation API and bounded Radeon entry switches.
 
-Every database connection is mode=ro/query_only, with short read transactions.
-No account constructors, provider calls, signing, notification sends or writes.
+GET reads use mode=ro/query_only. The separate same-origin POST can change only
+account-bound paper entry switches. No fills, exits, risk or paid/live settings.
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import sqlite3
 import subprocess
 import threading
@@ -69,7 +70,7 @@ def rows(connection, sql, params=()):
     return [dict(row) for row in connection.execute(sql, params)]
 
 
-ENTRY_STRATEGIES = {'whale_follow': 'A · Whale following', 'two_wallet_v3': 'B · Two-whale V3 confirmation'}
+ENTRY_STRATEGIES = {'whale_follow': 'Whale-follow entry', 'two_wallet_v3': 'Two-wallet confirmation entry'}
 
 
 def entry_attribution(metadata):
@@ -327,8 +328,11 @@ class ConsoleData:
                 payload = json.loads(row['payload'])
                 metadata = payload.get('candidate', {}).get('metadata', {})
                 attribution = entry_attribution(metadata)
-                if attribution['initiating_strategy']:
-                    origins[row['position_id']] = attribution
+                bound = exit_binding(c, row['position_id'])
+                origins[row['position_id']] = {**attribution,
+                    'exit_policy_name': bound['policy']['name'] if bound else 'original-exits',
+                    'exit_revision': bound['revision'] if bound else payload.get('result', {}).get('policy_version'),
+                    'account_label': 'Primary Radeon'}
             for item in snapshot['positions'] + fills + closed:
                 item.update(origins.get(item.get('position_id'), {}))
             assets = {}
@@ -540,12 +544,41 @@ def make_server(root, host='127.0.0.1', port=8765):
              '/neon.js':('neon.js','text/javascript; charset=utf-8'),'/neon.css':('neon.css','text/css; charset=utf-8'),
              '/krypton.js':('krypton.js','text/javascript; charset=utf-8'),'/krypton.css':('krypton.css','text/css; charset=utf-8'),
              '/helium.js':('helium.js','text/javascript; charset=utf-8'),'/helium.css':('helium.css','text/css; charset=utf-8'),
-             '/sizing.css':('sizing.css','text/css; charset=utf-8')}
+             '/sizing.css':('sizing.css','text/css; charset=utf-8'),
+             '/radeon-strategies':('radeon-strategies.html','text/html; charset=utf-8'),
+             '/radeon-strategies.js':('radeon-strategies.js','text/javascript; charset=utf-8'),
+             '/radeon-strategies.css':('radeon-strategies.css','text/css; charset=utf-8')}
     event_waiters=threading.BoundedSemaphore(8)
+    control_token = secrets.token_urlsafe(32)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
             pass  # Never log request strings or local account information.
+
+        def do_POST(self):
+            permitted = {f'127.0.0.1:{self.server.server_port}', f'localhost:{self.server.server_port}'}
+            host = self.headers.get('Host')
+            supplied_token = self.headers.get('X-Radeon-Control-Token', '')
+            if (self.path != '/api/radeon-entry-controls' or host not in permitted
+                    or self.headers.get('Origin') != 'http://' + host
+                    or self.headers.get('Sec-Fetch-Site') not in (None, 'same-origin')
+                    or not supplied_token.isascii()
+                    or not secrets.compare_digest(supplied_token, control_token)):
+                self.send(403, b'{"error":"Entry controls require this local console session."}'); return
+            try:
+                size = int(self.headers.get('Content-Length','0'))
+                if (not 0 < size <= 4096 or self.headers.get('Transfer-Encoding')
+                        or self.headers.get_content_type() != 'application/json'):
+                    self.send(400, b'{"error":"A bounded JSON entry-control request is required."}'); return
+                self.connection.settimeout(5)
+                payload = json.loads(self.rfile.read(size))
+                from .radeon_controls import update
+                current = update(data.root, payload)
+                self.send(200, json_text({'controls':current,'exits_continue':True}).encode())
+            except (ValueError, KeyError, TypeError):
+                self.send(409, b'{"error":"Switch request rejected or changed elsewhere. Reload before trying again."}')
+            except (OSError, sqlite3.Error):
+                self.send(503, b'{"error":"Could not confirm the switch update. Reload to check its recorded state; do not assume it changed."}')
 
         def send(self, status, body, content_type='application/json; charset=utf-8', filename=None):
             self.send_response(status)
@@ -575,6 +608,25 @@ def make_server(root, host='127.0.0.1', port=8765):
                     self.send(200, (static / name).read_bytes(), mime)
                 elif url.path == '/api/state':
                     self.send(200, json_text(data.state(params.get('bot', ['robinhood'])[0])).encode())
+                elif url.path == '/api/radeon-strategies':
+                    from .radeon_portfolios import report
+                    value = data.cached(('radeon-strategies',), 3, lambda: report(data.root))
+                    self.send(200, json_text(value).encode())
+                elif url.path == '/api/radeon-entry-controls':
+                    from .radeon_portfolios import identity, CATALOG
+                    from .radeon_controls import read_controls
+                    states = {}
+                    for key in CATALOG:
+                        try:
+                            folder, expected, _ = identity(data.root,key)
+                        except FileNotFoundError:
+                            continue
+                        with reader(folder/'ledger.sqlite3') as c:
+                            view=LedgerView(c)
+                            if view._get('account_id') != expected or view._get('execution_mode') != 'paper':
+                                raise ValueError('Account binding mismatch')
+                            states[key]=read_controls(view)
+                    self.send(200,json_text({'token':control_token,'accounts':states}).encode())
                 elif url.path in ('/radeon-sizing', '/api/radeon-sizing'):
                     # Fixed derived files only. Reads cannot initialize or run the study.
                     name = 'report.html' if url.path == '/radeon-sizing' else 'report.json'
@@ -646,7 +698,8 @@ def make_server(root, host='127.0.0.1', port=8765):
                     from .solana_console import discover
                     from .krypton.view import health as krypton_health
                     from .helium.view import health as helium_health
-                    self.send(200, json_text({'service':'TENDIES TRACKER Observation Console','version':__version__,'read_only':True,'at':int(time.time()),
+                    self.send(200, json_text({'service':'TENDIES TRACKER Observation Console','version':__version__,'read_only':False,
+                        'read_only_gets':True,'operator_controls':['radeon_paper_entry_switches'],'at':int(time.time()),
                         'paper_views':['robinhood','solana','neon','jev','krypton','helium'],'event_stream_version':1,
                         'event_stream_bots':['solana','neon'],'journal_bots':['helium'],'accounts':dict(discover(data.root),krypton=krypton_health(data.root),helium=helium_health(data.root))}).encode())
                 elif url.path == '/api/jev-assessment':
