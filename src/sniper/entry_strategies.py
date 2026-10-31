@@ -104,6 +104,7 @@ def _performance_report(report, now):
     """Recheck the existing numeric/cost screen, without inventing history."""
     try:
         return (isinstance(report, dict) and report.get("history_complete") is True
+                and report.get('history_refresh_pending') is not True
                 and report.get("performance_estimate_available") is True
                 and report.get("performance_qualified") is True and report.get("is_eoa") is True
                 and report.get("qualification_blockers") == []
@@ -128,7 +129,8 @@ def load_wallet_registry(runtime, now):
 
     An empty/missing/stale registry disables reviewed-whale signals only. The
     legacy wallets.json/string-evidence alert list is not a trading fallback.
-    Each file is an atomic view; mismatched publication generations fail closed.
+    Prefer the atomic admission publication, independent of slow address export.
+    Legacy installations retain the two-file validation and fail closed.
     """
     now = _timestamp(now)
     runtime = Path(runtime)
@@ -137,8 +139,16 @@ def load_wallet_registry(runtime, now):
               "updated_at": None, "evidence_hash": None}
     try:
         folder = runtime / "research"
-        summary = json.loads((folder / "wallet-research.json").read_text(encoding="utf-8"))
-        qualified = json.loads((folder / "qualified-wallets.json").read_text(encoding="utf-8"))
+        publication = folder / 'registry-publication.json'
+        if publication.exists():
+            result['source'] = 'research/registry-publication.json'
+            summary = json.loads(publication.read_text(encoding='utf-8'))
+            if not isinstance(summary, dict) or summary.get('schema') != 'wallet_registry_v1':
+                raise ValueError('Invalid registry publication')
+            qualified = summary.get('qualified_wallets')
+        else:
+            summary = json.loads((folder / "wallet-research.json").read_text(encoding="utf-8"))
+            qualified = json.loads((folder / "qualified-wallets.json").read_text(encoding="utf-8"))
         if not isinstance(summary, dict) or not isinstance(qualified, dict):
             raise ValueError("Malformed registry publication")
         updated = _timestamp(summary.get("updated_at"))

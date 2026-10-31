@@ -255,6 +255,12 @@ def _reconstruct_wallet(cache, wallet, snapshot, progress, *, eligibility_only=F
     for index, tx_hash in enumerate(hashes):
         cache.checkpoint_progress = {"stage": "receipts", "completed": index, "total": len(hashes)}
         part = progress.get("tx:" + tx_hash)
+        if part and any(g.startswith(('pool_verification_unavailable:', 'trade_valuation_unavailable:'))
+                        for g in part.get('gaps', [])):
+            # Earlier derived checkpoints could turn a provider interruption
+            # into a permanent unsupported-route rejection. Recheck only that
+            # transaction; its raw evidence and all other checkpoints remain.
+            part = None
         if part is None:
             part = reconcile_transaction(cache, wallet, snapshot, tx_hash, prices)
             progress.save("tx:" + tx_hash, part)
@@ -311,7 +317,9 @@ def _reconstruct_wallet(cache, wallet, snapshot, progress, *, eligibility_only=F
             if before and token not in (WETH, USDG):
                 opening.append(token)
                 gaps.append("opening_token_inventory_has_unknown_basis:" + token)
-        except (RpcError, ValueError):
+        except RpcError:
+            raise ResearchPending('Historical boundary balance unavailable; checkpoint retained') from None
+        except ValueError:
             gaps.append("boundary_balance_unavailable:" + token)
     # Internal transfers need traces for independent corroboration. Keep them as
     # conservative suspected links, and mark controller coverage incomplete.
@@ -381,8 +389,7 @@ def reconcile_transaction(cache, wallet, snapshot, tx_hash, prices):
             try:
                 pool = verified_pool(cache, swap["address"], block, anchor)
             except (RpcError, ValueError):
-                gaps.append("pool_verification_unavailable:" + tx_hash)
-                continue
+                raise ResearchPending('Historical pool verification unavailable; checkpoint retained') from None
             if not pool:
                 continue
             bases = {WETH: "WETH", USDG: "USDG"}
@@ -409,7 +416,7 @@ def reconcile_transaction(cache, wallet, snapshot, tx_hash, prices):
             value = token_units(int(trade["spent_raw"]), decimals(base)) * historical_price(prices[base], timestamp)
             record.update(kind=side, token=token, quantity=str(units), value_usd=str(value), verified=True)
         except (RpcError, ValueError):
-            gaps.append("trade_valuation_unavailable:" + tx_hash)
+            raise ResearchPending('Historical trade valuation unavailable; checkpoint retained') from None
     elif token_flows or (mine and swaps):
         record.update(kind="TRANSFER", tokens=sorted({t["address"] for t in token_flows if t["address"] not in (WETH, USDG)}))
         if mine and swaps:

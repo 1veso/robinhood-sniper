@@ -88,7 +88,7 @@ delete histories, skip queued source records or grant qualification.
 
 Each confirmation import remains limited to 500 source records. Discovery keeps
 its existing sample and RPC budgets, and history reconstruction retains the
-1,000-request UTC-day Blockscout limit, frozen snapshot, transaction checkpoints
+1,000-request UTC-day Blockscout limit, frozen per-assessment snapshots, transaction checkpoints
 and three-batch rotation. `capacity_blocked` is retained as a compatibility field
 and is false after a successful import; `candidate_limit: null` means there is no
 lifetime count cap, while `import_limit` reports the bounded batch size.
@@ -121,6 +121,9 @@ All paths below are relative to the installed project.
 | `runtime/research/cohort-BLOCK/wallet-ADDRESS.json` | Historical performance assessment and gaps, when available. |
 | `runtime/research/wallet-shortlist.json` | Performance-qualified candidates, still subject to controller evidence. |
 | `runtime/research/qualified-wallets.json` | Candidates satisfying the existing history and current controller-review rules. |
+| `runtime/research/registry-publication.json` | Atomic entry-admission view: checked timestamp, assessments and qualified wallets together; published before bulk address exports. |
+| `runtime/research/history-work.json` | Per-wallet snapshot bindings, last attempts and bounded rotation progress. |
+| `runtime/research/history-current-snapshot.json` | Recent anchor available to new assessments; never replaces an unfinished wallet's binding. |
 
 Older discovery records may contain only a transaction or pool example. Those
 remain **legacy references** until their supporting evidence is available; they
@@ -153,11 +156,25 @@ data is current.
 
 ## Qualification and operating limits
 
-History analysis keeps its existing frozen 30-day cohort, receipt-level SQLite
-checkpoints and three-batch queue rotation. Partial work survives process exits;
-a cycle timeout does not make an incomplete history complete. No daily reset
-discards an unfinished cohort. Provider failures, unknown cost basis, unsupported
-routes, missing prices and incomplete controller evidence remain visible gaps.
+Each history assessment freezes its own 30-day window and retains receipt-level
+SQLite checkpoints across restarts. The legacy cohort and its unfinished work
+keep their original anchors. New jobs use a recent canonical anchor that covers
+the candidate's observed activity. A completed assessment becomes due for refresh
+when its cutoff is at least a day old and newer activity has been observed.
+Older cohort files remain intact; reports identify each assessment's own cutoff.
+An assessment awaiting refresh cannot qualify an entry.
+
+Rotation ranks the entire eligible queue before selecting at most five wallets;
+it no longer restricts rotation to the first 100 unfinished wallets. An active
+wallet gets at most three consecutive batches. Last-attempt time, or discovery
+time for unattempted wallets, prevents new arrivals from continually jumping
+older work. The provider/work budgets still bound each pass; a growing queue is
+not a promise that every wallet will finish soon.
+
+Transient historical pool, valuation and RPC balance failures retain pending
+work rather than becoming permanent unsupported-route decisions. A genuinely
+unsupported route, unknown basis or failed reconciliation still blocks
+qualification. The saved raw evidence and valid completed checkpoints remain.
 
 The local Blockscout budget stays at **1,000 requests per UTC day**. When it is
 exhausted, history work waits for the next UTC day; local imports and exports can
@@ -169,8 +186,28 @@ still determine qualification. An observation count, proof export, address role
 or positive-looking partial history cannot set `qualified=true`. No API key or
 export can guarantee profitable wallets or a profitable strategy.
 
+The screen requires complete reconciled history, at least 20 closed positions,
+at least 55% wins, average holding time of at least 30 minutes, no token supplying
+more than 50% of positive token profit, positive profit after gas and a 100-bps
+follower-cost stress on each side, and nonnegative last-week P&L after open-basis
+stress. Unsupported histories have no usable performance estimate. A complete
+history containing no trades is not a successful trading record.
+
+Performance passing alone is insufficient: a current external controller review
+in `runtime/controller-reviews.json` must match the wallet, chain, history cutoff
+and controller identity, contain scoped HTTPS evidence, expire within seven days,
+and not contradict observed funding links. No automatic independent-controller
+evidence source is connected. Missing reviews remain a separate admission block.
+
+`qualification_pipeline` and `history_queue` in the completed research report
+show the counts, cutoff distribution, complete-history blockers and pending work.
+The entry loader uses the coherent registry publication independently of bulk
+exports, retaining its unchanged 300-second freshness rule. Export-only work
+cannot refresh that admission timestamp. A registry publication is not proof
+that the full research/export job completed; inspect `finished_at` separately.
+
 Discovery does not change the active paper account, its cash or positions, the
-two-recipient/$30,000 entry revision, safety/route checks, exits, risk limits,
+parallel whale-follow/two-wallet entry revision, safety/route checks, exits, risk limits,
 policy history or original seven-day deadline. The strict five-reviewed-group
 policy remains a separate reference; this work does not reapply that gate to the
 active exploratory account. Real-money execution remains disabled.

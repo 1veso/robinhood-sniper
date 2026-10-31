@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from contextlib import closing
 from copy import deepcopy
 import csv
@@ -20,6 +21,7 @@ from sniper.adapters.evm import RpcClient, RpcError, DEFAULT_RPC, USDG, SWAP_TOP
 from sniper.adapters.wallet_history import ResearchCache, ResearchPending, CoverageExceeded, block_at_or_before, reconstruct_wallet
 from sniper.wallet_analysis import analyse_wallet, cluster_controllers, apply_controller_reviews
 from sniper.candidate_evidence import CandidateEvidence
+from sniper.research_queue import HistoryQueue, DAY
 from supervise import atomic_json, child_environment, instance_lock
 
 
@@ -204,10 +206,37 @@ def _run_research(runtime: Path, evidence, *, max_calls=60, seconds=45, phase=la
     candidates = state.get("candidates", {})
     snapshot_path = folder / "history-snapshot.json"
     snapshot = json.loads(snapshot_path.read_text()) if snapshot_path.exists() else None
-    # Keep an unfinished cohort stable. Daily automatic resets discarded large
-    # histories before they could finish; freshness is checked at qualification.
-    cohort = folder / f"cohort-{snapshot['block']}" if snapshot else None
-    snapshot_verified = False
+    # Existing work keeps its exact anchor. New/refresh jobs get a recent
+    # snapshot independently, so a large unfinished cohort cannot freeze all
+    # future research at its original date.
+    queue = HistoryQueue(folder, candidates, snapshot, int(time.time()), atomic_json) if snapshot else None
+    verified = set()
+    def new_snapshot():
+        end = quantity(rpc.call("eth_blockNumber")) - 5
+        header = rpc.call("eth_getBlockByNumber", [hex(end), False])
+        value = {"block": end, "timestamp": quantity(header["timestamp"]), "hash": hash32(header["hash"])}
+        value["start_block"] = block_at_or_before(cache, value["timestamp"] - 30 * DAY, end, value["hash"])
+        return value
+    def current_snapshot(required_at=0):
+        path = folder / 'history-current-snapshot.json'
+        value = json.loads(path.read_text()) if path.exists() else snapshot
+        if not 0 <= int(time.time()) - value['timestamp'] < DAY or required_at > value['timestamp']:
+            value = new_snapshot()
+            atomic_json(path, value)
+        if value['timestamp'] < required_at:
+            raise ResearchPending('Confirmed history anchor has not reached candidate activity; retry later')
+        return value
+    def verify_snapshot(value):
+        if value['hash'] in verified:
+            return
+        canonical = rpc.call("eth_getBlockByNumber", [hex(value['block']), False])
+        if canonical['hash'] != value['hash']:
+            raise ResearchPending("Frozen history snapshot reorged; do not use its qualifications")
+        try:
+            cache.call("eth_call", [{"to": USDG, "data": "0x313ce567"}, hex(value['start_block'])], anchor=value['hash'])
+        except RpcError:
+            raise ResearchPending("ARCHIVE_RPC_REQUIRED: historical state unavailable; discovery continues") from None
+        verified.add(value['hash'])
     phase('HISTORY')
     if not key:
         pending.append("BLOCKSCOUT_API_KEY_REQUIRED")
@@ -215,76 +244,74 @@ def _run_research(runtime: Path, evidence, *, max_calls=60, seconds=45, phase=la
         try:
             rpc.verify_chain()
             if snapshot is None:
-                end = quantity(rpc.call("eth_blockNumber")) - 5
-                header = rpc.call("eth_getBlockByNumber", [hex(end), False])
-                snapshot = {"block": end, "timestamp": quantity(header["timestamp"]), "hash": hash32(header["hash"])}
-                snapshot["start_block"] = block_at_or_before(cache, snapshot["timestamp"] - 30 * 86400, end, snapshot["hash"])
+                snapshot = new_snapshot()
                 atomic_json(snapshot_path, snapshot)
-            cohort = folder / f"cohort-{snapshot['block']}"
-            cohort.mkdir(exist_ok=True)
-            canonical = rpc.call("eth_getBlockByNumber", [hex(snapshot["block"]), False])
-            if canonical["hash"] != snapshot["hash"]:
-                raise ResearchPending("Frozen history snapshot reorged; do not use its qualifications")
-            try:
-                cache.call("eth_call", [{"to": USDG, "data": "0x313ce567"}, hex(snapshot["start_block"])], anchor=snapshot["hash"])
-            except RpcError:
-                raise ResearchPending("ARCHIVE_RPC_REQUIRED: historical state unavailable; discovery continues") from None
-            snapshot_verified = True
-            # Oldest unprocessed candidates first. Cache and budgets allow large
-            # histories to continue across invocations instead of being truncated.
-            attempts_path = cohort / "attempts.json"
-            attempts = json.loads(attempts_path.read_text()) if attempts_path.exists() else {}
-            queue = sorted(candidates.items(), key=lambda x: (not x[1].get('observed_recipient', False), x[1]["first_seen_at"], x[0]))
-            queue = [(w, c) for w, c in queue if not (cohort / f"wallet-{w}.json").exists()][:100]
-            progress_path = cohort / "progress.json"
-            progress = json.loads(progress_path.read_text()) if progress_path.exists() else {}
-            active = progress.get("active_wallet")
-            # Checkpoints make rotation safe. A huge or unavailable history must
-            # not prevent every other candidate from being assessed forever.
-            if progress.get('consecutive_batches', 0) >= 3:
-                active = None
-            queue.sort(key=lambda x: (x[0] != active, attempts.get(x[0], 0), not x[1].get('observed_recipient', False), x[1]["first_seen_at"], x[0]))
-            for wallet, candidate in queue[:5]:
+                queue = HistoryQueue(folder, candidates, snapshot, int(time.time()), atomic_json)
+            # Verify reviewed completed reports even when no new job is due.
+            # Mixed cohorts never inherit another snapshot's canonical check.
+            for report in queue.reports():
+                if report['performance_qualified']:
+                    verify_snapshot(report['history_snapshot'])
+            for wallet in queue.next_wallets():
+                job_snapshot = queue.begin(wallet, lambda: current_snapshot(candidates[wallet].get('last_seen_at', 0)))
+                verify_snapshot(job_snapshot)
+                cohort = folder / f"cohort-{job_snapshot['block']}"
+                cohort.mkdir(exist_ok=True)
                 report_path = cohort / f"wallet-{wallet}.json"
-                if report_path.exists():
-                    continue
-                attempts[wallet] = int(time.time())
-                atomic_json(attempts_path, attempts)
-                batches = progress.get('consecutive_batches', 0) + 1 if wallet == progress.get('active_wallet') else 1
-                atomic_json(progress_path, {"active_wallet": wallet, "last_attempt_at": int(time.time()),
-                                            "consecutive_batches": batches})
                 try:
-                    history = reconstruct_wallet(cache, wallet, snapshot, eligibility_only=True)
+                    history = reconstruct_wallet(cache, wallet, job_snapshot, eligibility_only=True)
                 except CoverageExceeded:
                     # This is a recorded rejection, never a truncated profitable
                     # history. Move on instead of retrying this candidate forever.
-                    history = {"wallet": wallet, "cutoff": snapshot["timestamp"],
+                    history = {"wallet": wallet, "cutoff": job_snapshot["timestamp"],
                                "complete": False, "gaps": ["history_exceeds_10000_records_per_index"],
                                "records": [], "source": "Blockscout coverage limit; no performance conclusion"}
                 atomic_json(cohort / f"history-{wallet}.json", history)
                 report = analyse_wallet(history)
                 atomic_json(report_path, report)
-                atomic_json(progress_path, {"active_wallet": None, "completed_wallet": wallet,
-                                            "completed_at": int(time.time())})
+                queue.complete(wallet, job_snapshot, report)
         except ResearchPending as exc:
             pending.append(str(exc))
         except RpcError as exc:
             pending.append(f"HISTORY_RPC_UNAVAILABLE: {exc}")
         except (ValueError, KeyError, RuntimeError) as exc:
             pending.append(f"{type(exc).__name__}: historical evidence failed validation")
-    reports = [json.loads(p.read_text()) for p in sorted(cohort.glob("wallet-0x*.json"))] if cohort and cohort.exists() else []
+    reports = queue.reports() if queue else []
     reports = cluster_controllers(reports)
     reviews_path = runtime / "controller-reviews.json"
     reviews = json.loads(reviews_path.read_text()) if reviews_path.exists() else {}
     if not isinstance(reviews, dict):
         raise ValueError("Controller reviews must be an object")
-    selected = apply_controller_reviews(reports, reviews, now=int(time.time())) if snapshot_verified else {}
+    selected = apply_controller_reviews(reports, reviews, now=int(time.time()))
+    selected = {w: record for w, record in selected.items()
+                if next(r for r in reports if r['wallet'] == w)['history_snapshot']['hash'] in verified}
+    for report in reports:
+        report['qualified'] = report['wallet'] in selected
+    # Publish a single coherent admission view before slow address exports.
+    # This timestamp is the actual qualification check, never an export-only
+    # refresh. Export completion remains separately reported below.
+    checked_at = int(time.time())
+    atomic_json(folder / 'registry-publication.json', {
+        'schema': 'wallet_registry_v1', 'updated_at': checked_at,
+        'reports': reports, 'qualified_wallets': selected})
     atomic_json(folder / "qualified-wallets.json", selected)
     ranked = sorted(reports, key=lambda r: (not r["performance_qualified"], Decimal(r["top_token_profit_share"]),
                     -min(Decimal(r["average_hold_minutes"]), Decimal(1440)), -r["closed_positions"],
                     -Decimal(r["net_pnl_after_follower_stress_usd"]), r["wallet"]))
     shortlist = [{"rank": i + 1, **r} for i, r in enumerate(ranked) if r["performance_qualified"]]
-    summary = {"mode": "RESEARCH_ONLY", "updated_at": int(time.time()),
+    complete = [r for r in reports if r.get('history_complete') is True]
+    pipeline = {
+        'assessed_wallets': len(reports), 'unassessed_wallets': len(set(candidates) - {r['wallet'] for r in reports}),
+        'complete_histories': len(complete),
+        'complete_with_closed_trades': sum(r['closed_positions'] > 0 for r in complete),
+        'incomplete_or_unsupported': len(reports) - len(complete),
+        'performance_qualified': len(shortlist), 'approved_wallets': len(selected),
+        'controller_review_records': len(reviews),
+        'controller_reviews_present': reviews_path.exists(),
+        'complete_history_blockers': dict(Counter(b.split(':')[0] for r in complete for b in r['qualification_blockers'])),
+        'history_cutoffs': dict(Counter(str(r['cutoff']) for r in reports)),
+        'scope': 'Latest completed assessment per wallet; older cohorts retained. Incomplete histories have no performance conclusion.'}
+    summary = {"mode": "RESEARCH_ONLY", "updated_at": checked_at,
                "rpc_hosts": {"discovery": urlsplit(discovery_rpc.url).hostname,
                              "history": urlsplit(rpc.url).hostname},
                "discovery": discovery, "candidate_count": len(candidates), "history_reports": len(reports),
@@ -293,6 +320,8 @@ def _run_research(runtime: Path, evidence, *, max_calls=60, seconds=45, phase=la
                "unsupported_history_rejections": sum(r.get('assessment') == 'REJECTED_UNSUPPORTED_HISTORY' for r in reports),
                "performance_qualified_count": len(shortlist), "approved_wallet_count": len(selected),
                "pending": pending, "snapshot": snapshot, "shortlist": shortlist,
+               "history_queue": queue.summary() if queue else None,
+               "qualification_pipeline": pipeline,
                "history_progress": {"requests_this_cycle": cache.max_calls - cache.remaining,
                                     "last_operation": cache.progress,
                                     "checkpoint": getattr(cache, 'checkpoint_progress', {})},

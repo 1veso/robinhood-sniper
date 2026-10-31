@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from sniper.adapters.wallet_history import ResearchCache, ResearchPending, reconstruct_wallet
-from sniper.adapters.evm import USDG, WETH, FACTORY
+from sniper.adapters.evm import USDG, WETH, FACTORY, RpcError
 from sniper.wallet_analysis import analyse_wallet
 from test_evm import TOKEN, POOL, WALLET, TX_SWAP, NOW, word, bh, receipt
 
@@ -60,6 +60,34 @@ class FakeHistory:
 
 
 class WalletHistoryTests(unittest.TestCase):
+    def test_transient_pool_or_valuation_or_balance_failure_retries_without_terminal_rejection(self):
+        snapshot = {'block': 105, 'timestamp': NOW, 'hash': bh(105), 'start_block': 100}
+        for selector in ('0x0dfe1681', '0x313ce567', '0x70a08231'):
+            with self.subTest(selector=selector), tempfile.TemporaryDirectory() as tmp:
+                class Interrupted(FakeHistory):
+                    root = Path(tmp)
+                    def call(self, method, params, *, anchor):
+                        if method == 'eth_call' and params[0]['data'].startswith(selector):
+                            raise RpcError('fixture provider unavailable')
+                        return super().call(method, params, anchor=anchor)
+                with self.assertRaises(ResearchPending):
+                    reconstruct_wallet(Interrupted(), WALLET, snapshot, eligibility_only=True)
+                class Recovered(FakeHistory):
+                    root = Path(tmp)
+                h = reconstruct_wallet(Recovered(), WALLET, snapshot, eligibility_only=True)
+                self.assertTrue(h['complete'], h['gaps'])
+                self.assertEqual([r['kind'] for r in h['records']], ['BUY', 'SELL'])
+
+    def test_legacy_provider_failure_checkpoint_is_rechecked(self):
+        from sniper.adapters.history_progress import HistoryProgress
+        snapshot = {'block': 105, 'timestamp': NOW, 'hash': bh(105), 'start_block': 100}
+        with tempfile.TemporaryDirectory() as tmp:
+            p = HistoryProgress(Path(tmp), WALLET, snapshot)
+            p.save('tx:' + TX_SWAP, {'gaps': ['pool_verification_unavailable:' + TX_SWAP]})
+            p.close()
+            class Cached(FakeHistory):
+                root = Path(tmp)
+            self.assertTrue(reconstruct_wallet(Cached(), WALLET, snapshot, eligibility_only=True)['complete'])
     def test_socket_timeout_is_retryable_and_does_not_cache_a_false_result(self):
         with tempfile.TemporaryDirectory() as tmp:
             cache = ResearchCache(Path(tmp), None, blockscout_key='fixture-key')

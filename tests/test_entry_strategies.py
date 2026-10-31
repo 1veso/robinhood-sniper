@@ -257,6 +257,26 @@ class WalletRegistryTests(unittest.TestCase):
         self.assertEqual(list(result["wallets"]), [WALLET])
         self.assertEqual(len(result["evidence_hash"]), 64)
 
+    def test_pending_history_refresh_cannot_use_old_qualified_publication(self):
+        self.reports[0]['history_refresh_pending'] = True
+        self.publish()
+        self.assertEqual(load_wallet_registry(self.runtime, NOW)['wallets'], {})
+
+    def test_atomic_registry_is_independent_of_bulk_export_but_retains_freshness_limit(self):
+        self.publish()
+        folder = self.runtime / 'research'
+        summary = json.loads((folder / 'wallet-research.json').read_text())
+        selected = json.loads((folder / 'qualified-wallets.json').read_text())
+        (folder / 'registry-publication.json').write_text(json.dumps({
+            **summary, 'schema': 'wallet_registry_v1', 'qualified_wallets': selected}))
+        (folder / 'wallet-research.json').write_text('{}')
+        (folder / 'qualified-wallets.json').write_text('{}')
+        self.assertEqual(load_wallet_registry(self.runtime, NOW)['status'], 'READY')
+        self.assertEqual(load_wallet_registry(self.runtime, NOW + 301)['status'], 'STALE')
+        (folder / 'registry-publication.json').write_text('{}')
+        self.publish()
+        self.assertEqual(load_wallet_registry(self.runtime, NOW)['status'], 'UNAVAILABLE')
+
     def test_stale_publication_does_not_fall_back_to_legacy_watchlist(self):
         self.publish(updated_at=NOW - 301)
         (self.runtime / "wallets.json").write_text(json.dumps(registry()["wallets"]))

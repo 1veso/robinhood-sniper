@@ -392,7 +392,9 @@ class CandidateEvidence:
                     performance_available = False
             qualified = bool(performance_available and report.get('performance_qualified') is True
                 and selection.get('qualified') is True and review_current)
+            report_snapshot = report.get('history_snapshot', snapshot) if report else snapshot
             history = {'assessment': report.get('assessment') if report else 'NOT_ASSESSED',
+                'refresh_pending': report.get('history_refresh_pending', False) if report else False,
                 'cutoff':report.get('cutoff') if report else None,
                 'history_complete': complete, 'performance_qualified': bool(performance_available and report.get('performance_qualified') is True),
                 'performance_estimate_available': performance_available,
@@ -404,8 +406,8 @@ class CandidateEvidence:
                 'controller_review_current':review_current,
                 'qualification_checked_at':now,
                 'independence_verified': False, 'qualified': qualified,
-                'history_path': f"cohort-{snapshot['block']}/history-{wallet}.json" if snapshot and (folder/f"cohort-{snapshot['block']}/history-{wallet}.json").exists() else None,
-                'report_path': f"cohort-{snapshot['block']}/wallet-{wallet}.json" if snapshot and (folder/f"cohort-{snapshot['block']}/wallet-{wallet}.json").exists() else None}
+                'history_path': f"cohort-{report_snapshot['block']}/history-{wallet}.json" if report_snapshot and (folder/f"cohort-{report_snapshot['block']}/history-{wallet}.json").exists() else None,
+                'report_path': f"cohort-{report_snapshot['block']}/wallet-{wallet}.json" if report_snapshot and (folder/f"cohort-{report_snapshot['block']}/wallet-{wallet}.json").exists() else None}
             roles = dict(Counter(row['role'] for row in evidence))
             current = sum(row['canonical'] and row['canonical_scope']=='source_journal_current' for row in evidence)
             capture = sum(row['canonical_scope']=='rpc_verified_at_capture_only' for row in evidence)

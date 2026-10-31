@@ -10,6 +10,40 @@ from sniper.adapters.evm import RpcError
 
 
 class ResearchIntegrationTests(unittest.TestCase):
+    def test_new_wallet_gets_recent_anchor_and_resumes_it_after_restart(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = Path(temporary); folder = runtime / 'research'; folder.mkdir()
+            now = int(time.time()); old = {'block': 105, 'timestamp': now - 4 * 86400,
+                'hash': '0x' + 'ab' * 32, 'start_block': 10}
+            fresh = {'block': 205, 'timestamp': now - 5, 'hash': '0x' + 'cd' * 32, 'start_block': 20}
+            (runtime / 'blockscout-api-key.txt').write_text('fixture-only')
+            (folder / 'history-snapshot.json').write_text(json.dumps(old))
+            wallet = '0x' + '11' * 20
+            (folder / 'discovery.json').write_text(json.dumps({'updated_at': now, 'candidates': {
+                wallet: {'wallet': wallet, 'first_seen_at': now - 10, 'last_seen_at': now - 10,
+                         'sampled_transactions': 1}}}))
+            rpc = MagicMock(url='https://rpc.example')
+            def call(method, params=None):
+                if method == 'eth_blockNumber': return hex(210)
+                if method == 'eth_getBlockByNumber':
+                    return {'hash': fresh['hash'], 'timestamp': hex(fresh['timestamp'])}
+                raise AssertionError(method)
+            rpc.call.side_effect = call
+            cache = Mock(max_calls=48, remaining=0, progress={}, checkpoint_progress={})
+            with patch.object(research, 'RpcClient', return_value=rpc), patch.object(
+                    research, 'ResearchCache', return_value=cache), patch.object(
+                    research, 'block_at_or_before', return_value=20), patch.object(
+                    research, 'reconstruct_wallet', side_effect=research.ResearchPending('daily budget')) as reconstruct:
+                result = research.run_research(runtime)
+                self.assertEqual(reconstruct.call_args.args[2], fresh)
+                self.assertEqual(result['approved_wallet_count'], 0)
+                self.assertEqual(result['history_queue']['bound_unfinished_wallets'], 1)
+                rpc.call.reset_mock()
+                research.run_research(runtime)
+                self.assertEqual(reconstruct.call_args.args[2], fresh)
+                self.assertFalse(any(c.args[0] == 'eth_blockNumber' for c in rpc.call.call_args_list))
+            self.assertEqual(json.loads((folder / 'history-snapshot.json').read_text()), old)
+
     def sender_cache(self, *, reorg=False, wrong_header=False):
         from test_evm import swap_log, receipt, bh, TX_SWAP, OTHER, NOW
         end_reads = [0]

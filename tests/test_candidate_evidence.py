@@ -15,6 +15,20 @@ from test_engine import NOW
 
 
 class CandidateEvidenceTests(unittest.TestCase):
+    def test_history_links_follow_each_assessments_snapshot(self):
+        self.add(); self.import_rows(); folder = self.root / 'exports'
+        snapshot = {'block': 200}
+        cohort = folder / 'cohort-200'; cohort.mkdir(parents=True)
+        for prefix in ('history', 'wallet'):
+            (cohort / f'{prefix}-{WALLET}.json').write_text('{}')
+        report = {'wallet': WALLET, 'history_snapshot': snapshot, 'cutoff': NOW,
+                  'history_refresh_pending': True, 'history_complete': False}
+        self.journal.export(folder, self.state, [report], {}, {'block': 100}, NOW)
+        value = json.loads((folder / 'addresses' / f'{WALLET}.json').read_text())['history']
+        self.assertEqual(value['history_path'], f'cohort-200/history-{WALLET}.json')
+        self.assertTrue(value['refresh_pending'])
+        self.assertFalse(value['qualified'])
+
     def test_failed_parallel_export_never_publishes_success_index(self):
         from sniper import candidate_evidence as module
         self.add(); self.import_rows()
