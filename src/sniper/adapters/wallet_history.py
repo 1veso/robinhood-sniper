@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from bisect import bisect_right
-from datetime import datetime, timezone
 from decimal import Decimal
 import hashlib
 import json
@@ -13,6 +12,7 @@ import urllib.parse
 import urllib.request
 
 from .history_progress import HistoryProgress
+from ..research_budget import BlockscoutBudget, BudgetUnavailable
 
 from .evm import (RpcClient, RpcError, CHAIN_ID, FACTORY, WETH, USDG, SWAP_TOPIC,
                   TRANSFER_TOPIC, address, hash32, quantity, decode_swap,
@@ -100,19 +100,18 @@ class ResearchCache:
         validate = (lambda raw: account_rows(raw, action)) if (
             parts.hostname == "api.blockscout.com" and action in {"txlist", "txlistinternal", "tokentx"}) else None
         def fetch():
+            budget = None
             if urllib.parse.urlsplit(url).hostname == "api.blockscout.com":
-                budget_path = self.root / "blockscout-usage.json"
-                day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                usage = json.loads(budget_path.read_text()) if budget_path.exists() else {}
-                count = usage.get("requests", 0) if usage.get("day") == day else 0
-                if count >= 1000:
-                    raise ResearchPending("Daily Blockscout request budget exhausted; resumes next UTC day")
-                temporary = budget_path.with_suffix(".tmp")
-                temporary.write_text(json.dumps({"day": day, "requests": count + 1}))
-                temporary.replace(budget_path)
+                try:
+                    budget = BlockscoutBudget(self.root, self.key)
+                    budget.reserve(url)
+                except BudgetUnavailable as exc:
+                    raise ResearchPending(str(exc)) from None
             req = urllib.request.Request(url, headers={"User-Agent": "SNIPER-Research/0.1", "Accept": "application/json", **(headers or {})})
             try:
                 with urllib.request.urlopen(req, timeout=max(.1, min(15, self.deadline - time.monotonic()))) as response:
+                    if budget:
+                        budget.observe(getattr(response, 'headers', None))
                     raw = response.read(16_000_001)
                 if len(raw) > 16_000_000:
                     raise ValueError("History response exceeds size budget")
@@ -120,9 +119,18 @@ class ResearchCache:
                     raise ValueError("Provider response contained credential material; discarded")
                 return json.loads(raw)
             except urllib.error.HTTPError as exc:
+                if budget:
+                    try:
+                        budget.observe(exc.headers)
+                    except BudgetUnavailable:
+                        pass
                 raise ResearchPending(f"History provider HTTP {exc.code}; no eligibility inferred") from None
             except (urllib.error.URLError, TimeoutError):
+                if budget:
+                    budget.unknown()
                 raise ResearchPending("History provider connection unavailable") from None
+            except BudgetUnavailable as exc:
+                raise ResearchPending(str(exc)) from None
         # Keys remain in the Authorization header, never the URL or cache payload.
         return self.cached(["https", url], fetch, validate=validate)
 

@@ -186,10 +186,22 @@ scope, terminal-page requirement, repeat-page rejection, historical window,
 receipts, costs and balance reconciliation remain. Larger pages reduce index
 HTTP requests; they do not imply completed receipt processing or qualification.
 
-The local Blockscout budget stays at **1,000 requests per UTC day**. When it is
-exhausted, history work waits for the next UTC day; local imports and exports can
-continue. Cache hits reuse evidence without spending another request. Discovery
-does not enable a paid plan or paid Grok/X calls.
+The default local Blockscout budget is **1,000 requests per UTC day**. The
+operator explicitly authorized this installation to use verified free capacity
+on October 31: `runtime/research/blockscout-free-capacity.json` binds that
+authorization to the saved credential and the three existing account-history
+endpoints. Its ceiling is **4,000 requests / 80,000 credits per UTC day**, below
+the documented 100,000-credit free allowance. Each request reserves 20 credits
+before dispatch, including failures. Activation preserves the existing used
+count; it never resets today's usage. Response headers must confirm the observed
+five-request-per-second tier and remaining credits. Lower provider capacity wins;
+missing or inconsistent capacity evidence halts expanded use until verified.
+A credential change also fails closed. No paid plan or overage is enabled.
+
+Exhausted daily allowances wait for the next UTC day; an unresolved capacity
+evidence halt is retained across that boundary. Local imports and exports can
+continue. Cache hits reuse evidence without spending another request. These
+controls do not enable paid Grok/X calls or alter trading eligibility.
 
 The existing cost-aware performance screen and controller-review requirements
 still determine qualification. An observation count, proof export, address role
