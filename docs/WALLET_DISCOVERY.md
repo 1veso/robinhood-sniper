@@ -176,6 +176,16 @@ work rather than becoming permanent unsupported-route decisions. A genuinely
 unsupported route, unknown basis or failed reconciliation still blocks
 qualification. The saved raw evidence and valid completed checkpoints remain.
 
+New transaction indexes request up to 1,000 records per page, within
+[Blockscout's documented Robinhood limits](https://github.com/blockscout/docs/blob/main/robinhood-api.mdx).
+Indexes with an existing cached 100-record first page retain that pagination,
+so interrupted work does not discard downloaded pages. Large-page terminal
+results are cross-checked against the equivalent 100-record tail page; a provider
+silently capping responses cannot make an index appear complete. The 10,000-row
+scope, terminal-page requirement, repeat-page rejection, historical window,
+receipts, costs and balance reconciliation remain. Larger pages reduce index
+HTTP requests; they do not imply completed receipt processing or qualification.
+
 The local Blockscout budget stays at **1,000 requests per UTC day**. When it is
 exhausted, history work waits for the next UTC day; local imports and exports can
 continue. Cache hits reuse evidence without spending another request. Discovery

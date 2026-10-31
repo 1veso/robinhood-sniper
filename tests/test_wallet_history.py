@@ -7,7 +7,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from sniper.adapters.wallet_history import ResearchCache, ResearchPending, reconstruct_wallet
+from sniper.adapters.wallet_history import ResearchCache, ResearchPending, CoverageExceeded, reconstruct_wallet
 from sniper.adapters.evm import USDG, WETH, FACTORY, RpcError
 from sniper.wallet_analysis import analyse_wallet
 from test_evm import TOKEN, POOL, WALLET, TX_SWAP, NOW, word, bh, receipt
@@ -207,9 +207,88 @@ class WalletHistoryTests(unittest.TestCase):
     def test_repeated_page_is_not_complete_history(self):
         with tempfile.TemporaryDirectory() as tmp:
             cache = ResearchCache(Path(tmp), None, blockscout_key="test")
-            cache.get = lambda *args, **kwargs: {"status": "1", "result": [{"blockNumber": "100"}] * 100}
+            cache.get = lambda *args, **kwargs: {"status": "1", "result": [{"blockNumber": "100"}] * 1000}
             with self.assertRaisesRegex(ValueError, "Repeated history page"):
                 cache.account_history(WALLET, "txlist", 90, 110)
+
+    def test_new_history_index_uses_larger_pages_with_exact_results(self):
+        from urllib.parse import parse_qs, urlsplit
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = ResearchCache(Path(tmp), None, blockscout_key='fixture')
+            rows = [{'blockNumber': str(100 + i), 'hash': str(i)} for i in range(2345)]
+            calls = []
+            def get(url, **kwargs):
+                q = parse_qs(urlsplit(url).query); size = int(q['offset'][0]); page = int(q['page'][0])
+                calls.append((page, size))
+                return {'status': '1', 'result': rows[(page-1)*size:page*size]}
+            cache.get = get
+            self.assertEqual(cache.account_history(WALLET, 'txlist', 90, 2500), rows)
+            self.assertEqual(calls, [(1, 1000), (2, 1000), (3, 1000), (24, 100)])
+
+    def test_existing_cached_index_keeps_legacy_pages_and_does_not_refetch(self):
+        from urllib.parse import urlencode, parse_qs, urlsplit
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = ResearchCache(Path(tmp), None, blockscout_key='fixture')
+            params = {'chain_id': 4663, 'module': 'account', 'action': 'txlist',
+                      'address': WALLET, 'startblock': 90, 'endblock': 110,
+                      'sort': 'asc', 'page': 1, 'offset': 100}
+            url = 'https://api.blockscout.com/v2/api?' + urlencode(params)
+            path = Path(tmp) / (hashlib.sha256(json.dumps(['https', url], sort_keys=True).encode()).hexdigest() + '.json')
+            rows = [{'blockNumber': '100', 'hash': str(i)} for i in range(100)]
+            path.write_text(json.dumps({'status': '1', 'result': rows}))
+            original = path.read_bytes()
+            def response(req, **kwargs):
+                q = parse_qs(urlsplit(req.full_url).query)
+                self.assertEqual((q['page'], q['offset']), (['2'], ['100']))
+                return io.BytesIO(json.dumps({'status': '1', 'result': []}).encode())
+            with patch('urllib.request.urlopen', side_effect=response) as http:
+                self.assertEqual(cache.account_history(WALLET, 'txlist', 90, 110), rows)
+            self.assertEqual(http.call_count, 1)
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_silently_capped_large_page_cannot_appear_complete(self):
+        from urllib.parse import parse_qs, urlsplit
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = ResearchCache(Path(tmp), None, blockscout_key='fixture')
+            rows = [{'blockNumber': '100', 'hash': str(i)} for i in range(500)]
+            def get(url, **kwargs):
+                q = parse_qs(urlsplit(url).query); size = int(q['offset'][0]); page = int(q['page'][0])
+                return {'status': '1', 'result': rows[(page-1)*size:(page-1)*size+min(100,size)]}
+            cache.get = get
+            with self.assertRaisesRegex(ValueError, 'pagination sizes disagree'):
+                cache.account_history(WALLET, 'txlist', 90, 110)
+
+    def test_larger_pages_keep_coverage_cap_and_require_terminal_page(self):
+        from urllib.parse import parse_qs, urlsplit
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = ResearchCache(Path(tmp), None, blockscout_key='fixture')
+            calls = []
+            def get(url, **kwargs):
+                q = parse_qs(urlsplit(url).query); page = int(q['page'][0]); calls.append(page)
+                return {'status': '1', 'result': [{'blockNumber': str(page)}] * 1000}
+            cache.get = get
+            with self.assertRaises(CoverageExceeded):
+                cache.account_history(WALLET, 'tokentx', 1, 20)
+            self.assertEqual(calls, list(range(1, 11)))
+
+    def test_terminal_crosscheck_ignores_only_growing_confirmation_count(self):
+        from urllib.parse import parse_qs, urlsplit
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = ResearchCache(Path(tmp), None, blockscout_key='fixture')
+            def get(url, **kwargs):
+                size = int(parse_qs(urlsplit(url).query)['offset'][0])
+                return {'status': '1', 'result': [{'blockNumber': '100', 'hash': 'stable',
+                                                   'confirmations': str(1000 + size)}]}
+            cache.get = get
+            self.assertEqual(cache.account_history(WALLET, 'txlist', 90, 110)[0]['hash'], 'stable')
+
+    def test_oversized_or_out_of_window_page_cannot_complete(self):
+        for rows in ([{'blockNumber': '100'}] * 1001, [{'blockNumber': '111'}]):
+            with self.subTest(count=len(rows)), tempfile.TemporaryDirectory() as tmp:
+                cache = ResearchCache(Path(tmp), None, blockscout_key='fixture')
+                cache.get = lambda *a, **kw: {'status': '1', 'result': rows}
+                with self.assertRaises(ValueError):
+                    cache.account_history(WALLET, 'txlistinternal', 90, 110)
 
     def test_provider_error_is_not_empty_history(self):
         with tempfile.TemporaryDirectory() as tmp:

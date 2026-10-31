@@ -56,6 +56,16 @@ class HistoryQueueTests(unittest.TestCase):
         self.assertEqual(self.queue(now=NEW['timestamp'] + 2 * DAY).begin(
             w, Mock(side_effect=AssertionError('unfinished work cannot reset'))), NEW)
 
+    def test_unfinished_jobs_cannot_starve_the_rest_of_a_fixed_queue(self):
+        q = self.queue(); attempted = set()
+        # All histories remain pending; rotation must still reach every wallet.
+        q.write = lambda *args: None
+        for tick in range(3 * len(self.candidates)):
+            q.now = NEW['timestamp'] + tick
+            w = q.next_wallets()[0]; attempted.add(w); q.begin(w, lambda: NEW)
+        self.assertEqual(attempted, set(self.candidates))
+        self.assertEqual(q.reports(), [])
+
     def test_completed_old_assessment_refreshes_without_overwrite_or_qualification(self):
         w = wallet(1); self.report(w)
         old_path = self.folder / 'cohort-100' / f'wallet-{w}.json'; original = old_path.read_bytes()

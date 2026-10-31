@@ -129,14 +129,23 @@ class ResearchCache:
     def account_history(self, wallet, action, start, end):
         if not self.key:
             raise ResearchPending("BLOCKSCOUT_API_KEY_REQUIRED")
-        results, seen = [], set()
-        for page in range(1, 101):
+        def page_url(page, size):
             params = {"chain_id": CHAIN_ID, "module": "account", "action": action,
                       "address": address(wallet), "startblock": start, "endblock": end,
-                      "sort": "asc", "page": page, "offset": 100}
-            raw = self.get("https://api.blockscout.com/v2/api?" + urllib.parse.urlencode(params),
+                      "sort": "asc", "page": page, "offset": size}
+            return "https://api.blockscout.com/v2/api?" + urllib.parse.urlencode(params)
+        # Existing immutable indexes retain their cached pagination. New indexes
+        # use the documented 1,000-record pages, with the same 10,000-row scope.
+        legacy_key = ["https", page_url(1, 100)]
+        legacy_name = hashlib.sha256(json.dumps(legacy_key, sort_keys=True).encode()).hexdigest() + ".json"
+        page_size = 100 if legacy_name in self.memo or (self.root / legacy_name).exists() else 1000
+        results, seen = [], set()
+        for page in range(1, 10000 // page_size + 1):
+            raw = self.get(page_url(page, page_size),
                            headers={"Authorization": "Bearer " + self.key})
             rows = account_rows(raw, action)
+            if len(rows) > page_size:
+                raise ValueError("History provider exceeded requested page size")
             fingerprint = json.dumps(rows, sort_keys=True)
             if rows and fingerprint in seen:
                 raise ValueError("Repeated history page; completeness cannot be established")
@@ -146,9 +155,22 @@ class ResearchCache:
                 if not start <= block <= end:
                     raise ValueError("History row outside frozen block window")
             results.extend(rows)
-            if len(rows) < 100:
+            if len(rows) < page_size:
+                if page_size == 1000:
+                    # Confirm the terminal tail using the previously supported
+                    # page size. A provider silently capping large pages must
+                    # not make a truncated index appear complete.
+                    tail_start = len(results) // 100 * 100
+                    terminal = account_rows(self.get(page_url(tail_start // 100 + 1, 100),
+                        headers={"Authorization": "Bearer " + self.key}), action)
+                    # Confirmation counts grow between requests; transaction
+                    # fields and ordering must agree, while this live counter
+                    # is not part of the frozen historical index.
+                    stable = lambda values: [{k: v for k, v in row.items() if k != 'confirmations'} for row in values]
+                    if stable(terminal) != stable(results[tail_start:]):
+                        raise ValueError("History pagination sizes disagree; completeness cannot be established")
                 return results
-        raise CoverageExceeded("Wallet history exceeds 100-page coverage budget")
+        raise CoverageExceeded("Wallet history reaches the 10000-record coverage budget without a terminal page")
 
 
 def historical_price(series: list, timestamp: int, max_age: int = 7200) -> Decimal:
