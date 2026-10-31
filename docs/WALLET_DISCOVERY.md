@@ -6,8 +6,10 @@ manually supplied watchlist. A discovered address is a research lead, not a
 profitable wallet or a verified independent controller.
 
 The research child has a 240-second process limit, including local publication.
-Its provider budgets remain 45 seconds per pass and 1,000 Blockscout requests per
-UTC day. The October 28 supervision repair replaces a 75-second child limit that
+Its provider work remains bounded to 45 seconds per pass. The default Blockscout
+limit is 1,000 requests per UTC day; the October 31 explicitly authorized free-
+capacity policy below raises this installation's ceiling to 4,000. The October 28
+supervision repair replaces a 75-second child limit that
 interrupted exports as the evidence journal grew. `export_seconds`, `finished_at`
 and `duration_seconds` in `wallet-research.json` record completed publication;
 `updated_at` and individual canonical-check times retain their original scope.
@@ -87,8 +89,8 @@ capacity repair removes that lifetime limit; it does not evict old wallets,
 delete histories, skip queued source records or grant qualification.
 
 Each confirmation import remains limited to 500 source records. Discovery keeps
-its existing sample and RPC budgets, and history reconstruction retains the
-1,000-request UTC-day Blockscout limit, frozen per-assessment snapshots, transaction checkpoints
+its existing sample and RPC budgets, and history reconstruction retains a bounded
+UTC-day Blockscout allowance, frozen per-assessment snapshots, transaction checkpoints
 and three-batch rotation. `capacity_blocked` is retained as a compatibility field
 and is false after a successful import; `candidate_limit: null` means there is no
 lifetime count cap, while `import_limit` reports the bounded batch size.
