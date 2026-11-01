@@ -117,14 +117,14 @@ window.NitrogenView=(()=>{
     }showToast();
   }
   async function catchUp(){
-    if(request||!active||!account)return;const bound=account,version=epoch;request=new AbortController();
+    if(request||!active||!account)return;const bound=account,version=epoch,controller=new AbortController();request=controller;
     try{for(let page=0;page<10;page++){
       const cursor=bound+':'+seq;
-      const res=await fetch('/api/nitrogen-journal?'+new URLSearchParams({after:cursor,limit:100}),{signal:AbortSignal.any([request.signal,AbortSignal.timeout(18000)]),cache:'no-store'});if(!res.ok)throw Error('Journal unavailable');
+      const res=await fetch('/api/nitrogen-journal?'+new URLSearchParams({after:cursor,limit:100}),{signal:AbortSignal.any([controller.signal,AbortSignal.timeout(18000)]),cache:'no-store'});if(!res.ok)throw Error('Journal unavailable');
       const data=await res.json();if(!active||version!==epoch||bound!==account)return;
       if(data.account_id!==bound||data.prev_cursor!==cursor)throw Error('Journal account mismatch');
       consume(data.events);if(data.events.length<100)break;
-    }}catch(e){if(e.name!=='AbortError'){baseline=true;set('ni-foot-state','Journal interrupted · notifications paused');}}finally{if(version===epoch)request=null;}
+    }}catch(e){if(e.name!=='AbortError'){baseline=true;set('ni-foot-state','Journal interrupted · notifications paused');}}finally{if(request===controller)request=null;}
   }
   function showToast(){
     if(toasting||!queue.length||!active)return;const e=queue.shift();toasting=true;

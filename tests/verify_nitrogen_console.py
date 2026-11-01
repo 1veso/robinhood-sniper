@@ -101,6 +101,16 @@ def main():
                     page.evaluate('window.NitrogenView.disconnected()');clock[0]+=1;lead(90,'RECONNECT',response('pass'));book.publish();reconnected=view(app,clock[0])
                     page.evaluate('(s)=>window.NitrogenView.render(s)',reconnected)
                     assert page.locator('.ni-toast').get_attribute('data-event-id')==event_id
+                    # A snapshot page gap is recovered from the durable account-bound cursor.
+                    for i in range(105):book.decision(address(90),'EVIDENCE_BLOCKED',{'lead':'fixture-gap','reason':'synthetic evidence unavailable'},clock[0])
+                    book.publish();gap=view(app,clock[0])
+                    with page.expect_response(lambda r:'/api/nitrogen-journal?' in r.url and 'after=' in r.url) as recovered:
+                        page.evaluate('(s)=>window.NitrogenView.render(s)',gap)
+                    assert recovered.value.status==200
+                    # A response bound to another account cannot populate this workspace.
+                    foreign=deepcopy(gap);foreign['cockpit']['account_id']='radon:foreign';foreign['summary']['equity']='9999999'
+                    before=page.locator('#ni-whole').inner_text();page.evaluate('(s)=>window.NitrogenView.render(s)',foreign)
+                    assert page.locator('#ni-whole').inner_text()==before
                     # Unknown valuations and stale workers retain the composition.
                     clock[0]+=600;book.publish();stale=view(app,clock[0]);page.evaluate('(s)=>window.NitrogenView.render(s)',stale)
                     assert page.locator('#ni-whole').inner_text()=='—';page.evaluate('document.querySelector(".ni-toast-host").innerHTML=""')
