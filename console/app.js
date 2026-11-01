@@ -135,6 +135,11 @@ function metric(label,value,detail,cls=''){return `<div class="metric"><span>${e
 function key(label,value,cls=''){return `<div class="key-row"><span>${esc(label)}</span><b class="${cls}">${value}</b></div>`;}
 function ack(q){if(!q?.available)return '<span class="warning">Unavailable</span>';const pending=Object.entries(q.counts).filter(([k])=>!['sent','suppressed','expired'].includes(k)).reduce((n,[,v])=>n+v,0);return `<span class="${pending?'warning':'positive'}">${q.counts.sent||0} acknowledged${pending?' · '+pending+' unresolved':''}</span>`;}
 function render(){
+  const autopilot=state.paper_autopilot, banner=$('paper-autopilot');
+  if(banner){
+    banner.hidden=!autopilot?.enrolled;
+    if(autopilot?.enrolled)banner.textContent=`Seven-day PAPER trial · ${autopilot.window_open?'entries eligible until':'entry window ended'} ${new Date(autopilot.ends_at*1000).toLocaleString()} · Background supervisor ${autopilot.supervisor_fresh?'online':'not reporting'} · Evidence and approval gates still apply`;
+  }
   setSizingActive();
   window.NeonWorkspace.setActive(bot==='neon');
   window.HeliumView.setActive(bot==='helium');window.NitrogenView.setActive(bot==='nitrogen');

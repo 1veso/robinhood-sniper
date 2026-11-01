@@ -169,6 +169,10 @@ class ConsoleData:
             return value
 
     def _inspect_jobs(self):
+        from .autopilot_status import supervisor_jobs
+        supervised = supervisor_jobs(self.root)
+        if supervised is not None:
+            return supervised
         if os.name != 'nt':
             return {'available': False, 'items': [], 'checked_at': None, 'error': 'unsupported_platform'}
         command = "$ErrorActionPreference='Stop'; Get-ScheduledTask -TaskName 'SNIPER*','RUG DESK*','NEON*','Pump Jev*','KRYPTON*','HELIUM*' | Where-Object { $_.TaskName -in @('SNIPER Exploratory Paper','SNIPER Paper Research','SNIPER Telegram Monitor','SNIPER Automatic Executor Shadow','RUG DESK Watch','RUG DESK Scan','RUG DESK Report','RUG DESK Console','NEON Paper Signals','NEON Paper Watch','Pump Jev Shadow Review','KRYPTON Paper Scan','KRYPTON Paper Watch','HELIUM Paper Scan','HELIUM Paper Watch') } | ForEach-Object { $i=$_ | Get-ScheduledTaskInfo; [pscustomobject]@{name=$_.TaskName;state=[string]$_.State;last_result=$i.LastTaskResult;last_run=$i.LastRunTime.ToUniversalTime().ToString('o');next_run=$i.NextRunTime.ToUniversalTime().ToString('o');working_directory=($_.Actions | Select-Object -First 1).WorkingDirectory} } | ConvertTo-Json -Compress"
@@ -254,6 +258,8 @@ class ConsoleData:
                 data = view(self.root)
             else:
                 data = self.robinhood() if bot == 'robinhood' else self.solana()
+            from .autopilot_status import public_status
+            data['paper_autopilot'] = public_status(self.root, bot)
             data.update({'bot': bot, 'version': __version__, 'generated_at': int(time.time()),
                          'refresh_seconds': 5, 'read_only': True, 'real_money_enabled': False,
                          'execution_target': 'automatic', 'live_execution_ready': False,
