@@ -16,7 +16,7 @@ calls remain disabled. Restricted live-executor code exists, but no live
 deployment is enabled or validated by paper results. A profitable edge has not
 been established.
 
-## Six views, distinct strategies
+## Console views, distinct strategies
 
 | Console view | Purpose and account boundary | Current operating state |
 | --- | --- | --- |
@@ -26,8 +26,10 @@ been established.
 | **Argon** (`jev`) | Pump/Jev review of the **existing Xenon account**, not another balance | ACTIVE_PAPER admission filter, with entries blocked by disabled models and incomplete factual evidence |
 | **Krypton** (`krypton`) | Standalone Solana token screening; separate $1,000 virtual account | Independent scan/watch jobs; hard checks and authorized Grok evidence are required before entry |
 | **Helium** (`helium`) | Standalone Solana research team; separate $1,000 virtual account | Krypton's trading baseline plus a bound Jev review of Grok; both paid model gates remain disabled |
+| **Radon** (slot 8) | Independent fixed-ticket Solana copier research and paper account. Slot 7 is reserved. | Source and paid research unavailable until explicitly configured; no workers installed by this change. |
 
-Six views do **not** represent six independent bankrolls. Shared adapters and
+Seven implemented views do **not** represent seven independent bankrolls. Slot seven
+is reserved, and Radon occupies slot eight. Shared adapters and
 model-budget accounting do not merge strategy accounts or returns. Krypton and
 Helium have no live adapter or Telegram delivery. Other strategies' durable
 notification queues remain separate from comparison studies.
@@ -300,3 +302,16 @@ Additional guides: [wallet discovery](docs/WALLET_DISCOVERY.md),
 [pipeline validation](docs/PIPELINE_VALIDATION.md),
 [Neon workspace](docs/NEON_EXPERIENCE.md),
 [Helium cockpit](docs/HELIUM_BOT.md#trading-cockpit).
+
+## Radon copy trading desk
+
+Radon occupies bot slot **8**; slot **7** is reserved. It adds an independent
+paper account, deterministic fixed-ticket copier replay, per-mint episode caps,
+leader-attributed partial exits, and separate prospective reports to the existing
+console. See [Radon setup and policy](radon_bot/README.md) and the
+[authorized export contract](docs/radon-export.md).
+
+`python radon_bot.py --demo` runs an isolated synthetic example.
+`python radon_bot.py status` and `/?bot=radon` are read-only. Initialization,
+authorized source intake, paid model authorization/validation, and worker
+installation are explicit steps; there is no Fomo cookie scraper or live toggle.

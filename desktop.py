@@ -33,6 +33,10 @@ JOBS = {
     'krypton-watch': ('KRYPTON Paper Watch', 1, 50, ['krypton_bot.py', 'watch']),
     'helium-scan': ('HELIUM Paper Scan', 1, 50, ['helium_bot.py', 'scan']),
     'helium-watch': ('HELIUM Paper Watch', 1, 50, ['helium_bot.py', 'watch']),
+    'radon-research': ('RADON Copier Research', 1, 600, ['radon_bot.py', 'scheduled', '--job', 'research']),
+    'radon-entries': ('RADON Paper Entries', 1, 55, ['radon_bot.py', 'run', '--job', 'entries', '--duration-seconds', '50']),
+    'radon-watch': ('RADON Paper Exits', 1, 55, ['radon_bot.py', 'run', '--job', 'watch', '--duration-seconds', '50']),
+    'radon-report': ('RADON Paper Report', 1, 50, ['radon_bot.py', 'scheduled', '--job', 'report']),
     'radeon-sizing': ('RADEON Paper Size Comparison', 1, 110, ['radeon_sizing.py', 'once']),
 }
 
@@ -146,6 +150,8 @@ def worker(name, root=ROOT):
             if not report_due(started) or read(marker, {}).get('day') == date:
                 return 0
         if name in ('paper', 'research', 'shadow', 'monitor') and not (root / 'runtime/exploration/trial.json').exists():
+            return 0
+        if name.startswith('radon-') and not (root/'radon_bot/runtime/book.sqlite3').is_file():
             return 0
         result = {'started_at': started, 'job': name, 'finished_at': None, 'exit_code': None,
                   'pid': os.getpid(), 'phase': 'STARTING_CHILD'}

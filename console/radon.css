@@ -1,0 +1,8 @@
+.radon-section { margin-bottom: 16px; }
+.radon-section .panel-heading { border-left: 3px solid #98cde0; }
+.radon-note { padding: 0 18px 14px; color: var(--muted, #a5b7b3); line-height: 1.6; overflow-wrap: anywhere; }
+.radon-section td { vertical-align: top; }
+.radon-section pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow: auto; }
+.radon-section details { margin-top: 7px; }
+.reserved-bot { opacity: .55; cursor: default; }
+.bot-button small { display: block; font-size: 10px; color: #a5b7b3; margin-top: 3px; }

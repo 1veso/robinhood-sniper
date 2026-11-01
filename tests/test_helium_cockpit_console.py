@@ -88,7 +88,8 @@ class HeliumCockpitConsoleTests(unittest.TestCase):
         self.assertEqual(request('/api/helium-journal?stage=madeup')[0], 409)
         self.assertEqual(request('/api/helium-journal?after=another-account:0')[0], 409)
         self.assertEqual(request('/api/helium-candidate?mint=../runtime')[0], 409)
-        self.assertEqual(request('/api/helium-journal', 'POST')[0], 501)
+        # The existing centralized local-session POST guard rejects this route.
+        self.assertEqual(request('/api/helium-journal', 'POST')[0], 403)
         self.assertEqual(request('/api/helium-journal', headers={'Origin': 'https://other.example'})[0], 403)
         self.assertEqual(request('/helium_bot/runtime/book.sqlite3')[0], 404)
         self.assertEqual(request('/helium_bot/runtime/paid-ai.json')[0], 404)
