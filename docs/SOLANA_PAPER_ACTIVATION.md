@@ -41,10 +41,13 @@ Each request reserves at least $0.50; a smaller billed charge does not release t
 unused reservation that day. Failed/unresolved calls are not treated as free.
 Oxygen retains its separate article cost behavior, as specified in the rollout.
 
-JEV remains **$0.20/day combined**: $0.10 shared by Argon/Nitrogen and $0.10 for
-Helium. Nitrogen also has its own $0.10 ceiling. Earlier setup-probe reservations
+The latest explicit user instruction removes the JEV hard daily ceiling.
+runtime/jev-spending.json authorizes uncapped daily JEV reservations for Argon,
+Nitrogen and Helium. Their previous numeric settings remain fallback limits when
+this override is absent. Per-request bounds, account authorization, duplicate
+protection, usage estimates and invoice reconciliation remain enforced. Earlier setup-probe reservations
 were carried into these ledgers rather than erased or mislabeled as invoices.
-These are local reservation limits, not vendor-enforced account spending caps.
+Grok retains its $5/day local reservation limit; it is not a vendor-enforced cap.
 
 Xenon, Neon, Krypton, Helium and Radon now have successful current funded proofs
 bound to their own restored/current accounts. Structured X probes validate
@@ -103,3 +106,22 @@ Workers running, paid access working and fresh chain reads do not establish entr
 eligibility. Remaining factual producers and history reconciliation are tracked
 implementation/data gaps, not instructions to fabricate missing numbers or reduce
 strategy thresholds. None of this enables automatic promotion to real trading.
+
+## Explicit seven-day windows started
+
+At the user's November 1 request, Xenon and Neon began operational paper
+observation windows at 2026-11-01 14:47:09 Europe/Berlin, ending exactly
+2026-11-08 14:47:09 Europe/Berlin. Entry blockers were recorded at startup, not
+waived. The console shows ACTIVE trial clocks alongside ENTRY_BLOCKED when
+required factual evidence or qualified trader histories are absent. No fills
+were manufactured. Repeating the start operation does not reset the deadline;
+new entries stop at the deadline and exits remain active.
+
+Xenon's stale X/readiness display came from a report refreshed only by the daily
+report job. Every completed scan now refreshes the local report without sending
+messages or making extra paid calls. The console also includes the separate
+Argon factual gate rather than presenting X authorization as entry readiness.
+Neon's isolated full replay passed all eleven checks, including rejected entries,
+quote failure, one committed entry, duplicate prevention, recovery and exits.
+That synthetic account remains excluded from live-data paper performance.
+Oxygen completed one verified live-data paper scan with no BUY output.

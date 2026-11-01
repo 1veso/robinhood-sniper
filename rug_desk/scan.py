@@ -2,6 +2,7 @@
 import argparse
 from pathlib import Path
 import sys
+import time
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rug_desk import config
 from rug_desk.book import Book, encode, process_lock
@@ -34,6 +35,8 @@ def main():
                 if args.send:
                     from rug_desk.report import notify
                     run['notifications'] = notify(book)
+            from rug_desk.report import write_report
+            write_report(book, int(time.time()))
             print(encode(run))
         finally:
             book.close()

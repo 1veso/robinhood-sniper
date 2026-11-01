@@ -7,9 +7,26 @@ import unittest
 
 from sniper.advisor import DailyBudget, AdvisoryError
 from sniper.model_budget import shared_grok_limit
+from sniper.model_budget import jev_uncapped
 
 
 class InstallationBudgetTests(unittest.TestCase):
+    def test_explicit_uncapped_jev_preserves_accounting_and_duplicate_protection(self):
+        self.assertFalse(jev_uncapped(self.root))
+        auth=self.root/'runtime/jev-spending.json'
+        auth.write_text(json.dumps({'version':1,'operator_authorized':True,'daily_limit_usd':None,
+            'approval_reference':'Explicit test authorization'}))
+        self.assertTrue(jev_uncapped(self.root))
+        path=self.root/'runtime/jev.sqlite3'
+        with closing(DailyBudget(path,D('.1'),uncapped=jev_uncapped(self.root))) as budget:
+            budget.reserve('one',D('2'),1793530000)
+        with closing(DailyBudget(path,D('.1'),uncapped=jev_uncapped(self.root))) as budget:
+            budget.reserve('two',D('2'),1793530000)
+            with self.assertRaises(AdvisoryError):budget.reserve('one',D('2'),1793530000)
+            self.assertEqual(budget.db.execute('SELECT COUNT(*) FROM advisory_reservations').fetchone()[0],2)
+        auth.write_text('{}')
+        with self.assertRaises(ValueError):jev_uncapped(self.root)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

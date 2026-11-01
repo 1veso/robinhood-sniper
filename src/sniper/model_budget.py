@@ -22,3 +22,18 @@ def shared_grok_limit(root):
     if not limit.is_finite() or limit < 0:
         raise ValueError('Invalid shared Grok ceiling')
     return limit
+
+
+def jev_uncapped(root):
+    """Explicit installation authorization; preserves request accounting and gates."""
+    path = Path(root)/'runtime/jev-spending.json'
+    if not path.exists():
+        return False
+    value = json.loads(path.read_text(encoding='utf-8-sig'))
+    if (not isinstance(value, dict) or value.get('version') != 1
+            or value.get('operator_authorized') is not True
+            or 'daily_limit_usd' not in value or value['daily_limit_usd'] is not None
+            or not isinstance(value.get('approval_reference'), str)
+            or not value['approval_reference'].strip()):
+        raise ValueError('Invalid explicit uncapped JEV authorization')
+    return True

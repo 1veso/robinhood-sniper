@@ -1,4 +1,5 @@
 """Bounded TypeSafe review of Helium's analyst; never a trading/execution API."""
+from sniper.model_budget import jev_uncapped
 from copy import deepcopy
 from decimal import Decimal
 import html
@@ -176,7 +177,7 @@ class Reviewer:
             budget = None
             try:
                 # Account-specific limit: sharing Argon's journal would conflate account caps.
-                budget = DailyBudget(self.book.folder / 'jev-budget.sqlite3', limit)
+                budget = DailyBudget(self.book.folder / 'jev-budget.sqlite3', limit, uncapped=jev_uncapped(self.root))
                 budget.reserve(request_id, RESERVATION, now)
                 audit.update(state='RESERVED', reservation_usd=str(RESERVATION))
                 self.book.db.execute('UPDATE api_requests SET payload=? WHERE id=?', (encode(audit), request_id))

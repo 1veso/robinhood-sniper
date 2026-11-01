@@ -1,4 +1,5 @@
 """Own account authorization; conservative shared and local paid reservations."""
+from sniper.model_budget import jev_uncapped
 from contextlib import ExitStack, closing
 from decimal import Decimal as D
 import json
@@ -51,7 +52,7 @@ class Model:
             with self.book.transaction():self.book.db.execute('INSERT INTO api_requests VALUES(?,?)',(request,encode(audit)))
             try:
                 with ExitStack() as stack:
-                    budgets=[stack.enter_context(closing(DailyBudget(path,limit))) for path,limit in (
+                    budgets=[stack.enter_context(closing(DailyBudget(path,limit,uncapped=jev_uncapped(self.root)))) for path,limit in (
                         (self.book.folder/'jev-budget.sqlite3',self.authorization()),
                         (self.root/'runtime/jev-review/budget.sqlite3',number(shared_settings(self.root)['daily_budget_usd'])))]
                     reserve=number(self.book.cfg['model_reservation_usd'])
