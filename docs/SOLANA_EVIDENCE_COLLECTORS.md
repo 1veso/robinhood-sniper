@@ -14,7 +14,7 @@ classic 165-byte filter. Confidential or withheld amounts that prevent supply
 reconciliation leave coverage unknown.
 
 Default RPC is `getProgramAccounts`. Optional `getProgramAccountsV2` supports up
-to four pages / 4,096 accounts. All pages must share a finalized context slot,
+to ten pages / 10,000 accounts. All pages must share a finalized context slot,
 have unique accounts/cursors, and end with an explicit null cursor. A short page
 is not completion. Slot drift, an unfinished cursor, a supply change, or a bound
 exceeded fails closed. The limit is a collection bound, never an approximation.
@@ -28,8 +28,12 @@ To select pagination after confirming provider access, use the ignored file
 
 On November 1, 2026 the configured Alchemy Free app returned a compute-capacity
 429 for full enumeration and an explicit 400 / -32600 plan denial for V2.
-No subscription was changed and no alternate credentials were invented. A
-full live holder snapshot is still blocked until suitable RPC access exists.
+No subscription was changed. The user subsequently supplied a Helius endpoint.
+It is configured exclusively for holder reads: a live finalized snapshot at slot
+464136490 enumerated 4,499 accounts, reconciled the complete supply and counted
+1,276 positive-balance owners. The processing bound is now 10,000 accounts, with
+the existing 3 MB response limit retained. This is a coverage bound, not a trading
+strategy threshold. Controller independence is still unknown.
 
 ## Pool / exit evidence
 
@@ -115,5 +119,5 @@ Actual successful supply reconciliation is required before marking coverage vali
 
 Provider docs: https://www.helius.dev/pricing and
 https://www.helius.dev/docs/rpc/guides/getprogramaccounts . Free credits are finite;
-no paid plan, automatic top-up, or excess entitlement is assumed. This endpoint
-has not yet been validated with the user's own Helius account.
+no paid plan, automatic top-up, or excess entitlement is assumed. The supplied Helius endpoint passed full live supply reconciliation on November
+1, 2026 and is now installed for holder-only reads.

@@ -3,7 +3,7 @@ from .adapters.solana import validate_address
 from .solana_cpmm import TOKEN
 
 TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
-MAX_ACCOUNTS = 4096
+MAX_ACCOUNTS = 10000
 
 
 def parsed(account, program, kind):
@@ -50,7 +50,7 @@ def collect(rpc, mint, clock, *, method="getProgramAccounts"):
     options = {'encoding': 'jsonParsed', 'commitment': 'finalized', 'withContext': True,
                'minContextSlot': first['context']['slot'], 'filters': filters}
     pages, rows, cursors, slot = [], [], set(), None
-    for _ in range(4):
+    for _ in range(10):
         if method == 'getProgramAccountsV2': options['limit'] = 1024
         response = rpc(method, [program, options.copy()])
         current = response['context']['slot']

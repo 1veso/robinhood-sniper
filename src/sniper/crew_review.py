@@ -70,7 +70,7 @@ def _holders(payload):
     from .adapters.solana import validate_address
     h=payload['holder_coverage'];o=payload['observations']['holders_now'];c=h['context']
     rows=c['covered_accounts']
-    limit = 4096 if c.get('enumeration') == 'full_program_accounts_v1' and c.get('max_accounts') == 4096 else 20
+    limit = c['max_accounts'] if c.get('enumeration') == 'full_program_accounts_v1' and type(c.get('max_accounts')) is int and c['max_accounts'] in (4096,10000) else 20
     if not isinstance(rows,list) or not 0<len(rows)<=limit or c['accounts_examined']!=len(rows):raise ValueError('Unbounded holder proof')
     seen=set();owners=set();total=0
     for r in rows:

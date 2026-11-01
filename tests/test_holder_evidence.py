@@ -77,3 +77,16 @@ class HolderEvidenceTests(unittest.TestCase):
                 'paginationKey':'continue' if calls==1 else None}}
         result=collect(paged,MINT,lambda:NOW,method='getProgramAccountsV2')
         self.assertEqual(result['context']['pages'],2);self.assertEqual(result['status'],'VALID')
+
+    def test_complete_snapshot_larger_than_old_4096_bound(self):
+        from sniper.solana_wire import b58encode
+        from sniper.crew_review import _holders
+        original=self.rows[0];self.info['supply']='4499';self.rows=[]
+        for i in range(4499):
+            row=copy.deepcopy(original);row['pubkey']=b58encode((i+1).to_bytes(32,'big'))
+            info=row['account']['data']['parsed']['info'];info['owner']=row['pubkey'];info['tokenAmount']['amount']='1'
+            self.rows.append(row)
+        result=collect(self.rpc,MINT,lambda:NOW)
+        self.assertEqual(result['value'],4499)
+        _holders({'holder_coverage':result,'observations':{'holders_now':result},
+            'dossier_fields':{'observations':{'holders_now':{'value':4499,'observed_at':NOW}}}})
