@@ -5,7 +5,7 @@ Real execution remains disabled. Existing accounts, balances, trade history, ris
 ## Implemented
 
 - EVM RPC recognizes the observed Alchemy Free 10-block log limit and partitions the exact requested range. Batches preserve request identities and filters; incomplete or out-of-range results fail closed. A live read of 500 blocks returned 385 swap logs in 6.52 seconds after the old request failed with HTTP 400.
-- Exploratory collection journals completed raw log chunks across bounded worker runs. These are not canonical signals. The original interval anchor, all selected event headers, and expected canonical cursor must pass before admission; a changed anchor discards unadmitted progress. Stale progress is bounded to 15 minutes, and skipped canonical blocks remain disclosed.
+- Exploratory collection journals completed raw log chunks across bounded worker runs. These are not canonical signals. The original interval anchor, all selected event headers, and expected canonical cursor must pass before admission; a changed anchor discards unadmitted progress. Stale progress is bounded to 15 minutes, and skipped canonical blocks remain disclosed. The per-cycle collection slice is 20 seconds so already-admitted signals receive entry-evaluation time within the unchanged total worker budget.
 - Krypton and Helium can use the authorized local `runtime/holder-rpc-url.txt` endpoint for holder reads. The configured endpoint is ignored by Git; no credentials are in this change.
 - Holder enumeration accepts reviewed Token-2022 metadata-only mint extensions and immutable-owner token accounts. Transfer fees, hooks, authority-altering extensions, unknown extensions, mismatched token programs, and unreconciled supply remain rejected. The original enumeration bound and concentration limits remain in force.
 - Unavailable pre-model evidence is retried after at least 60 seconds, with three total attempts and the original discovery expiry. Definitive risk failures remain terminal. Helium resumes only a task with no completed model/evidence artifacts. Uncertain paid requests are never automatically replayed.
@@ -20,7 +20,7 @@ Real execution remains disabled. Existing accounts, balances, trade history, ris
 - Nitrogen also retains its complete factual dossier and original explicit paper-order approval requirement.
 - Krypton/Helium may remain idle when actual liquidity, pool availability, concentration, or LP checks fail. Oxygen retains the original article source and strategy.
 
-No new production paper fill is asserted by this change. Fixture-based lifecycle tests use separate temporary demo accounts and are excluded from live-data strategy results.
+The scheduled EVM worker subsequently collected 3,000 live blocks, admitted 53 swap legs across 32 sampled transactions, and attempted nine funded-purchase proofs. That is live signal processing, not proof of a strategy fill. No new production paper fill is asserted by this change. Fixture-based lifecycle tests use separate temporary demo accounts and are excluded from live-data strategy results.
 
 ## Validation
 

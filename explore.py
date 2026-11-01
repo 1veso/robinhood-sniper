@@ -662,7 +662,10 @@ def run_cycle(folder, runtime, *, start=False, profile='legacy'):
                     'retry_at': max(status['source_retry_at'], status['quote_retry_at'])}
                 return
             try:
-                with entry_phase('collection', rpc, 45):
+                # Raw collection is resumable. Reserve worker time for proving
+                # and evaluating already-journaled signals instead of repeatedly
+                # spending nearly the whole entry allowance on log retrieval.
+                with entry_phase('collection', rpc, 20):
                     status['collection'] = source.collect(watch_pools=book.watched_pools(int(time.time()), policy.max_confirmation_age_seconds)) if book else source.collect()
                 if store.reorgs(CHAIN_ID):
                     with ledger.transaction():
