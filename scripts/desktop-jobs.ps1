@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$AppRoot, [Parameter(Mandatory=$true)][string]$Python, [switch]$Remove, [switch]$CheckOnly, [switch]$NeonOnly, [switch]$JevOnly, [switch]$KryptonOnly, [switch]$HeliumOnly, [switch]$SizingOnly)
+param([Parameter(Mandatory=$true)][string]$AppRoot, [Parameter(Mandatory=$true)][string]$Python, [switch]$Remove, [switch]$CheckOnly, [switch]$NeonOnly, [switch]$JevOnly, [switch]$KryptonOnly, [switch]$HeliumOnly, [switch]$RadonOnly, [switch]$SizingOnly)
 $ErrorActionPreference = 'Stop'
 $app = (Resolve-Path -LiteralPath $AppRoot).Path
 $pythonExe = (Resolve-Path -LiteralPath $Python).Path
@@ -22,6 +22,13 @@ if ($heliumInitialized -or $HeliumOnly -or $Remove -or $CheckOnly) {
 }
 $minutes['helium-scan']=1; $minutes['helium-watch']=1
 $limits['helium-scan']=2; $limits['helium-watch']=2
+$radonInitialized = Test-Path -LiteralPath (Join-Path $app 'radon_bot/runtime/book.sqlite3') -PathType Leaf
+if ($radonInitialized -or $RadonOnly -or $Remove -or $CheckOnly) {
+    $names['radon-research']='RADON Copier Research'; $names['radon-entries']='RADON Paper Entries'
+    $names['radon-watch']='RADON Paper Exits'; $names['radon-report']='RADON Paper Report'
+}
+foreach ($key in @('radon-research','radon-entries','radon-watch','radon-report')) { $minutes[$key]=1; $limits[$key]=2 }
+$limits['radon-research']=11
 $sizingInitialized = Test-Path -LiteralPath (Join-Path $app 'runtime/radeon-sizing/manifest.json') -PathType Leaf
 if ($sizingInitialized -or $SizingOnly -or $Remove -or $CheckOnly) { $names['radeon-sizing']='RADEON Paper Size Comparison' }
 $minutes['radeon-sizing']=1; $limits['radeon-sizing']=3
@@ -29,6 +36,8 @@ if ($NeonOnly) { $names = @{'neon-signals'='NEON Paper Signals';'neon-watch'='NE
 if ($JevOnly) { $names = @{'jev-review'='Pump Jev Shadow Review'} }
 if ($KryptonOnly) { $names = @{'krypton-scan'='KRYPTON Paper Scan';'krypton-watch'='KRYPTON Paper Watch'} }
 if ($HeliumOnly) { $names = @{'helium-scan'='HELIUM Paper Scan';'helium-watch'='HELIUM Paper Watch'} }
+if ($RadonOnly) { $names = @{'radon-research'='RADON Copier Research';'radon-entries'='RADON Paper Entries';'radon-watch'='RADON Paper Exits';'radon-report'='RADON Paper Report'} }
+if ($RadonOnly -and -not $radonInitialized -and -not $Remove -and -not $CheckOnly) { throw 'Initialize Radon explicitly before installing its workers' }
 if ($SizingOnly) { $names = @{'radeon-sizing'='RADEON Paper Size Comparison'} }
 if ($SizingOnly -and -not $sizingInitialized -and -not $Remove -and -not $CheckOnly) {
     throw 'Initialize the separate sizing study explicitly before installing its worker'
@@ -67,10 +76,10 @@ foreach ($key in $names.Keys) {
         $definition.Principal.LogonType = 3
         $definition.Principal.RunLevel = 0
         $logonType = 3
-        if ($key.StartsWith('krypton-') -or $key.StartsWith('helium-') -or $key -eq 'radeon-sizing') {
+        if ($key.StartsWith('krypton-') -or $key.StartsWith('helium-') -or $key.StartsWith('radon-') -or $key -eq 'radeon-sizing') {
             $logonType = 2
             $definition.Principal.LogonType = 2
-            $botLabel = if ($key -eq 'radeon-sizing') { 'Radeon isolated size comparison' } elseif ($key.StartsWith('helium-')) { 'Helium' } else { 'Krypton' }
+            $botLabel = if ($key -eq 'radeon-sizing') { 'Radeon isolated size comparison' } elseif ($key.StartsWith('helium-')) { 'Helium' } elseif ($key.StartsWith('radon-')) { 'Radon' } else { 'Krypton' }
             $definition.RegistrationInfo.Description = $botLabel + ' standalone PAPER worker. Same-user S4U background execution; no live or paid authorization.'
             $definition.Settings.Priority = 4
             $boot = $definition.Triggers.Create(8)
@@ -100,6 +109,6 @@ foreach ($key in $names.Keys) {
         # TASK_CREATE, never overwrite a task that appeared after preflight.
         $old = $folder.RegisterTaskDefinition($name,$definition,2,$owner,$null,$logonType)
     }
-    if ($key -in @('console','paper','watch','scan','shadow','neon-signals','neon-watch','jev-review','krypton-scan','krypton-watch','helium-scan','helium-watch')) { $old.Run($null) | Out-Null }
+    if ($key -in @('console','paper','watch','scan','shadow','neon-signals','neon-watch','jev-review','krypton-scan','krypton-watch','helium-scan','helium-watch','radon-research','radon-entries','radon-watch','radon-report')) { $old.Run($null) | Out-Null }
 }
 Write-Output 'Task ownership checked; operation completed.'

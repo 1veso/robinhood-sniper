@@ -28,3 +28,7 @@ rug_desk/report.html
 BUILD_CONTRACT.md
 .playwright-cli/
 output/playwright/
+
+# Radon account inputs, journals, credentials and synthetic trials stay local.
+radon_bot/runtime/
+radon_bot/.env

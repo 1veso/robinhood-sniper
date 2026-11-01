@@ -199,7 +199,7 @@ class JevJournalTests(unittest.TestCase):
             connection.request('GET','/api/jev-assessment?id='+a['id'])
             r=connection.getresponse();self.assertEqual(r.status,200);self.assertEqual(json.loads(r.read())['id'],a['id'])
             connection.request('POST','/api/jev-assessment',body='enable live')
-            r=connection.getresponse();self.assertIn(r.status,(405,501));r.read();connection.close()
+            r=connection.getresponse();self.assertEqual(r.status,403);r.read();connection.close()
         finally:server.shutdown();server.server_close();thread.join()
         self.assertEqual(self.j.db.total_changes,before)
 
