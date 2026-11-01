@@ -142,6 +142,8 @@ class Paper:
         """Optional strategy-specific evidence guard, inside the entry transaction."""
 
     def enter(self,mint,evidence,verdict,now,gate):
+        from sniper.paper_window import require_open
+        require_open(self.get('paper_trial'), self.identity, now)
         q=evidence['quote']
         if verdict.get('demo') is True and not self.demo:raise ValueError('Demo evidence cannot enter a production account')
         with self.transaction():

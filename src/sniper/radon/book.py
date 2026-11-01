@@ -244,6 +244,8 @@ class Book:
                 self.decision(event, 'SKIP', reason, now, payload)
 
     def buy(self, event, quote, now, evidence, *, replay=False):
+        from sniper.paper_window import require_open
+        require_open(self.get('paper_trial'), self.identity, now)
         with self.transaction():
             row = self.eligibility(event, now)
             if replay:

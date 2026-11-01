@@ -43,20 +43,15 @@ shared Grok credentials are preserved. Never print them or put secrets in chat.
 
 ## Existing schedules
 
-Reuse these existing Codex IDs with Oxygen/paper instructions:
+Oxygen now runs under the persistent local `SNIPER Paper Autopilot` supervisor.
+Its four former Codex schedules were deleted to prevent duplicate paid scans and
+watchers. Local cadences remain watch every ten minutes, pulse hourly, scan every
+two hours and report at 21:30 Europe/Berlin. The root wrapper verifies the article
+before each job and stops new scans at the enrolled seven-day paper deadline.
 
-| ID | Cadence |
-| --- | --- |
-| dev-watch-wallet-and-exit-checks | Every 10 minutes; watch 9 minutes at 20-second intervals |
-| dev-watch-hourly-x-pulse | Hourly |
-| dev-watch-two-hour-x-scan | Every 2 hours; one scan, no paid retry loop |
-| dev-watch-evening-paper-report | 21:30 Europe/Berlin |
-
-Do not add duplicate workers. Notify only on meaningful output or failure;
-quiet runs need no routine status. Paper fills are simulated, never confirmed
-wallet sales. Missing facts remain missing. Never run book.py add, confirm or
-close to fabricate actual wallet fills. Preserve all thresholds and source checks.
-Keep the machine awake and Codex running for these scheduled jobs.
+See ../docs/PAPER_AUTOPILOT.md for startup recovery, account preservation, logs
+and the signed-in Windows session requirement. Do not recreate duplicate Codex
+workers. Never invoke book.py add/confirm/close to manufacture wallet fills.
 
 ## Repository and recovery
 

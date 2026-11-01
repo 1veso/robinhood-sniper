@@ -143,7 +143,8 @@ def child(args, timeout, root=ROOT):
         environment['SSL_CERT_FILE'] = certifi.where()
     flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
     return subprocess.run(command, cwd=root, timeout=timeout or None,
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                          stdout=None if environment.get('SNIPER_WORKER_LOG') == '1' else subprocess.DEVNULL,
+                          stderr=None if environment.get('SNIPER_WORKER_LOG') == '1' else subprocess.DEVNULL,
                           creationflags=flags, env=environment).returncode
 
 

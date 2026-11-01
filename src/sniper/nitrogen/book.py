@@ -226,6 +226,8 @@ class Book(BasePaper):
         return 'REJECTED'
 
     def approve(self,id,e,now):
+        from sniper.paper_window import require_open
+        require_open(self.get('paper_trial'), self.identity, now)
         with self.transaction():
             order=self.order(id);p=order['payload']
             if order['status']!='PENDING':return order['status']

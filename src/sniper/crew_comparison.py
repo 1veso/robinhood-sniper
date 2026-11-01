@@ -577,8 +577,14 @@ class Comparison:
                     elif row['kind'] == 'trial':
                         old = json.loads(book.db.execute("SELECT value FROM metadata WHERE key='crew_trial'").fetchone()[0])
                         new = payload['trial']
-                        if old and old != new: raise ValueError('Original source deadline cannot change')
-                        book.db.execute("UPDATE metadata SET value=? WHERE key='crew_trial'", (encode(new),))
+                        if old and old != new:
+                            from .autopilot_trial import approved_renewal
+                            if not approved_renewal(self.source_root, old, new):
+                                raise ValueError('Original source deadline cannot change')
+                            # The primary account may renew; comparison deadlines stay original.
+                            book.db.execute("INSERT OR REPLACE INTO metadata VALUES('crew_source_trial_renewal',?)", (encode(new),))
+                        else:
+                            book.db.execute("UPDATE metadata SET value=? WHERE key='crew_trial'", (encode(new),))
                     elif row['kind'] == 'code_revision':
                         previous = self.effective_code_revision(book)['new_code_binding']
                         validate_code_revision(payload,self.manifest,previous,now)

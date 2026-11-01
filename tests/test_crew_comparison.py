@@ -315,6 +315,19 @@ class CrewComparisonTests(unittest.TestCase):
         c.refresh_trial(NOW+1)
         with self.assertRaises(ValueError): c.process()
 
+    def test_explicit_primary_renewal_does_not_extend_comparison_trial(self):
+        c = self.comparison(False)
+        original = self.trial(); c.refresh_trial(NOW); c.process()
+        renewed = dict(original, mode='paper', started_at=NOW+1, ends_at=NOW+1+604800)
+        with self.source.transaction():
+            self.source.db.execute("UPDATE metadata SET value=? WHERE key='trial'", (encode(renewed),))
+        path=self.root.parent/'runtime/desktop/paper-autopilot.json'
+        path.parent.mkdir(parents=True)
+        path.write_text(encode({'state':'ACTIVE','mode':'paper','real_orders_enabled':False,
+            'accounts':{'xenon':{'account_id':self.account,'previous_trial':original,'trial':renewed}}}))
+        c.refresh_trial(NOW+1); c.process()
+        self.assertEqual(c.report(NOW+1)['variants']['baseline']['original_trial'],original)
+
     def test_unknown_model_invoice_never_becomes_zero(self):
         c = self.comparison(); self.capture(c, 'candidate', 'candidate', NOW, self.payload()); c.process()
         v = c.report(NOW)['variants']['baseline']
