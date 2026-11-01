@@ -5,6 +5,7 @@ from sniper.adapters.solana import validate_address
 from .config import number
 
 TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'
+TOKEN_2022 = 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'
 
 
 def check(name, state, value=None, reason='', scope=''):
@@ -12,11 +13,19 @@ def check(name, state, value=None, reason='', scope=''):
 
 
 def parsed(account, kind):
-    if not isinstance(account,dict) or account.get('owner') != TOKEN_PROGRAM or account.get('executable') is not False:
-        raise ValueError('Only classic SPL token accounts are supported')
+    if not isinstance(account,dict) or account.get('owner') not in (TOKEN_PROGRAM,TOKEN_2022) or account.get('executable') is not False:
+        raise ValueError('Reviewed SPL token account required')
     data=account.get('data',{}).get('parsed',{})
     if data.get('type') != kind or not isinstance(data.get('info'),dict): raise ValueError('Invalid parsed token account')
-    return data['info']
+    info=data['info']
+    if account['owner']==TOKEN_2022:
+        allowed={'metadataPointer','tokenMetadata'} if kind=='mint' else {'immutableOwner'}
+        extensions=info.get('extensions')
+        if not isinstance(extensions,list):raise ValueError('Complete Token-2022 extension enumeration required')
+        names=[e.get('extension') for e in extensions if isinstance(e,dict)]
+        if len(names)!=len(extensions) or len(set(names))!=len(names) or any(n not in allowed for n in names):
+            raise ValueError('Economic or unknown Token-2022 extension requires separate review')
+    return info
 
 
 def raw_amount(value):
@@ -31,7 +40,9 @@ def holder_facts(mint, mint_account, accounts, *, complete):
     for address,account in accounts:
         validate_address(address)
         if address in seen: raise ValueError('Duplicate token account')
-        seen.add(address); item=parsed(account,'account')
+        seen.add(address)
+        if account.get('owner')!=mint_account['owner']:raise ValueError('Holder token program mismatch')
+        item=parsed(account,'account')
         if item.get('mint')!=mint: raise ValueError('Token account mint mismatch')
         owner=validate_address(item['owner']); amount=item['tokenAmount']
         if amount.get('decimals')!=decimals: raise ValueError('Decimals mismatch')
@@ -74,7 +85,7 @@ def hard_checks(cfg, quote, facts, lp, now):
         result.append(check(key,state,value,'Complete bounded owner coverage required; partial samples are lower bounds',facts.get('scope','')))
     for key in ('mint_disabled','freeze_disabled'):
         value=facts.get(key)
-        result.append(check(key,'PASS' if bound and value is True else 'FAIL' if bound and value is False else 'UNKNOWN',value,'Current classic-SPL mint proof required'))
+        result.append(check(key,'PASS' if bound and value is True else 'FAIL' if bound and value is False else 'UNKNOWN',value,'Current reviewed SPL mint authority proof required'))
     lp_bound=(lp.get('mint')==quote.get('mint') and lp.get('pool')==quote.get('pool')
         and lp.get('source')=='rugcheck' and type(lp.get('observed_at')) is int
         and 0<=now-lp['observed_at']<=cfg['evidence_max_age_seconds'])

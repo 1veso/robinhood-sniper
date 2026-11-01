@@ -48,6 +48,7 @@ def scan(root, book, providers=None, model=None, reviewer=None, clock=time.time)
                 mint = candidate['mint']
                 evidence = {'quote':{},'facts':{},'lp':{}}
                 task_id = None
+                evidence_ready = False
                 try:
                     task_id = book.begin_task(mint,int(clock()))
                     quote = providers.quote(mint,candidate['pool'])
@@ -66,10 +67,13 @@ def scan(root, book, providers=None, model=None, reviewer=None, clock=time.time)
                             problems.append('LP provider: '+error_reason(exc))
                     checks = hard_checks(book.cfg,quote,evidence['facts'],evidence['lp'],int(clock()))
                     if not all_pass(checks):
-                        book.record_artifact(task_id,'evidence',evidence,int(clock()))
-                        book.reject(mint,{'reason':first_failure(checks),'checks':checks,
-                                         'evidence':evidence,'errors':problems},int(clock()))
+                        record={'reason':first_failure(checks),'checks':checks,'evidence':evidence,'errors':problems}
+                        if any(c['state']=='FAIL' for c in checks):
+                            book.record_artifact(task_id,'evidence',evidence,int(clock()))
+                            book.reject(mint,record,int(clock()))
+                        else:book.defer_evidence(mint,record,int(clock()))
                         continue
+                    evidence_ready = True
                     book.handoff(task_id,'analysis','Analyst',
                                  'Hard checks passed; checking authorized model readiness',int(clock()))
                     gate = gates(book,model,reviewer,int(clock()))
@@ -103,6 +107,9 @@ def scan(root, book, providers=None, model=None, reviewer=None, clock=time.time)
                 except Exception as exc:
                     reason = 'Team evidence/model/portfolio unavailable: '+error_reason(exc)
                     errors.append(reason)
+                    if task_id and not evidence_ready:
+                        book.defer_evidence(mint,{'reason':reason,'evidence':evidence},int(clock()))
+                        continue
                     if task_id and not book.db.execute(
                             "SELECT 1 FROM team_artifacts WHERE task_id=? AND kind='evidence'",(task_id,)).fetchone():
                         book.record_artifact(task_id,'evidence',evidence,int(clock()))

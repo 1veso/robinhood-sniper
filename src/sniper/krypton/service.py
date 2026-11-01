@@ -27,7 +27,7 @@ def scan(root,book,providers=None,model=None,clock=time.time):
                 mint=candidate['mint'];now=int(clock())
                 if now-candidate['first_seen']>book.cfg['candidate_expiry_seconds']:
                     book.reject(mint,{'reason':'Candidate expired without admission'},now);continue
-                evidence={'quote':{},'facts':{},'lp':{}};problems=[]
+                evidence={'quote':{},'facts':{},'lp':{}};problems=[];evidence_ready=False
                 try:
                     q=providers.quote(mint,candidate['pool']);book.pin(mint,q['pool']);evidence['quote']=q
                     cheap=hard_checks(book.cfg,q,{}, {},int(clock()))[:2]
@@ -38,7 +38,11 @@ def scan(root,book,providers=None,model=None,clock=time.time):
                         except Exception as exc:problems.append('LP provider: '+error_reason(exc))
                     checks=hard_checks(book.cfg,q,evidence['facts'],evidence['lp'],int(clock()))
                     if not all_pass(checks):
-                        book.reject(mint,{'checks':checks,'evidence':evidence,'reason':first_failure(checks),'errors':problems},int(clock()));continue
+                        record={'checks':checks,'evidence':evidence,'reason':first_failure(checks),'errors':problems}
+                        if any(c['state']=='FAIL' for c in checks):book.reject(mint,record,int(clock()))
+                        else:book.defer_evidence(mint,record,int(clock()))
+                        continue
+                    evidence_ready=True
                     if not model.gate()['enabled']:
                         book.reject(mint,{'checks':checks,'evidence':evidence,'reason':'Paid Grok calls disabled','grok':{'state':'DISABLED'}},int(clock()));continue
                     evidence['quote']=providers.costs(q)
@@ -48,8 +52,10 @@ def scan(root,book,providers=None,model=None,clock=time.time):
                     book.enter(mint,evidence,verdict,int(clock()),lambda:model.gate()['enabled'])
                 except Exception as exc:
                     errors.append('candidate: '+error_reason(exc))
-                    book.reject(mint,{'reason':'Evidence/model/portfolio unavailable: '+error_reason(exc),'evidence':evidence,
-                        'checks':hard_checks(book.cfg,evidence['quote'],evidence['facts'],evidence['lp'],int(clock()))},int(clock()),action='ERROR')
+                    record={'reason':'Evidence/model/portfolio unavailable: '+error_reason(exc),'evidence':evidence,
+                        'checks':hard_checks(book.cfg,evidence['quote'],evidence['facts'],evidence['lp'],int(clock()))}
+                    if evidence_ready:book.reject(mint,record,int(clock()),action='ERROR')
+                    else:book.defer_evidence(mint,record,int(clock()))
     except Exception as exc:errors.append(type(exc).__name__)
     finally:
         book.run_finish(rid,int(clock()),errors);book.publish()

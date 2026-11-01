@@ -88,7 +88,28 @@ class Paper:
         with self.transaction():
             for mint in mints:self.db.execute("INSERT OR IGNORE INTO candidates VALUES(?,?,NULL,'PENDING')",(mint,now))
 
-    def pending(self):return [dict(r) for r in self.db.execute("SELECT * FROM candidates WHERE state='PENDING' ORDER BY first_seen,mint LIMIT ?",(self.cfg['candidates_per_scan'],))]
+    def pending(self):
+        now = int(self.clock())
+        rows = self.db.execute("""SELECT c.* FROM candidates c LEFT JOIN providers p ON p.name='candidate-retry:'||c.mint
+            WHERE c.state='PENDING' AND COALESCE(json_extract(p.payload,'$.next_at'),0)<=?
+            ORDER BY COALESCE(json_extract(p.payload,'$.last_at'),0),c.first_seen,c.mint LIMIT ?""",
+            (now,self.cfg['candidates_per_scan']))
+        return [dict(r) for r in rows]
+
+    def defer_evidence(self,mint,payload,now):
+        """Bounded pre-model retries; preserve discovery age and all rejections."""
+        key='candidate-retry:'+mint
+        previous=self.provider(key) or {}
+        count=previous.get('attempts',0)+1
+        candidate=self.db.execute('SELECT first_seen,state FROM candidates WHERE mint=?',(mint,)).fetchone()
+        if not candidate or candidate['state']!='PENDING':raise ValueError('Pending candidate required')
+        if count>=3 or now-candidate['first_seen']>=self.cfg['candidate_expiry_seconds']:
+            self.reject(mint,dict(payload,retry_exhausted=True,attempts=count),now,action='ERROR')
+            return False
+        with self.transaction():
+            self.provider(key,{'attempts':count,'last_at':now,'next_at':now+60})
+            self.decision(mint,'DEFERRED',dict(payload,attempts=count,retry_after=now+60),now)
+        return True
     def expire_pending(self,now):
         with self.transaction():
             expired=self.db.execute("SELECT mint FROM candidates WHERE state='PENDING' AND first_seen<? ORDER BY first_seen,mint LIMIT 100",(now-self.cfg['candidate_expiry_seconds'],)).fetchall()

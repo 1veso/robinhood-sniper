@@ -97,6 +97,7 @@ class ExploratorySource:
                 requests INTEGER NOT NULL DEFAULT 0, inserted INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(interval_id,pool));
         ''')
+        store.db.execute('CREATE TABLE IF NOT EXISTS exploration_collection_progress (id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL)')
         store.db.create_function('exploration_signal_id', 3, lambda tx, index, block_hash:
             signal_id({'tx_hash': tx, 'log_index': index, 'block_hash': block_hash}), deterministic=True)
 
@@ -269,14 +270,43 @@ class ExploratorySource:
         # A 1000-block window dropped observations even during normal operation.
         # Cover up to five minutes of cadence/startup delay; retain the same
         # bounded transaction sample and disclose longer downtime gaps.
-        start = max(0, tip - 2999, cursor['block_number'] + 1 if cursor else 0)
-        anchor = self.collector.block(tip)
-        logs = []
-        for first in range(start, tip + 1, 500):
-            result = self.rpc.call('eth_getLogs', [{'topics': [SWAP_TOPIC], 'fromBlock': hex(first), 'toBlock': hex(min(tip, first + 499))}])
+        watched = list(dict.fromkeys(address(p) for p in watch_pools))[:8]
+        saved = self.store.db.execute('SELECT payload FROM exploration_collection_progress WHERE id=1').fetchone()
+        progress = json.loads(saved[0]) if saved else None
+        # A stale or superseded unadmitted interval may be abandoned; canonical
+        # cursor accounting still discloses any subsequently skipped blocks.
+        if progress and (progress['cursor'] != (dict(cursor) if cursor else None)
+                         or not 0 <= int(self.clock()) - progress['started_at'] < 900):
+            self.store.db.execute('DELETE FROM exploration_collection_progress WHERE id=1')
+            progress = None
+        if progress:
+            start, tip = progress['start'], progress['tip']
+            anchor = self.collector.block(tip)
+            if anchor['hash'] != progress['anchor']['hash']:
+                self.store.db.execute('DELETE FROM exploration_collection_progress WHERE id=1')
+                raise ReorgError('Unadmitted collection anchor changed; interval discarded')
+            watched = progress['watched']
+        else:
+            start = max(0, tip - 2999, cursor['block_number'] + 1 if cursor else 0)
+            anchor = self.collector.block(tip)
+            progress = {'start': start, 'tip': tip, 'anchor': anchor, 'next_block': start,
+                        'cursor': dict(cursor) if cursor else None, 'watched': watched,
+                        'started_at': int(self.clock()), 'logs': []}
+        logs = progress['logs']
+        for first in range(progress['next_block'], tip + 1, 500):
+            last = min(tip, first + 499)
+            result = self.rpc.call('eth_getLogs', [{'topics': [SWAP_TOPIC], 'fromBlock': hex(first), 'toBlock': hex(last)}])
             if not isinstance(result, list) or len(result) > 20000:
                 raise RpcError('Invalid or oversized swap response')
+            decoded = [decode_swap(raw) for raw in result]
+            if any(not first <= value['block_number'] <= last for value in decoded):
+                raise RpcError('Swap outside requested chunk')
             logs.extend(result)
+            progress.update(logs=logs, next_block=last + 1)
+            # These are raw, unadmitted logs. No canonical cursor, strategy
+            # decision, or balance changes until ALL chunks and headers pass.
+            self.store.db.execute('INSERT OR REPLACE INTO exploration_collection_progress VALUES(1,?)',
+                                  (json.dumps(progress, sort_keys=True),))
         swaps = [decode_swap(raw) for raw in logs]
         if any(not start <= s['block_number'] <= tip for s in swaps):
             raise RpcError('Swap outside requested interval')
@@ -295,7 +325,6 @@ class ExploratorySource:
         # second buyer. This bounded follow-up does not depend on future P&L.
         selected_keys = {signal_id(s) for s in selected}
         focused = 0
-        watched = list(dict.fromkeys(address(p) for p in watch_pools))[:8]
         for pool in watched:
             for swap in sorted((s for s in swaps if s['address'] == pool), key=signal_id)[:16]:
                 key = signal_id(swap)
@@ -325,6 +354,7 @@ class ExploratorySource:
             raise ReorgError('Collection anchor changed')
         interval_id = hashlib.sha256(f'{self.store.identity}:{start}:{tip}:{anchor["hash"]}'.encode()).hexdigest()
         def committed(_inserted):
+            self.store.db.execute('DELETE FROM exploration_collection_progress WHERE id=1')
             now = int(self.clock())
             self.store.db.execute('INSERT OR IGNORE INTO exploration_intervals VALUES(?,?,?,?,?,?,?,?)',
                 (interval_id, self.store.identity, start, tip, anchor['hash'], anchor['timestamp'], now, COLLECTION_REVISION))
