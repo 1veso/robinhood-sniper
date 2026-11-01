@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$AppRoot, [Parameter(Mandatory=$true)][string]$Python, [switch]$Remove, [switch]$CheckOnly, [switch]$NeonOnly, [switch]$JevOnly, [switch]$KryptonOnly, [switch]$HeliumOnly, [switch]$RadonOnly, [switch]$SizingOnly)
+param([Parameter(Mandatory=$true)][string]$AppRoot, [Parameter(Mandatory=$true)][string]$Python, [switch]$Remove, [switch]$CheckOnly, [switch]$NeonOnly, [switch]$JevOnly, [switch]$KryptonOnly, [switch]$HeliumOnly, [switch]$NitrogenOnly, [switch]$RadonOnly, [switch]$SizingOnly)
 $ErrorActionPreference = 'Stop'
 $app = (Resolve-Path -LiteralPath $AppRoot).Path
 $pythonExe = (Resolve-Path -LiteralPath $Python).Path
@@ -22,6 +22,11 @@ if ($heliumInitialized -or $HeliumOnly -or $Remove -or $CheckOnly) {
 }
 $minutes['helium-scan']=1; $minutes['helium-watch']=1
 $limits['helium-scan']=2; $limits['helium-watch']=2
+$nitrogenInitialized = Test-Path -LiteralPath (Join-Path $app 'nitrogen_bot/runtime/book.sqlite3') -PathType Leaf
+if ($nitrogenInitialized -or $NitrogenOnly -or $Remove -or $CheckOnly) {
+    $names['nitrogen-scan']='NITROGEN Search and Judge'; $names['nitrogen-watch']='NITROGEN Paper Exits'; $names['nitrogen-head']='NITROGEN Outcomes and Report'
+}
+foreach ($key in @('nitrogen-scan','nitrogen-watch','nitrogen-head')) { $minutes[$key]=1; $limits[$key]=3 }
 $radonInitialized = Test-Path -LiteralPath (Join-Path $app 'radon_bot/runtime/book.sqlite3') -PathType Leaf
 if ($radonInitialized -or $RadonOnly -or $Remove -or $CheckOnly) {
     $names['radon-research']='RADON Copier Research'; $names['radon-entries']='RADON Paper Entries'
@@ -37,6 +42,8 @@ if ($JevOnly) { $names = @{'jev-review'='Pump Jev Shadow Review'} }
 if ($KryptonOnly) { $names = @{'krypton-scan'='KRYPTON Paper Scan';'krypton-watch'='KRYPTON Paper Watch'} }
 if ($HeliumOnly) { $names = @{'helium-scan'='HELIUM Paper Scan';'helium-watch'='HELIUM Paper Watch'} }
 if ($RadonOnly) { $names = @{'radon-research'='RADON Copier Research';'radon-entries'='RADON Paper Entries';'radon-watch'='RADON Paper Exits';'radon-report'='RADON Paper Report'} }
+if ($NitrogenOnly) { $names = @{'nitrogen-scan'='NITROGEN Search and Judge';'nitrogen-watch'='NITROGEN Paper Exits';'nitrogen-head'='NITROGEN Outcomes and Report'} }
+if ($NitrogenOnly -and -not $nitrogenInitialized -and -not $Remove -and -not $CheckOnly) { throw 'Initialize NITROGEN explicitly before installing workers' }
 if ($RadonOnly -and -not $radonInitialized -and -not $Remove -and -not $CheckOnly) { throw 'Initialize Radon explicitly before installing its workers' }
 if ($SizingOnly) { $names = @{'radeon-sizing'='RADEON Paper Size Comparison'} }
 if ($SizingOnly -and -not $sizingInitialized -and -not $Remove -and -not $CheckOnly) {
@@ -76,10 +83,10 @@ foreach ($key in $names.Keys) {
         $definition.Principal.LogonType = 3
         $definition.Principal.RunLevel = 0
         $logonType = 3
-        if ($key.StartsWith('krypton-') -or $key.StartsWith('helium-') -or $key.StartsWith('radon-') -or $key -eq 'radeon-sizing') {
+        if ($key.StartsWith('krypton-') -or $key.StartsWith('helium-') -or $key.StartsWith('nitrogen-') -or $key.StartsWith('radon-') -or $key -eq 'radeon-sizing') {
             $logonType = 2
             $definition.Principal.LogonType = 2
-            $botLabel = if ($key -eq 'radeon-sizing') { 'Radeon isolated size comparison' } elseif ($key.StartsWith('helium-')) { 'Helium' } elseif ($key.StartsWith('radon-')) { 'Radon' } else { 'Krypton' }
+            $botLabel = if ($key -eq 'radeon-sizing') { 'Radeon isolated size comparison' } elseif ($key.StartsWith('helium-')) { 'Helium' } elseif ($key.StartsWith('nitrogen-')) { 'NITROGEN' } elseif ($key.StartsWith('radon-')) { 'Radon' } else { 'Krypton' }
             $definition.RegistrationInfo.Description = $botLabel + ' standalone PAPER worker. Same-user S4U background execution; no live or paid authorization.'
             $definition.Settings.Priority = 4
             $boot = $definition.Triggers.Create(8)
@@ -109,6 +116,6 @@ foreach ($key in $names.Keys) {
         # TASK_CREATE, never overwrite a task that appeared after preflight.
         $old = $folder.RegisterTaskDefinition($name,$definition,2,$owner,$null,$logonType)
     }
-    if ($key -in @('console','paper','watch','scan','shadow','neon-signals','neon-watch','jev-review','krypton-scan','krypton-watch','helium-scan','helium-watch','radon-research','radon-entries','radon-watch','radon-report')) { $old.Run($null) | Out-Null }
+    if ($key -in @('console','paper','watch','scan','shadow','neon-signals','neon-watch','jev-review','krypton-scan','krypton-watch','helium-scan','helium-watch','nitrogen-scan','nitrogen-watch','nitrogen-head','radon-research','radon-entries','radon-watch','radon-report')) { $old.Run($null) | Out-Null }
 }
 Write-Output 'Task ownership checked; operation completed.'

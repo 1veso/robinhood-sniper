@@ -33,7 +33,7 @@ def main():
                     page.goto(url)
                     page.locator('#radon-panel h2',has_text='Copied positions').wait_for()
                     assert page.locator('#account-title').inner_text()=='Radon'
-                    assert page.get_by_role('button',name='Slot 7 reserved').is_disabled()
+                    assert page.get_by_role('button',name='NITROGEN, slot 7').is_enabled()
                     assert 'SYNTHETIC' in page.locator('#trial-state').inner_text()
                     assert page.locator('#radon-panel').get_by_text('Historical conditional research',exact=True).count()==1
                     assert not page.locator('.market-grid').is_visible()

@@ -8,10 +8,12 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/helium.css">
   <link rel="stylesheet" href="/radon.css">
+  <link rel="stylesheet" href="/nitrogen.css">
   <script src="/neon.js" defer></script>
   <script src="/krypton.js" defer></script>
   <script src="/helium.js" defer></script>
   <script src="/radon.js" defer></script>
+  <script src="/nitrogen.js" defer></script>
   <script src="/devwatch.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
@@ -31,7 +33,7 @@
   <button class="bot-button" data-bot="jev" aria-label="Argon" aria-pressed="false"><span class="bot-icon sol" aria-hidden="true">A</span><span><strong>Argon</strong></span><i class="dot amber" aria-hidden="true"></i></button>
   <button class="bot-button" data-bot="krypton" aria-label="Krypton" aria-pressed="false"><span class="bot-icon sol" aria-hidden="true">K</span><span><strong>Krypton</strong></span><i class="dot amber" aria-hidden="true"></i></button>
   <button class="bot-button" data-bot="helium" aria-label="Helium" aria-pressed="false"><span class="bot-icon sol" aria-hidden="true">H</span><span><strong>Helium</strong></span><i class="dot amber" aria-hidden="true"></i></button>
-  <button class="bot-button reserved-bot" disabled aria-label="Slot 7 reserved"><span class="bot-icon">7</span><span><strong>Reserved</strong><small>Slot 7</small></span></button>
+  <button class="bot-button" data-bot="nitrogen" data-slot="7" aria-label="NITROGEN, slot 7" aria-pressed="false"><span class="bot-icon sol" aria-hidden="true">N₂</span><span><strong>NITROGEN</strong><small>Jev Judgment Desk</small></span><i class="dot amber" aria-hidden="true"></i></button>
   <button class="bot-button" data-bot="radon" data-slot="8" aria-label="Radon, slot 8" aria-pressed="false"><span class="bot-icon sol" aria-hidden="true">Rn</span><span><strong>Radon</strong><small>Copy Trading Desk</small></span><i class="dot amber" aria-hidden="true"></i></button>
   <button class="bot-button" data-slot="9" data-bot="devwatch" aria-label="DEV WATCH" aria-pressed="false"><span class="bot-icon sol" aria-hidden="true">D</span><span><strong>DEV WATCH</strong></span><i class="dot amber" aria-hidden="true"></i></button>
   <div class="rail-rule"></div><p class="rail-caption">Strategy accounts stay separate.</p>
@@ -54,6 +56,7 @@
   <section id="jev-panel" class="panel detail-panel" aria-label="Pump Jev review" hidden></section>
   <section id="krypton-panel" aria-label="Krypton paper workspace" hidden></section>
   <section id="helium-panel" aria-label="Helium trading cockpit" hidden></section>
+  <section id="nitrogen-panel" aria-label="NITROGEN judgment desk" hidden></section>
   <section id="radon-panel" aria-label="Radon copy trading desk" hidden></section>
   <section id="devwatch-panel" aria-label="DEV WATCH manual live signals" hidden></section>
   <div class="market-grid">
