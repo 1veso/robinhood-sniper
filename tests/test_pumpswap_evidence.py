@@ -102,3 +102,45 @@ class PumpEvidenceTests(unittest.TestCase):
         self.accounts[p.fee_key()]=self.account(fee,p.FEE_PROGRAM)
         s=self.state();self.assertEqual(s['decimals1'],6);self.assertEqual(s['fees_bps'],[1,2,3])
         self.assertGreater(p.quote_output(s,USDC,25000000),0)
+
+    def test_upgradeable_program_reads_are_split_and_header_changes_rejected(self):
+        from tempfile import TemporaryDirectory
+        from decimal import Decimal
+        from sniper.crew_evidence import Producer
+        from sniper.adapters.solana_execution import MAINNET_GENESIS
+        programs=(p.PROGRAM,p.FEE_PROGRAM,cp.TOKEN,p.TOKEN_2022,cp.ATA)
+        code_keys=[]
+        for i,key in enumerate(programs):
+            address=b58encode(bytes([70+i])*32);code_keys.append(address)
+            self.accounts[key]=self.account(b'\2\0\0\0'+cp.b58decode(address),cp.UPGRADEABLE,True)
+            data=bytearray(2_000_100 if i==0 else 46);data[:4]=b'\3\0\0\0';data[4:12]=(10).to_bytes(8,'little');data[-1]=1
+            self.accounts[address]=self.account(data,cp.UPGRADEABLE)
+        calls=[];changed=False
+        class Rpc:
+            def rpc(inner,method,params):
+                if method=='getGenesisHash':return MAINNET_GENESIS
+                if method=='getMultipleAccounts':
+                    keys,opts=params;calls.append((keys,opts))
+                    if 'dataSlice' in opts:
+                        vals=[]
+                        for key in keys:
+                            full=cp.blob(self.accounts[key]);offset=opts['dataSlice']['offset'];length=opts['dataSlice']['length']
+                            raw=bytearray(full[offset:offset+length])
+                            if changed and length==45:raw[4]=11
+                            vals.append({**self.account(raw,cp.UPGRADEABLE),'space':len(full)})
+                    else:vals=[self.accounts.get(key) for key in keys]
+                    return {'context':{'slot':123},'value':vals}
+                if method=='getBlockTime':return 100
+                if method=='getBlock':return {'blockTime':100,'blockhash':'fixture'}
+                raise AssertionError(method)
+        with TemporaryDirectory() as root:
+            producer=Producer(root,rpc=Rpc(),clock=lambda:100)
+            producer.deadline=125;producer.rpc_calls=0
+            venue,route=producer._pool({'account_id':'fixture','config_sha256':'fixture'},self.mint,self.pool,Decimal(25),Decimal('.1'))
+            self.assertEqual(venue['reason'],'current_independent_program_review_missing')
+            self.assertEqual(len(venue['context']['deployment_snapshot_slots']),5)
+            self.assertTrue(any(opts.get('dataSlice',{}).get('offset')==2_000_000 for keys,opts in calls))
+            self.assertTrue(all(len(keys)==1 for keys,opts in calls if any(k in code_keys for k in keys) and 'dataSlice' not in opts))
+            changed=True;producer.rpc_calls=0
+            with self.assertRaisesRegex(ValueError,'deployment changed'):
+                producer._pool({'account_id':'fixture','config_sha256':'fixture'},self.mint,self.pool,Decimal(25),Decimal('.1'))

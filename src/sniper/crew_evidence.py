@@ -128,9 +128,9 @@ class ReadOnlyRpc(SolanaExecutionReader):
 
 class Producer:
     def __init__(self, root, *, store=None, market=None, rugcheck_client=None,
-                 rpc=None, usd_market=None, clock=time.time, budget_seconds=10,
-                 max_rpc_calls=20, program_review=None):
-        if not 0<budget_seconds<=25 or type(max_rpc_calls)is not int or not 1<=max_rpc_calls<=20:
+                 rpc=None, usd_market=None, clock=time.time, budget_seconds=25,
+                 max_rpc_calls=40, program_review=None):
+        if not 0<budget_seconds<=25 or type(max_rpc_calls)is not int or not 1<=max_rpc_calls<=40:
             raise ValueError('Bounded producer budget required')
         self.root=Path(root);self.store=store;self.clock=clock
         self.market,self.rugcheck=market,rugcheck_client
@@ -191,9 +191,52 @@ class Producer:
             if initial[program]['owner']==cp.UPGRADEABLE:
                 if len(raw)!=36 or raw[:4]!=b'\2\0\0\0': raise ValueError('Unsupported program loader')
                 extra.append(cp.key(raw,4))
-        keys=[pool,*programs,*extra,state['config'],
+        # PumpSwap's AMM, fee and token programs exceed one response's 3 MB
+        # bound. Read each deployment separately, then verify its immutable
+        # version header after the economic snapshot. Never split vault state.
+        code_accounts={};code_slots={}
+        if adapter is pump and extra:
+            import base64
+            headers=self._rpc('getMultipleAccounts',[extra,{'encoding':'base64','commitment':'finalized',
+                'minContextSlot':first,'dataSlice':{'offset':0,'length':45}}])
+            if type(headers.get('context',{}).get('slot')) is not int or headers['context']['slot']<first or len(headers.get('value',[]))!=len(extra):
+                raise ValueError('Deployment headers unavailable')
+            first=headers['context']['slot'];total_code=0
+            for address,header in zip(extra,headers['value']):
+                prefix=cp.blob(header,cp.UPGRADEABLE,45)
+                chunks=[];size=0
+                # Binary Solana responses need not include a space field.
+                # A short slice terminates the byte stream; an exact-boundary
+                # deployment needs a final empty slice to establish its end.
+                for offset in range(0,12_000_000,2_000_000):
+                    length=2_000_000
+                    response=self._rpc('getMultipleAccounts',[[address],{'encoding':'base64','commitment':'finalized',
+                        'minContextSlot':first,'dataSlice':{'offset':offset,'length':length}}])
+                    if type(response.get('context',{}).get('slot')) is not int or response['context']['slot']<first or len(response.get('value',[]))!=1:
+                        raise ValueError('Deployment chunk unavailable')
+                    chunk=cp.blob(response['value'][0],cp.UPGRADEABLE)
+                    if len(chunk)>length:raise ValueError('Oversized deployment slice')
+                    chunks.append(chunk);size+=len(chunk);total_code+=len(chunk);first=response['context']['slot']
+                    if size>10_485_760 or total_code>52_428_800:raise ValueError('Deployment set exceeds memory bound')
+                    if len(chunk)<length:break
+                else:raise ValueError('Deployment byte enumeration incomplete')
+                if size<=45:raise ValueError('Missing deployment bytecode')
+                raw=b''.join(chunks)
+                if raw[:45]!=prefix:raise ValueError('Program deployment changed during code capture')
+                code_accounts[address]={**header,'data':[base64.b64encode(raw).decode(),'base64']}
+                code_slots[address]=first
+        keys=[pool,*programs,*(extra if adapter is cp else []),state['config'],
               state['fee_config'] if adapter is pump else state['observation'],state['vault0'],state['vault1'],mint,quote_mint]
         accounts,slot=self._batch(keys,first)
+        if code_accounts:
+            check=self._rpc('getMultipleAccounts',[extra,{'encoding':'base64','commitment':'finalized',
+                'minContextSlot':slot,'dataSlice':{'offset':0,'length':45}}])
+            if type(check.get('context',{}).get('slot')) is not int or check['context']['slot']<slot or len(check.get('value',[]))!=len(extra):
+                raise ValueError('Deployment recheck snapshot unavailable')
+            for address,header in zip(extra,check['value']):
+                if cp.blob(header,cp.UPGRADEABLE)!=cp.blob(code_accounts[address],cp.UPGRADEABLE)[:45]:
+                    raise ValueError('Program deployment changed during pool capture')
+            accounts.update(code_accounts)
         stamp=self._rpc('getBlockTime',[slot])
         if type(stamp)is not int or not 0<=int(self.clock())-stamp<=MAX_AGE: raise ValueError('Stale finalized state')
         block=self._rpc('getBlock',[slot,{'commitment':'finalized','transactionDetails':'none','rewards':False}])
@@ -206,6 +249,7 @@ class Producer:
         pins={p:cp.deployment_observation(p,accounts) for p in programs}
         context={'slot':slot,'block_hash':block['blockhash'],'block_time':stamp,
                  'commitment':'finalized','accounts_sha256':digest(accounts),'program_observations':pins}
+        if code_slots:context['deployment_snapshot_slots']=code_slots
         review=self.program_review
         if review is None:
             path=self.root/'runtime/crew/program-review.json'

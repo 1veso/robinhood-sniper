@@ -288,9 +288,9 @@ def run(root, *, deadline=None, clock=time.time, monotonic=time.monotonic, produ
     root = Path(root).resolve(); value = settings(root)
     if value is None or not value['enabled']: return {'status':'DISABLED','mode':MODE,'orders_created':0}
     started = int(clock()); start_mono = monotonic()
-    if deadline is None: deadline = start_mono + 15
+    if deadline is None: deadline = start_mono + 30
     if isinstance(deadline,bool) or not isinstance(deadline,(int,float)) or not math.isfinite(deadline): raise ValueError('Finite deadline required')
-    deadline = min(deadline,start_mono+15)
+    deadline = min(deadline,start_mono+30)
     if deadline <= start_mono: return {'status':'DEFERRED','reason':'worker_budget','orders_created':0}
     stats = {'mode':MODE,'started_at':started,'errors':[],'provider_status':{},'orders_created':0,
              'signing_calls':0,'broadcast_calls':0,'paid_calls':0,'execution_authority':False}
@@ -316,9 +316,9 @@ def run(root, *, deadline=None, clock=time.time, monotonic=time.monotonic, produ
                     def quote(self, mint, pool):
                         q = base_market.quote(mint,pool); quotes[(mint,pool)] = q; return q
                 if target and monotonic()<deadline-3:
-                    seconds = min(10,deadline-monotonic()-2)
+                    seconds = min(25,deadline-monotonic()-2)
                     try:
-                        result = producer_factory(root,store=store,market=RecordedMarket(),clock=clock,budget_seconds=seconds,max_rpc_calls=20).capture(
+                        result = producer_factory(root,store=store,market=RecordedMarket(),clock=clock,budget_seconds=seconds,max_rpc_calls=40).capture(
                             c.identity,target['mint'],target['pool'],now=int(clock()))
                         p = result['payload']
                         stats['provider_status'] = {'record_id':result['id'],'errors':p['errors'],

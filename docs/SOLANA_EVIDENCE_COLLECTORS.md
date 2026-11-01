@@ -49,6 +49,12 @@ unsupported, rather than being treated as normal PumpSwap pools.
 
 Quotes use the unchanged 3% impact bound and intended paper ticket. Raydium and
 PumpSwap deployment pins still require the existing account-bound, dated review.
+Deployment bytecode is read in at most 2 MB binary slices (each response remains
+below the existing 3 MB cap), bounded to 10 MiB per program / 50 MiB per set.
+The version header is checked before and after the single economic snapshot;
+a deployment change aborts collection. Collection is bounded to 40 RPC reads
+and 25 seconds within a 30-second coordinator run. These are collection-resource
+limits; strategy thresholds and evidence freshness limits are unchanged.
 The independent reviewer recomputes quote arithmetic and checks that the model,
 program, quote asset and precision agree. Legacy `*_usdc_raw` route field names
 are retained for compatibility; the explicit `quote_mint` and `quote_decimals`
@@ -58,7 +64,10 @@ network costs, and does not apply hypothetical buy state to the sell quote.
 Live validation decoded finalized pool
 `6qfkD7d8RaFVAn1FC76M5MtqAr3kHrHpxPwMQvL6Ndxt`, including its nonzero virtual
 reserves, and produced a fee-aware quote for the configured $25 ticket at slot
-464132887. This establishes read-only quote functionality, not entry readiness.
+464132887. This establishes read-only quote functionality, not entry readiness. The full
+installed deployment-capture path subsequently completed 17 bounded RPC reads
+and correctly returned current_independent_program_review_missing, rather than
+claiming that observed deployment bytes constitute an independent review.
 
 ## Buyer / controller evidence
 
