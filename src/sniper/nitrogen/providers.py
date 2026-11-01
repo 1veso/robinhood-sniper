@@ -31,7 +31,9 @@ class Providers(Base):
                 if remaining<=0:continue
                 if self.book.provider('unsupported:'+str(sig)[:90]):continue
                 remaining-=1
-                receipt=self.rpc('getTransaction',[sig,{'encoding':'json','commitment':'finalized','maxSupportedTransactionVersion':0}])
+                # Read v1 receipts to record them as unsupported and advance.
+                # The shared decoder still admits only legacy/v0 swaps.
+                receipt=self.rpc('getTransaction',[sig,{'encoding':'json','commitment':'finalized','maxSupportedTransactionVersion':1}])
                 try:p=decode_swap(receipt,sig,wallet,None,now)
                 except (ValueError,KeyError,TypeError,IndexError):
                     self.book.provider('unsupported:'+str(sig)[:90],{'state':'UNSUPPORTED','finished_at':now,'scope':'Only direct classic-SPL Raydium CP exact-input swaps decoded'})

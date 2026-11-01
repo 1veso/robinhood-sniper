@@ -1,93 +1,105 @@
 # Local Solana paper activation — November 1, 2026
 
-The user supplied the JEV credential and authorized the Solana paper rollout.
-The credential is in ignored runtime/typesafe-api-key.txt with access restricted
-to the current Windows user. It is shared by Argon, Helium and Nitrogen; it is
-not included in source, browser responses or account evidence.
+This installation is PAPER ONLY. No real-money order, wallet connection, signer,
+or funding transfer is enabled. Public wallet addresses were retained as requested.
 
-## Enabled locally
+## Accounts and independence
 
-Seventeen Windows tasks cover Xenon, Neon, Argon, Krypton, Helium, Nitrogen and
-Radon. All use desktop.py worker with --no-send. They run while the Windows user
-is signed in, at the existing cadences, including independent exit monitoring.
-Windows denied S4U/boot task creation, so these tasks use interactive-token login
-triggers without administrator-only boot triggers. No duplicate Oxygen scheduler
-was installed. Oxygen retains its four existing Codex routines and original rules.
+The expanded D:\SNIPER RUNTIME backup supplied the original Xenon, Neon, Krypton
+and Helium accounts. Their original identities, ledgers and histories are restored.
+Temporary replacement accounts remain archived under
+runtime/local-setup/solana-rollout-20261101/temporary-accounts-before-restore.
+SQLite checks passed; synthetic acceptance accounts were not imported as trading
+performance. The full build cache contains installer stages and test fixtures;
+these are not complete trader histories or independently reviewed controller data.
 
-The installer supports -SolanaOnly -NoSend -InteractiveOnly. It checks task
-ownership before mutation and refuses to reuse an existing notifying task for a
-no-send installation. Existing jobs outside this scope are untouched. Worker
-markers record notifications_disabled; source journals remain authoritative for
-provider failures and entry decisions.
+| Slot | Desk | Account/data ownership | Current observation |
+| --- | --- | --- | --- |
+| 2 | Xenon | Original rug_desk account restored | Live profiles/market reads and its own Grok/X gate enabled; Argon factual enrichment still gates prospective entries. |
+| 3 | Neon | Original neon_bot account restored | Own live discovery/RPC and model gate enabled; complete cost-accounted trader histories and eligible leader selection remain missing. |
+| 4 | Argon | Existing design filters Xenon's shared paper account | Original journal and ACTIVE_PAPER state restored, original comparison source relocated with identity checks; worker healthy, incomplete dossiers remain ineligible. |
+| 5 | Krypton | Original independent account restored | PAPER_READY; successful live RPC, Rugcheck, market and own Grok checks. No qualifying fill observed during verification. |
+| 6 | Helium | Original independent account restored | PAPER_READY; successful live reads and its own Grok/JEV gates. No qualifying fill observed during verification. |
+| 7 | Nitrogen | Own new account retained | Four public research wallets configured; finalized RPC scans running. No complete factual dossier yet. Paper orders still require its explicit approval step. |
+| 8 | Radon | Own new account retained | Own read-only collector active; own Grok/X gate enabled. Raw archive is not yet a reconciled trading feed. |
+| 9 | Oxygen | Original isolated dev_watch article runtime | PAPER=True; original rules and approved exit-confirmation patch verified. Existing four Codex routines retained. |
 
-Account-bound paid authorization is installed for the Solana desks. Required
-funded provider proofs, current market evidence and strategy checks remain gates.
-Argon was explicitly promoted to ACTIVE_PAPER against the replacement Xenon
-account after the repository's isolated acceptance suite passed. The old crew
-comparison still belongs to the absent original Xenon UUID; its coordinator is
-disabled and its history/identity are preserved. It was not rebound.
+Radeon/slot 1 is outside this Solana rollout. Argon is the one intentional shared
+account design already present in the repository. Other desks do not share
+positions, orders, fills, strategy state or account-bound model proofs. Pure
+parser/transport helpers, API credentials, read-only RPC access and installation
+spending caps are shared infrastructure. Krypton, Helium and Radon no longer
+require Xenon's model authorization/proofs. Nitrogen's JEV requests no longer
+consume Grok's budget; historical reservations remain preserved.
 
-## Provider verification and fixes
+## Approved spending and provider setup
 
-TypeSafe authentication and the pinned jev-1.14.0 endpoint responded successfully.
-Helium's real two-question response passed validation. A Nitrogen response reported
-score 3.99 with rounded probabilities implying 4.00. The adapter now accepts only
-a discrepancy of at most 0.01 when every wire value has at most two decimal places.
-Both desks use the higher of the reported and probability-weighted exit scores
-for the unchanged cutoff. Larger mismatches, unexplained extra precision and
-invalid distributions are rejected. Raw values stay in the journal. The saved
-Nitrogen response was revalidated offline and still yields PASS/no entry.
+runtime/model-budgets.json sets the approved shared Grok limit to **$5/day**.
+The original strategy configurations were not rewritten to change spending.
+All shared Grok callers use the override and the existing durable budget ledger.
+Each request reserves at least $0.50; a smaller billed charge does not release the
+unused reservation that day. Failed/unresolved calls are not treated as free.
+Oxygen retains its separate article cost behavior, as specified in the rollout.
 
-See TypeSafe's [Score contract](https://docs.typesafe.ai/primitives/score).
-The limited rounding accommodation comes from the captured provider response;
-it does not claim the provider guarantees a particular rounding implementation.
+JEV remains **$0.20/day combined**: $0.10 shared by Argon/Nitrogen and $0.10 for
+Helium. Nitrogen also has its own $0.10 ceiling. Earlier setup-probe reservations
+were carried into these ledgers rather than erased or mislabeled as invoices.
+These are local reservation limits, not vendor-enforced account spending caps.
 
-Xenon's funded X Search completed, but the old validator treated username/status
-and i/status URLs for the same X post as different citations. Matching now uses
-the exact post ID on allowed HTTPS X/Twitter hosts and standard ports. Returned
-text uses the provider-annotated URL, without claiming the model's username is
-verified. Unknown post IDs, deceptive hosts and nonstandard ports are rejected.
-See xAI's [citation contract](https://docs.x.ai/developers/tools/citations).
+Xenon, Neon, Krypton, Helium and Radon now have successful current funded proofs
+bound to their own restored/current accounts. Structured X probes validate
+inference and X retrieval using the same real response only within that account.
+Contract probes create no trading candidate, order or fill. Model proofs expire
+after seven days under the existing rules; they are not renewed implicitly.
 
-The original saved response was revalidated without another paid call. It proves
-structured inference and completed X retrieval for the same bound account, so
-both proof files reference that one response and its original request ID/time.
-The earlier literal-OK inference probe failed and remains archived as a failure.
-It was not rewritten as a successful response.
+Existing TypeSafe access is retained for Argon, Helium and Nitrogen. API keys are
+kept in ignored, user-restricted runtime files and are never included in source,
+browser responses or reports. JEV token estimates remain estimates, not invoices.
 
-## Current limits and incomplete entry readiness
+The existing Alchemy credential now supplies the shared Solana mainnet RPC.
+Genesis, finalized slot and largest-token-account reads succeeded. The RPC URL
+is stored in ignored runtime/solana-rpc-url.txt. Public-node 403/429 errors remain
+in history; fresh Krypton/Helium checks succeeded. Oxygen's local article RPC
+configuration is unchanged.
 
-Shared Grok reservation ceiling remains $1/day pending the user's budget choice.
-Each request reserves at least $0.50 even if billed less. Two setup requests have
-consumed today's reservation ceiling. Their recorded xAI bill totals $0.054784.
-The other accounts still need their own funded Grok validation. Proofs are valid
-for seven days; having a key or authorization does not bypass their expiration.
+## New local setup and collection work
 
-JEV ceilings are $0.10/day shared by Argon/Nitrogen and $0.10/day for Helium.
-JEV usage is an estimate, not an invoice; conservative reservations are retained.
-These local limits are not vendor-enforced caps. Oxygen's separate article cost
-behavior is unchanged.
+Nitrogen's configure-wallets command permits only initial configuration of an
+empty watchlist before any lead, model or trading activity. It preserves account
+identity, cash and all other rules, and records explicit source/authorization
+references. The four current addresses are independently rechecked public research
+candidates, not qualified leaders or verified independent controllers.
+Reading transaction version 1 now advances past unsupported receipts; the swap
+decoder still admits only supported legacy/v0 direct classic-SPL Raydium CP swaps.
 
-Krypton and Helium recorded HTTP 429 rate limits from the public Solana RPC.
-Their existing retry backoff is preserved. Successful model access does not
-resolve chain-data availability; the dashboard continues to show these errors.
+Radon's collect command has its own account-bound authorization, database,
+head/backfill cursors and scheduler. It performs at most eight read requests per
+run, records gaps and unsupported receipts, and cannot write trading events,
+shortlists, orders or fills. Its first live run archived 200 signatures from a
+10-candidate research cohort. See radon-export.md for the exact remaining work:
+opening-inventory reconciliation, complete token-account/route coverage,
+historical quote/cost reconstruction and validated export production. Raw archive
+collection alone will not satisfy those gates, even after running longer.
 
-| Desk | Remaining entry dependencies |
-| --- | --- |
-| Xenon / Argon | Complete fresh factual enrichment, including reviewed controller evidence and size-specific exit evidence; trial preflight and setup-delivery acknowledgement. |
-| Neon | Own Grok/X proofs, complete trader histories, qualified current leader selection, operational proof and setup-delivery acknowledgement. |
-| Krypton | Own funded Grok proof and qualifying current on-chain/pool facts. |
-| Helium | Own funded Grok proof and qualifying facts; JEV review access is enabled. |
-| Nitrogen | Tracked wallets and complete account-bound factual producer; staged paper orders still require approval. |
-| Radon | Event/history exports, qualified copier shortlist and its own Grok/X proofs. |
+The Argon comparison now supports an authorized source-location.json relocation.
+It verifies the original account, configuration and observation-stream identities;
+the original manifest and historical observation tape are not rewritten.
 
-Workers running does not mean entries are eligible. Missing evidence is never
-fabricated, old approvals are not reused for new identities, and failed entry
-gates do not disable exit monitoring. No real-money execution is enabled.
+## Workers and verification
 
-Private diagnostic records and preserved settings are under
-runtime/local-setup/jev-activation. The console is http://127.0.0.1:8765/.
+Eighteen hidden Windows tasks now cover the Solana desks, including Radon's
+separate collector. All use desktop.py worker with --no-send and Python UTF-8.
+They run while this Windows user is signed in. Existing tasks outside the rollout
+are untouched; Oxygen retains its four Codex routines without duplicate workers.
+The console is http://127.0.0.1:8765/.
 
-Validation passed: 44 desktop/Grok/model-gate tests, 95 JEV/Nitrogen tests,
-the Argon promotion harness (41 paper tests and 21 offline Solana fixture tests),
-and Oxygen's original-source verifier. These checks are not proof of live fills.
+Checks cover shared budget persistence, per-account authorization, restoration
+relocation, Nitrogen configuration/receipt handling, collector isolation/cursors,
+paper accounting, desktop task behavior and Oxygen article fidelity. Argon's
+current code-bound acceptance was regenerated using 41 paper tests and 21 offline
+Solana fixture tests; synthetic results are excluded from strategy performance.
+
+Workers running, paid access working and fresh chain reads do not establish entry
+eligibility. Remaining factual producers and history reconciliation are tracked
+implementation/data gaps, not instructions to fabricate missing numbers or reduce
+strategy thresholds. None of this enables automatic promotion to real trading.

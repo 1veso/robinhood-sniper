@@ -22,6 +22,19 @@ def response(text=None):
 
 
 class RadonModelTests(unittest.TestCase):
+    def test_own_proofs_work_without_another_bots_account_or_authorization(self):
+        model=Model(self.root,self.book,clock=lambda:self.now)
+        with patch.object(model,'key',return_value='fixture-own-key'):
+            binding=model.binding()
+            (self.book.folder/'paid-ai.json').write_text(encode({'enabled':True,'operator_authorized':True,
+                'approval_reference':'Own explicit authorization','binding':binding}))
+            for name in ('inference','x-search'):
+                (self.book.folder/(name+'-test.json')).write_text(encode({'validated':True,'binding':binding,'tested_at':self.now}))
+            with patch('rug_desk.model_gate.status',side_effect=AssertionError('Another bot gate was consulted')):
+                self.assertTrue(model.gate()['enabled'])
+            (self.book.folder/'inference-test.json').unlink()
+            self.assertFalse(model.gate()['enabled'])
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name);self.now=1800000000
@@ -57,6 +70,15 @@ class RadonModelTests(unittest.TestCase):
         self.model.ask('one',{});self.model.ask('two',{})
         with self.assertRaises(ValueError):self.model.ask('three',{})
         self.assertEqual(self.book.db.execute('SELECT count(*) FROM api_requests').fetchone()[0],2)
+
+    def test_combined_proof_requires_one_completed_search_and_creates_no_fill(self):
+        from unittest.mock import Mock
+        self.model.transport=Mock(return_value=response())
+        proof=self.model.test('combined','So11111111111111111111111111111111111111112')
+        self.assertEqual(self.model.transport.call_count,1)
+        for name in ('inference','x-search'):
+            self.assertEqual(json.loads((self.book.folder/(name+'-test.json')).read_text()),proof)
+        self.assertEqual(self.book.db.execute('SELECT count(*) FROM fills').fetchone()[0],0)
 
 
 if __name__=='__main__':unittest.main()

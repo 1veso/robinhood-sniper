@@ -263,6 +263,25 @@ class SchedulingTests(unittest.TestCase):
 
 
 class ProviderTests(unittest.TestCase):
+    def test_unreviewed_v1_is_skipped_without_blocking_a_supported_later_receipt(self):
+        from test_neon import receipt,key,NOW,SIG
+        from sniper.nitrogen.providers import Providers
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg=load(ROOT);cfg['tracked_wallets']=[key(77)]
+            with closing(Book(tmp,cfg,initialize=True,demo=True,clock=lambda:NOW)) as b:
+                provider=Providers(tmp,b,clock=lambda:NOW);new_sig='3'*88
+                def rpc(method,args):
+                    if method=='getSignaturesForAddress':
+                        return [{'signature':s,'err':None,'confirmationStatus':'finalized','blockTime':NOW} for s in (new_sig,SIG)]
+                    self.assertEqual(args[1]['maxSupportedTransactionVersion'],1)
+                    tx=receipt(args[0])
+                    if args[0]==new_sig:tx['version']=1
+                    return tx
+                with patch.object(provider,'rpc',side_effect=rpc):found=provider.search()
+                self.assertEqual([p['transaction_signature'] for p in found],[SIG])
+                self.assertEqual(b.provider('unsupported:'+new_sig[:90])['state'],'UNSUPPORTED')
+                self.assertEqual(b.positions(),[])
+
     def test_only_finalized_actual_paid_swap_is_a_lead(self):
         from test_neon import receipt,key,NOW,SIG
         from sniper.nitrogen.providers import Providers

@@ -17,6 +17,7 @@ from rug_desk.book import atomic, encode, number, process_lock
 from rug_desk.prompts import JUDGE_PROMPT
 from sniper.adapters.solana import request_json, validate_address
 from sniper.advisor import DailyBudget, response_text, response_usage, _unique_object
+from sniper.model_budget import shared_grok_limit
 
 URL = 'https://api.x.ai/v1/responses'
 SEARCHES = {'x_keyword_search', 'x_semantic_search', 'x_user_search', 'x_thread_fetch'}
@@ -126,7 +127,7 @@ class Judge:
             if not key or '\n' in key or '\r' in key:
                 raise ValueError('Missing or malformed xAI credential file')
             request_id = 'rug-desk:' + uuid.uuid4().hex
-            budget = DailyBudget(budget_runtime / 'ai-budget.sqlite3', Decimal(config.AI_DAILY_LIMIT_USD))
+            budget = DailyBudget(budget_runtime / 'ai-budget.sqlite3', shared_grok_limit(self.budget_root.parent))
             from rug_desk.model_gate import binding
             # Preserve exactly what the model was allowed to judge, without credentials.
             audit = {'request_id': request_id, 'at': now, 'model': config.MODEL, **context,
@@ -206,7 +207,7 @@ def main():
         runtime = args.root / 'runtime'
         with process_lock(runtime / 'paid-request.lock'):
             key = (args.root.parent / 'runtime' / 'xai-api-key.txt').read_text(encoding='utf-8-sig').strip()
-            budget = DailyBudget(runtime / 'ai-budget.sqlite3', Decimal(config.AI_DAILY_LIMIT_USD))
+            budget = DailyBudget(runtime / 'ai-budget.sqlite3', shared_grok_limit(args.root.parent))
             request_id = 'rug-desk-basic:' + uuid.uuid4().hex
             try:
                 budget.reserve(request_id, Decimal(config.AI_RESERVATION_USD), int(time.time()))

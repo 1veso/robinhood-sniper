@@ -8,7 +8,6 @@ import time
 from rug_desk.book import process_lock
 from sniper.advisor import DailyBudget, _unique_object
 from sniper.jev_review import settings as shared_settings
-from rug_desk import config as installation
 from .config import encode, digest, number
 from .judge import Client, validate, MODEL, BINDING
 
@@ -37,7 +36,7 @@ class Model:
         try:
             local=self.authorization();shared=number(shared_settings(self.root)['daily_budget_usd'])
             reserve=number(self.book.cfg['model_reservation_usd'])
-            if min(local,shared,number(installation.AI_DAILY_LIMIT_USD))<reserve:raise PermissionError('Spending ceiling unavailable')
+            if min(local,shared)<reserve:raise PermissionError('Spending ceiling unavailable')
             if not (self.root/'runtime/typesafe-api-key.txt').is_file():raise PermissionError('TypeSafe credential missing')
             return {'enabled':True,'model':MODEL,'blockers':[]}
         except (OSError,ValueError,KeyError,TypeError,PermissionError):
@@ -46,16 +45,15 @@ class Model:
     def ask(self,assessment,state):
         if not self.gate()['enabled']:raise PermissionError('No request sent')
         request='nitrogen:jev:'+assessment
-        audit=dict(self.binding(),assessment=assessment,request_id=request,at=int(self.clock()),state='CLAIMED',reservation_usd='0',dossier_hash=digest(state))
-        with process_lock(self.root/'runtime/jev-review/paid-request.lock'),process_lock(self.root/'rug_desk/runtime/paid-request.lock'):
+        audit=dict(self.binding(),assessment=assessment,request_id=request,at=int(self.clock()),state='CLAIMED',reservation_usd='0',dossier_hash=digest(state),budget_scope='JEV_ONLY')
+        with process_lock(self.root/'runtime/jev-review/paid-request.lock'):
             if not self.gate()['enabled']:raise PermissionError('Authorization changed')
             with self.book.transaction():self.book.db.execute('INSERT INTO api_requests VALUES(?,?)',(request,encode(audit)))
             try:
                 with ExitStack() as stack:
                     budgets=[stack.enter_context(closing(DailyBudget(path,limit))) for path,limit in (
                         (self.book.folder/'jev-budget.sqlite3',self.authorization()),
-                        (self.root/'runtime/jev-review/budget.sqlite3',number(shared_settings(self.root)['daily_budget_usd'])),
-                        (self.root/'rug_desk/runtime/ai-budget.sqlite3',number(installation.AI_DAILY_LIMIT_USD)))]
+                        (self.root/'runtime/jev-review/budget.sqlite3',number(shared_settings(self.root)['daily_budget_usd'])))]
                     reserve=number(self.book.cfg['model_reservation_usd'])
                     try:
                         for b in budgets:
@@ -92,7 +90,10 @@ def reconcile(book,invoice):
     if audit.get('invoice') not in (None,invoice):raise ValueError('Conflicting invoice; no overwrite')
     payload={'provider':'typesafe','account_id':book.identity,'invoice':invoice}
     # Crash recovery is idempotent across budget files; known charges never become free retries.
-    paths=(book.folder/'jev-budget.sqlite3',book.root/'runtime/jev-review/budget.sqlite3',book.root/'rug_desk/runtime/ai-budget.sqlite3')
+    paths=(book.folder/'jev-budget.sqlite3',book.root/'runtime/jev-review/budget.sqlite3')
+    if audit.get('budget_scope')!='JEV_ONLY':
+        # Historical requests retain their original third-ledger reservation.
+        paths=(*paths,book.root/'rug_desk/runtime/ai-budget.sqlite3')
     for path in paths:
         with closing(DailyBudget(path,0)) as budget:
             linked=budget.db.execute('SELECT account_id FROM advisory_request_accounts WHERE request_id=?',(request,)).fetchone()

@@ -29,10 +29,10 @@ if ($nitrogenInitialized -or $NitrogenOnly -or $Remove -or $CheckOnly) {
 foreach ($key in @('nitrogen-scan','nitrogen-watch','nitrogen-head')) { $minutes[$key]=1; $limits[$key]=3 }
 $radonInitialized = Test-Path -LiteralPath (Join-Path $app 'radon_bot/runtime/book.sqlite3') -PathType Leaf
 if ($radonInitialized -or $RadonOnly -or $Remove -or $CheckOnly) {
-    $names['radon-research']='RADON Copier Research'; $names['radon-entries']='RADON Paper Entries'
+    $names['radon-collect']='RADON Chain Collector'; $names['radon-research']='RADON Copier Research'; $names['radon-entries']='RADON Paper Entries'
     $names['radon-watch']='RADON Paper Exits'; $names['radon-report']='RADON Paper Report'
 }
-foreach ($key in @('radon-research','radon-entries','radon-watch','radon-report')) { $minutes[$key]=1; $limits[$key]=2 }
+foreach ($key in @('radon-collect','radon-research','radon-entries','radon-watch','radon-report')) { $minutes[$key]=1; $limits[$key]=2 }
 $limits['radon-research']=11
 $sizingInitialized = Test-Path -LiteralPath (Join-Path $app 'runtime/radeon-sizing/manifest.json') -PathType Leaf
 if ($sizingInitialized -or $SizingOnly -or $Remove -or $CheckOnly) { $names['radeon-sizing']='RADEON Paper Size Comparison' }
@@ -40,7 +40,7 @@ $minutes['radeon-sizing']=1; $limits['radeon-sizing']=3
 if ($NeonOnly) { $names = @{'neon-signals'='NEON Paper Signals';'neon-watch'='NEON Paper Watch'} }
 if ($SolanaOnly) {
     $solanaNames = @{}
-    foreach ($key in @('scan','watch','report','neon-signals','neon-watch','jev-review','krypton-scan','krypton-watch','helium-scan','helium-watch','nitrogen-scan','nitrogen-watch','nitrogen-head','radon-research','radon-entries','radon-watch','radon-report')) {
+    foreach ($key in @('scan','watch','report','neon-signals','neon-watch','jev-review','krypton-scan','krypton-watch','helium-scan','helium-watch','nitrogen-scan','nitrogen-watch','nitrogen-head','radon-collect','radon-research','radon-entries','radon-watch','radon-report')) {
         if ($names.ContainsKey($key)) { $solanaNames[$key] = $names[$key] }
     }
     $names = $solanaNames
@@ -48,7 +48,7 @@ if ($SolanaOnly) {
 if ($JevOnly) { $names = @{'jev-review'='Pump Jev Shadow Review'} }
 if ($KryptonOnly) { $names = @{'krypton-scan'='KRYPTON Paper Scan';'krypton-watch'='KRYPTON Paper Watch'} }
 if ($HeliumOnly) { $names = @{'helium-scan'='HELIUM Paper Scan';'helium-watch'='HELIUM Paper Watch'} }
-if ($RadonOnly) { $names = @{'radon-research'='RADON Copier Research';'radon-entries'='RADON Paper Entries';'radon-watch'='RADON Paper Exits';'radon-report'='RADON Paper Report'} }
+if ($RadonOnly) { $names = @{'radon-collect'='RADON Chain Collector';'radon-research'='RADON Copier Research';'radon-entries'='RADON Paper Entries';'radon-watch'='RADON Paper Exits';'radon-report'='RADON Paper Report'} }
 if ($NitrogenOnly) { $names = @{'nitrogen-scan'='NITROGEN Search and Judge';'nitrogen-watch'='NITROGEN Paper Exits';'nitrogen-head'='NITROGEN Outcomes and Report'} }
 if ($NitrogenOnly -and -not $nitrogenInitialized -and -not $Remove -and -not $CheckOnly) { throw 'Initialize NITROGEN explicitly before installing workers' }
 if ($RadonOnly -and -not $radonInitialized -and -not $Remove -and -not $CheckOnly) { throw 'Initialize Radon explicitly before installing its workers' }
@@ -132,6 +132,6 @@ foreach ($key in $names.Keys) {
         # TASK_CREATE, never overwrite a task that appeared after preflight.
         $old = $folder.RegisterTaskDefinition($name,$definition,2,$owner,$null,$logonType)
     }
-    if ($key -in @('console','paper','watch','scan','shadow','neon-signals','neon-watch','jev-review','krypton-scan','krypton-watch','helium-scan','helium-watch','nitrogen-scan','nitrogen-watch','nitrogen-head','radon-research','radon-entries','radon-watch','radon-report')) { $old.Run($null) | Out-Null }
+    if ($key -in @('console','paper','watch','scan','shadow','neon-signals','neon-watch','jev-review','krypton-scan','krypton-watch','helium-scan','helium-watch','nitrogen-scan','nitrogen-watch','nitrogen-head','radon-collect','radon-research','radon-entries','radon-watch','radon-report')) { $old.Run($null) | Out-Null }
 }
 Write-Output 'Task ownership checked; operation completed.'

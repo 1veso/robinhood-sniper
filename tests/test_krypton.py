@@ -19,6 +19,32 @@ ROOT=Path(__file__).resolve().parents[1]
 
 
 class KryptonTests(unittest.TestCase):
+    def test_funded_probe_requires_authorization_and_never_opens_a_position(self):
+        from unittest.mock import Mock
+        app=Path(self.tmp.name)/'probe';folder=app/'krypton_bot/runtime'
+        (app/'runtime').mkdir(parents=True)
+        (app/'runtime/xai-api-key.txt').write_text('TEST-CREDENTIAL-NOT-REAL')
+        book=Paper(folder,self.cfg,initialize=True,clock=self.clock)
+        self.addCleanup(book.close)
+        transport=Mock(return_value={'choices':[{'finish_reason':'stop','message':{'content':encode({
+            'risk':10,'reasons':['liquidity=0 max_single_holder=0 top10_share=0'],'missing_data':['No market evidence']})}}],
+            'usage':{'input_tokens':100,'output_tokens':30,'total_tokens':130,'cost_in_usd_ticks':1000000}})
+        model=Grok(app,book,clock=self.clock,transport=transport)
+        with patch('rug_desk.model_gate.status',side_effect=AssertionError('Another bot gate was consulted')):
+            with self.assertRaises(ValueError):model.test()
+            transport.assert_not_called()
+            (folder/'paid-ai.json').write_text(encode({'enabled':True,'operator_authorized':True,
+                'approval_reference':'Test operator','binding':model.binding()}))
+            self.assertFalse(model.gate()['enabled'])
+            self.assertTrue(model.test()['validated'])
+            self.assertTrue(model.gate()['enabled'])
+        self.assertEqual(transport.call_count,1)
+        self.assertEqual(book.positions(),[])
+        self.assertEqual(book.db.execute('select count(*) from fills').fetchone()[0],0)
+        audit=json.loads(book.db.execute('select payload from api_requests').fetchone()[0])
+        self.assertTrue(audit['test_only'])
+        self.assertTrue(audit['usage']['cost_verified'])
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.now=1793345000;self.clock=lambda:self.now;self.cfg=load(ROOT/'krypton_bot')

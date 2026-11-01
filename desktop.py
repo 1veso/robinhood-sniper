@@ -36,6 +36,7 @@ JOBS = {
     'nitrogen-scan': ('NITROGEN Search and Judge', 1, 110, ['nitrogen_bot.py', 'scan']),
     'nitrogen-watch': ('NITROGEN Paper Exits', 1, 50, ['nitrogen_bot.py', 'watch']),
     'nitrogen-head': ('NITROGEN Outcomes and Report', 1, 50, ['nitrogen_bot.py', 'head', '--scheduled']),
+    'radon-collect': ('RADON Chain Collector', 1, 50, ['radon_bot.py', 'collect']),
     'radon-research': ('RADON Copier Research', 1, 600, ['radon_bot.py', 'scheduled', '--job', 'research']),
     'radon-entries': ('RADON Paper Entries', 1, 55, ['radon_bot.py', 'run', '--job', 'entries', '--duration-seconds', '50']),
     'radon-watch': ('RADON Paper Exits', 1, 55, ['radon_bot.py', 'run', '--job', 'watch', '--duration-seconds', '50']),

@@ -311,6 +311,16 @@ class Comparison:
                 or len(set(m['accounts'].values()) | {source_account_id}) != 3
                 or m.get('config_sha256') != config_hash()):
             raise ValueError('Crew comparison binding mismatch')
+        self.source_root = Path(m['source_root'])
+        location = self.folder / 'source-location.json'
+        if location.exists():
+            moved = read(location)
+            if (not isinstance(moved, dict)
+                    or any(moved.get(k) != m[k] for k in ('comparison_id','source_account_id','source_stream_id'))
+                    or not isinstance(moved.get('authorization_reference'),str) or not moved['authorization_reference'].strip()
+                    or not isinstance(moved.get('source_root'),str) or not Path(moved['source_root']).is_absolute()):
+                raise ValueError('Invalid source relocation binding')
+            self.source_root = Path(moved['source_root'])
         self._verify_source()
         self.db = sqlite3.connect((self.folder / 'observations.sqlite3').as_uri() + '?mode=rw', uri=True, timeout=2)
         self.db.row_factory = sqlite3.Row
@@ -320,10 +330,10 @@ class Comparison:
 
     def _verify_source(self):
         m = self.manifest
-        identity = source_identity(m['source_root'])
+        identity = source_identity(self.source_root)
         if identity['account_id'] != m['source_account_id'] or identity['config_sha256'] != m['config_sha256']:
             raise ValueError('Comparison source identity changed')
-        with closing(reader(Path(m['source_root']) / 'runtime/book.sqlite3')) as con:
+        with closing(reader(self.source_root / 'runtime/book.sqlite3')) as con:
             row = con.execute("SELECT value FROM metadata WHERE key='observation_stream_id'").fetchone()
             if not row or row[0] != m['source_stream_id']:
                 raise ValueError('Comparison source observation stream changed')
@@ -345,12 +355,12 @@ class Comparison:
         Caller holds the coordinator worker lock during this maintenance step.
         """
         self._verify_source()
-        with closing(reader(Path(self.manifest['source_root']) / 'runtime/book.sqlite3')) as source:
+        with closing(reader(self.source_root / 'runtime/book.sqlite3')) as source:
             cost = json.loads(source.execute("SELECT value FROM metadata WHERE key='execution_cost_policy'").fetchone()[0])
             highwater = source.execute('SELECT COALESCE(MAX(seq),0) FROM observation_events').fetchone()[0]
         if cost != self.manifest['cost_policy']:
             raise ValueError('Source costs changed; maintenance revision cannot migrate accounts')
-        coordinator = Path(self.manifest['source_root']).parent / 'runtime/crew/coordinator.sqlite3'
+        coordinator = self.source_root.parent / 'runtime/crew/coordinator.sqlite3'
         if coordinator.exists():
             with closing(reader(coordinator)) as source:
                 metadata = dict(source.execute('SELECT key,value FROM metadata'))
@@ -363,7 +373,7 @@ class Comparison:
             cursor = self.manifest['source_highwater']
         if cursor != highwater:
             raise ValueError('Drain captured source inputs before recording a code revision')
-        actual = code_binding(Path(self.manifest['source_root']).parent)
+        actual = code_binding(self.source_root.parent)
         if new_code_binding != actual: raise ValueError('Reviewed code does not match installed source')
         prior = self.manifest['code_binding']
         for row in self.db.execute("SELECT observed_at,payload FROM observations WHERE kind='code_revision' ORDER BY seq"):
@@ -405,7 +415,7 @@ class Comparison:
                 or not isinstance(payload, dict)):
             raise ValueError('Invalid prospective comparison input')
         if kind == 'trial':
-            if payload.get('trial') != source_trial(self.manifest['source_root'], self.manifest['source_account_id']):
+            if payload.get('trial') != source_trial(self.source_root, self.manifest['source_account_id']):
                 raise ValueError('Trial input is not the original source trial')
         encoded = encode(payload); checksum = digest([kind, observed_at, payload])
         with self.db:
@@ -420,7 +430,7 @@ class Comparison:
                                    (key, observed_at, captured_at, kind, encoded, checksum)).lastrowid
 
     def refresh_trial(self, now):
-        trial = source_trial(self.manifest['source_root'], self.manifest['source_account_id'])
+        trial = source_trial(self.source_root, self.manifest['source_account_id'])
         if trial is not None:
             key = 'source-trial:' + digest(trial)
             old = self.db.execute('SELECT seq,payload FROM observations WHERE event_key=?', (key,)).fetchone()
@@ -470,7 +480,7 @@ class Comparison:
                 # A source may have legitimately started after comparison setup.
                 # Adopt only its ledger-bound original clock, never a new one,
                 # and never retroactively authorize an earlier captured input.
-                actual = source_trial(self.manifest['source_root'], self.manifest['source_account_id'])
+                actual = source_trial(self.source_root, self.manifest['source_account_id'])
                 if actual and actual['started_at'] <= now:
                     trial = actual
                     book.db.execute("UPDATE metadata SET value=? WHERE key='crew_trial'", (encode(trial),))

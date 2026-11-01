@@ -62,10 +62,14 @@ Keep the machine awake and Codex running for these scheduled jobs.
 
 Current main includes Nitrogen and Radon. The top-level runtime was restored
 from D:\SNIPER RUNTIME\runtime, and all 52 SQLite files passed quick_check.
-The user authorized fresh paper accounts for missing bot folders. Radeon retains
-its account/deadline. Argon's old journal was archived instead of rebound to the
-replacement Xenon account. Both public wallet addresses were confirmed; no signer
-was configured. Other bots require separate current-data/model/evidence validation.
+The subsequently expanded backup supplied the original Xenon, Neon, Krypton and
+Helium account folders. Those identities and Argon's original journal are now
+restored; the temporary replacement accounts remain archived under
+runtime/local-setup/solana-rollout-20261101. Nitrogen and Radon retain their own
+new accounts. Radeon retains its account/deadline. Both public wallet addresses
+were confirmed; no signer was configured. Each desk retains separate strategy
+state, except Argon's existing design as a filter on Xenon's shared paper account.
+See ../docs/SOLANA_PAPER_ACTIVATION.md for current readiness and spending limits.
 
 See ../docs/DEV_WATCH.md and ../runtime/local-setup/ for integration records.
 The previous detailed tracker is archived at runtime/setup-before-paper-return.md.

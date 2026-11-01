@@ -11,7 +11,7 @@ from .jev_dossier import encode, digest
 STAGES=('SHADOW','ACTIVE_PAPER','LIVE_READY','LIVE')
 PAPER_CHECKS=('prospective_entry','duplicate_no_extra_order','failure_closed','hard_rejection',
     'final_transaction_recheck','watch_restart','original_exits','disabled_baseline','paper_live_separation')
-CODE_FILES=('src/sniper/jev.py','src/sniper/jev_dossier.py','src/sniper/jev_review.py',
+CODE_FILES=('src/sniper/jev.py','src/sniper/jev_dossier.py','src/sniper/jev_review.py','src/sniper/model_budget.py',
     'src/sniper/jev_lifecycle.py','src/sniper/jev_admission.py','rug_desk/check.py',
     'src/sniper/jev_readiness.py','src/sniper/jev_deployment.py','rug_desk/book.py','rug_desk/report.py','solana_executor.py','src/sniper/execution_solana_service.py',
     'src/sniper/execution_solana.py','src/sniper/solana_cpmm.py','src/sniper/solana_wire.py','src/sniper/live_readiness.py',

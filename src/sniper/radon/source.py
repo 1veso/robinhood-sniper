@@ -79,7 +79,7 @@ def _validate_bundle(value, *, demo=False):
 def read(path, *, demo=False):
     path = Path(path)
     if not path.is_file():
-        raise SourceUnavailable('Source unavailable: install an authorized normalized export; no Fomo cookie adapter is connected')
+        raise SourceUnavailable('Source unavailable: complete inventory-reconciled event/history coverage has not been produced; raw chain collection alone cannot authorize entries')
     if path.stat().st_size > 50_000_000:
         raise ValueError('Export exceeds bounded input size')
     return validate_bundle(json.loads(path.read_text(encoding='utf-8-sig')), demo=demo)

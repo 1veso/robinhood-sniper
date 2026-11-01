@@ -1,6 +1,6 @@
 """NITROGEN — slot-seven Jev Judgment Desk. Explicitly approved paper fills only."""
 import argparse
-from contextlib import closing
+from contextlib import closing, ExitStack
 from pathlib import Path
 import json
 import sqlite3
@@ -16,10 +16,20 @@ from sniper.nitrogen.book import Book,bound_config,folder_for
 
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('command',nargs='?',default='status',choices=['init','status','scan','watch','report','head','pending','approve','reject','import','pause','resume','model-status','model-binding','reconcile','demo'])
+    p.add_argument('command',nargs='?',default='status',choices=['init','status','scan','watch','report','head','pending','approve','reject','import','pause','resume','model-status','model-binding','reconcile','demo','configure-wallets'])
     p.add_argument('--root',type=Path,default=ROOT);p.add_argument('--id');p.add_argument('--source',type=Path)
     p.add_argument('--mode',choices=['paper'],default='paper');p.add_argument('--scheduled',action='store_true')
     a=p.parse_args(argv);root=a.root.resolve()
+    if a.command=='configure-wallets':
+        if not a.source:p.error('--source must name the reviewed initial watchlist JSON')
+        if a.source.stat().st_size>10000:p.error('Watchlist file exceeds 10 KB')
+        value=json.loads(a.source.read_text(encoding='utf-8-sig'))
+        from sniper.nitrogen.setup import configure_wallets
+        with ExitStack() as stack:
+            for name in ('scan','watch','head'):stack.enter_context(process_lock(folder_for(root)/(name+'.lock')))
+            book=stack.enter_context(closing(Book(root,bound_config(root))))
+            result=configure_wallets(book,value['wallets'],value['authorization_reference'],value['source_reference'])
+        print(encode(result));return 0
     if a.command=='status':
         from sniper.nitrogen.view import view
         print(encode(view(root)));return 0
