@@ -224,7 +224,7 @@ class ConsoleData:
             return value
 
     def state(self, bot='robinhood'):
-        if bot not in ('robinhood', 'solana', 'neon', 'jev', 'krypton', 'helium', 'devwatch'):
+        if bot not in ('robinhood', 'solana', 'neon', 'jev', 'krypton', 'helium', 'radon', 'devwatch'):
             raise ValueError('Unknown bot')
         def load():
             if bot == 'devwatch':
@@ -232,8 +232,10 @@ class ConsoleData:
                 data = view(self.root)
                 from .signal_readiness import inventory as signal_inventory
                 data['signal_readiness'] = signal_inventory(self.root)
-            elif bot in ('krypton', 'helium'):
-                if bot == 'helium':
+            elif bot in ('krypton', 'helium', 'radon'):
+                if bot == 'radon':
+                    from .radon.view import view
+                elif bot == 'helium':
                     from .helium.view import view
                 else:
                     from .krypton.view import view
@@ -271,7 +273,7 @@ class ConsoleData:
                         if job.get('name')==task_names[0]:worker['next_scan_at']=planned
                         if job.get('name')==task_names[1]:worker['next_watch_at']=planned
             from .switchover import inventory
-            if bot not in ('neon','jev','krypton','helium','devwatch'):
+            if bot not in ('neon','jev','krypton','helium','radon','devwatch'):
                 data['switchover'] = inventory(self.root, 'evm' if bot=='robinhood' else 'solana')
             if bot=='robinhood':
                 try:
@@ -550,6 +552,7 @@ def make_server(root, host='127.0.0.1', port=8765):
     files = {'/': ('index.html','text/html; charset=utf-8'), '/app.js': ('app.js','text/javascript; charset=utf-8'), '/style.css': ('style.css','text/css; charset=utf-8'), '/favicon.svg': ('favicon.svg','image/svg+xml'),
              '/neon.js':('neon.js','text/javascript; charset=utf-8'),'/neon.css':('neon.css','text/css; charset=utf-8'),
              '/krypton.js':('krypton.js','text/javascript; charset=utf-8'),'/krypton.css':('krypton.css','text/css; charset=utf-8'),
+             '/radon.js':('radon.js','text/javascript; charset=utf-8'),'/radon.css':('radon.css','text/css; charset=utf-8'),
              '/helium.js':('helium.js','text/javascript; charset=utf-8'),'/helium.css':('helium.css','text/css; charset=utf-8'),
              '/devwatch.js':('devwatch.js','text/javascript; charset=utf-8'),
              '/sizing.css':('sizing.css','text/css; charset=utf-8'),
@@ -709,13 +712,14 @@ def make_server(root, host='127.0.0.1', port=8765):
                     from .solana_console import discover
                     from .krypton.view import health as krypton_health
                     from .helium.view import health as helium_health
+                    from .radon.view import health as radon_health
                     from .devwatch_console import health as devwatch_health
                     self.send(200, json_text({'service':'TENDIES TRACKER Observation Console','version':__version__,'read_only':False,
                         'read_only_gets':True,'operator_controls':['radeon_paper_entry_switches'],'at':int(time.time()),
-                        'paper_views':['robinhood','solana','neon','jev','krypton','helium'],'event_stream_version':1,
-                        'bot_views':['robinhood','solana','neon','jev','krypton','helium','devwatch'],
+                        'paper_views':['robinhood','solana','neon','jev','krypton','helium','radon'],'event_stream_version':1,
+                        'bot_views':['robinhood','solana','neon','jev','krypton','helium','radon','devwatch'],
                         'manual_signal_views':['devwatch'],
-                        'event_stream_bots':['solana','neon'],'journal_bots':['helium'],'accounts':dict(discover(data.root),krypton=krypton_health(data.root),helium=helium_health(data.root),devwatch=devwatch_health(data.root))}).encode())
+                        'event_stream_bots':['solana','neon'],'journal_bots':['helium'],'accounts':dict(discover(data.root),krypton=krypton_health(data.root),helium=helium_health(data.root),radon=radon_health(data.root),devwatch=devwatch_health(data.root))}).encode())
                 elif url.path == '/api/jev-assessment':
                     from .jev_review import detail
                     self.send(200, json_text(detail(data.root, params.get('id',[''])[0])).encode())

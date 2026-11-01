@@ -258,7 +258,7 @@ class ConsoleTests(unittest.TestCase):
             code, body = request('/api/health')
             self.assertEqual(code, 200)
             health = json.loads(body)
-            self.assertEqual(health['paper_views'], ['robinhood','solana','neon','jev','krypton','helium'])
+            self.assertEqual(health['paper_views'], ['robinhood','solana','neon','jev','krypton','helium','radon'])
             self.assertFalse(health['accounts']['helium']['available'])
             code, body = request('/helium.js')
             self.assertEqual(code, 200)

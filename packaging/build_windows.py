@@ -37,7 +37,7 @@ def source_files(root=ROOT):
             continue
         if not path.is_file() or path.is_symlink():
             continue
-        if (len(rel.parts)==2 and rel.parts[0]=='dev_watch' and rel.name in DEV_WATCH_FILES) or (len(rel.parts) == 1 and (path.suffix in ('.py', '.toml') or path.name in ('requirements-executor.txt','requirements-krypton.txt'))) or rel.as_posix() in ('krypton_bot/config.json','krypton_bot/README.md','krypton_bot/.env.example','helium_bot/config.json','helium_bot/README.md') or (
+        if (len(rel.parts)==2 and rel.parts[0]=='dev_watch' and rel.name in DEV_WATCH_FILES) or (len(rel.parts) == 1 and (path.suffix in ('.py', '.toml') or path.name in ('requirements-executor.txt','requirements-krypton.txt'))) or rel.as_posix() in ('krypton_bot/config.json','krypton_bot/README.md','krypton_bot/.env.example','helium_bot/config.json','helium_bot/README.md','radon_bot/config.json','radon_bot/README.md') or (
                 rel.parts[0] in ('src', 'rug_desk', 'console', 'config', 'docs', 'scripts')
                 and path.suffix in ('.py', '.json', '.toml', '.html', '.js', '.css', '.svg', '.md', '.ps1')):
             if any(x in path.name.lower() for x in ('api-key', 'trading-address', 'recipient', 'token.txt')):

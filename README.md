@@ -34,6 +34,7 @@ accounts and validating their paid-model bindings are separate remaining steps.
 | **Argon** (`jev`) | Pump/Jev review of the **existing Xenon account**, not another balance | ACTIVE_PAPER admission filter, with entries blocked by disabled models and incomplete factual evidence |
 | **Krypton** (`krypton`) | Standalone Solana token screening; separate $1,000 virtual account | Independent scan/watch jobs; hard checks and authorized Grok evidence are required before entry |
 | **Helium** (`helium`) | Standalone Solana research team; separate $1,000 virtual account | Krypton's trading baseline plus a bound Jev review of Grok; both paid model gates remain disabled |
+| **Radon** (slot 8) | Independent Solana copier research and paper account | Source and paid research require configuration |
 | **DEV WATCH** (`devwatch`) | Article developer-wallet monitor; separate JSON/CSV ledger | Paid Grok/X signals; live buys and sells require manual wallet execution and actual-fill confirmation |
 
 Seven views do **not** represent seven independent bankrolls. Shared adapters and
@@ -309,3 +310,16 @@ Additional guides: [wallet discovery](docs/WALLET_DISCOVERY.md),
 [pipeline validation](docs/PIPELINE_VALIDATION.md),
 [Neon workspace](docs/NEON_EXPERIENCE.md),
 [Helium cockpit](docs/HELIUM_BOT.md#trading-cockpit).
+
+## Radon copy trading desk
+
+Radon occupies bot slot **8**; slot **7** is reserved. It adds an independent
+paper account, deterministic fixed-ticket copier replay, per-mint episode caps,
+leader-attributed partial exits, and separate prospective reports to the existing
+console. See [Radon setup and policy](radon_bot/README.md) and the
+[authorized export contract](docs/radon-export.md).
+
+`python radon_bot.py --demo` runs an isolated synthetic example.
+`python radon_bot.py status` and `/?bot=radon` are read-only. Initialization,
+authorized source intake, paid model authorization/validation, and worker
+installation are explicit steps; there is no Fomo cookie scraper or live toggle.
