@@ -113,6 +113,18 @@ class EvidenceTests(unittest.TestCase):
         self.assertNotIn('holders_now',row['dossier_fields']['observations'])
         self.assertEqual(rpc.calls,[])
         self.assertGreater(row['received_at'],row['dossier_fields']['observations']['price_now']['observed_at'])
+    def test_holder_endpoint_override_is_scoped_and_keeps_request_budget(self):
+        from unittest.mock import patch
+        folder=self.root/'runtime/crew';folder.mkdir(parents=True,exist_ok=True)
+        (folder/'holder-rpc-url.txt').write_text('https://holder.invalid/?api-key=fixture-only')
+        primary=UnavailableRpc();other=UnavailableRpc()
+        producer=Producer(self.root,store=self.store,rpc=primary,clock=lambda:NOW)
+        producer.deadline=NOW+10;producer.rpc_calls=0
+        with patch('sniper.crew_evidence.ReadOnlyRpc',return_value=other):
+            with self.assertRaises(TimeoutError):producer._holders(MINT)
+        self.assertEqual(primary.calls,[]);self.assertEqual(len(other.calls),1)
+        self.assertEqual(producer.rpc_calls,1);self.assertIs(producer.rpc,primary)
+
     def test_no_broadcast_or_model_interface(self):
         self.assertNotIn('sendTransaction',ReadOnlyRpc.ALLOWED_RPC)
         self.assertFalse(hasattr(Producer,'sign'));self.assertFalse(hasattr(Producer,'broadcast'))

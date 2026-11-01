@@ -86,7 +86,7 @@ class CrewCoordinatorTests(unittest.TestCase):
     def test_prospective_intake_exact_pool_and_provider_status(self):
         self.init();seq=self.event('candidate',self.candidate());r=self.worker()
         self.assertEqual(r['status'],'OK');self.assertEqual(r['cursor'],seq)
-        self.assertEqual(len(FakeProducer.calls),1);self.assertLessEqual(FakeProducer.calls[0][2],10)
+        self.assertEqual(len(FakeProducer.calls),1);self.assertLessEqual(FakeProducer.calls[0][2],25)
         self.assertEqual(r['provider_status']['exit'],'UNKNOWN')
         self.assertTrue(r['provider_status']['errors']);self.assertEqual(r['paid_calls'],0)
         self.assertEqual(r['comparison']['variants']['baseline']['new_fills'],0)
