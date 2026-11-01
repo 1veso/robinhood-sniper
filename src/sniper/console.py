@@ -224,11 +224,13 @@ class ConsoleData:
             return value
 
     def state(self, bot='robinhood'):
-        if bot not in ('robinhood', 'solana', 'neon', 'jev', 'krypton', 'helium', 'radon'):
+        if bot not in ('robinhood', 'solana', 'neon', 'jev', 'krypton', 'helium', 'nitrogen', 'radon'):
             raise ValueError('Unknown bot')
         def load():
-            if bot in ('krypton', 'helium', 'radon'):
-                if bot == 'radon':
+            if bot in ('krypton', 'helium', 'nitrogen', 'radon'):
+                if bot == 'nitrogen':
+                    from .nitrogen.view import view
+                elif bot == 'radon':
                     from .radon.view import view
                 elif bot == 'helium':
                     from .helium.view import view
@@ -266,7 +268,7 @@ class ConsoleData:
                         if job.get('name')==task_names[0]:worker['next_scan_at']=planned
                         if job.get('name')==task_names[1]:worker['next_watch_at']=planned
             from .switchover import inventory
-            if bot not in ('neon','jev','krypton','helium','radon'):
+            if bot not in ('neon','jev','krypton','helium','nitrogen','radon'):
                 data['switchover'] = inventory(self.root, 'evm' if bot=='robinhood' else 'solana')
             if bot=='robinhood':
                 try:
@@ -545,6 +547,7 @@ def make_server(root, host='127.0.0.1', port=8765):
     files = {'/': ('index.html','text/html; charset=utf-8'), '/app.js': ('app.js','text/javascript; charset=utf-8'), '/style.css': ('style.css','text/css; charset=utf-8'), '/favicon.svg': ('favicon.svg','image/svg+xml'),
              '/neon.js':('neon.js','text/javascript; charset=utf-8'),'/neon.css':('neon.css','text/css; charset=utf-8'),
              '/krypton.js':('krypton.js','text/javascript; charset=utf-8'),'/krypton.css':('krypton.css','text/css; charset=utf-8'),
+             '/nitrogen.js':('nitrogen.js','text/javascript; charset=utf-8'),'/nitrogen.css':('nitrogen.css','text/css; charset=utf-8'),
              '/radon.js':('radon.js','text/javascript; charset=utf-8'),'/radon.css':('radon.css','text/css; charset=utf-8'),
              '/helium.js':('helium.js','text/javascript; charset=utf-8'),'/helium.css':('helium.css','text/css; charset=utf-8'),
              '/sizing.css':('sizing.css','text/css; charset=utf-8'),
@@ -678,6 +681,9 @@ def make_server(root, host='127.0.0.1', port=8765):
                 elif url.path == '/api/neon-candidate':
                     from .neon_workspace import candidate
                     self.send(200,json_text(candidate(data.root,params.get('mint',[''])[0])).encode())
+                elif url.path == '/api/nitrogen-journal':
+                    from .nitrogen.cockpit import journal
+                    self.send(200,json_text(journal(data.root,after=params.get('after',[None])[0],before=params.get('before',[None])[0],limit=params.get('limit',[100])[0])).encode())
                 elif url.path == '/api/helium-journal':
                     from .helium.cockpit import journal
                     self.send(200,json_text(journal(data.root,
@@ -702,10 +708,11 @@ def make_server(root, host='127.0.0.1', port=8765):
                     from .krypton.view import health as krypton_health
                     from .helium.view import health as helium_health
                     from .radon.view import health as radon_health
+                    from .nitrogen.view import health as nitrogen_health
                     self.send(200, json_text({'service':'TENDIES TRACKER Observation Console','version':__version__,'read_only':False,
                         'read_only_gets':True,'operator_controls':['radeon_paper_entry_switches'],'at':int(time.time()),
-                        'paper_views':['robinhood','solana','neon','jev','krypton','helium','radon'],'reserved_bot_slots':[7],'event_stream_version':1,
-                        'event_stream_bots':['solana','neon'],'journal_bots':['helium'],'accounts':dict(discover(data.root),krypton=krypton_health(data.root),helium=helium_health(data.root),radon=radon_health(data.root))}).encode())
+                        'paper_views':['robinhood','solana','neon','jev','krypton','helium','nitrogen','radon'],'reserved_bot_slots':[],'event_stream_version':1,
+                        'event_stream_bots':['solana','neon'],'journal_bots':['helium'],'accounts':dict(discover(data.root),krypton=krypton_health(data.root),helium=helium_health(data.root),nitrogen=nitrogen_health(data.root),radon=radon_health(data.root))}).encode())
                 elif url.path == '/api/jev-assessment':
                     from .jev_review import detail
                     self.send(200, json_text(detail(data.root, params.get('id',[''])[0])).encode())

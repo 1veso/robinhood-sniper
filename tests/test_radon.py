@@ -376,10 +376,10 @@ class RadonIntegrationTests(unittest.TestCase):
             with self.assertRaises(SystemExit):radon_bot.main(['init','--root',tmp,'--mode','live'])
             self.assertEqual(list(Path(tmp).iterdir()),[])
 
-    def test_slot_seven_reserved_console_and_workers_are_additive(self):
+    def test_slot_eight_preserved_with_slot_seven_nitrogen(self):
         import desktop
         html=(ROOT/'console/index.html').read_text()
-        self.assertIn('Slot 7 reserved',html);self.assertIn('data-slot="8"',html)
+        self.assertIn('data-bot="nitrogen" data-slot="7"',html);self.assertIn('data-slot="8"',html)
         self.assertNotIn('data-bot="reserved"',html)
         for job in ('research','entries','watch','report'):self.assertIn('radon-'+job,desktop.JOBS)
         self.assertEqual(desktop.JOBS['neon-watch'][3],['neon_bot.py','watch'])
