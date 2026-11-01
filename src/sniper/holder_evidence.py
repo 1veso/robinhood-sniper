@@ -24,7 +24,9 @@ def raw_integer(value):
     return number
 
 
-def collect(rpc, mint, clock):
+def collect(rpc, mint, clock, *, method="getProgramAccounts"):
+    if method not in ("getProgramAccounts", "getProgramAccountsV2"):
+        raise ValueError("Unsupported holder RPC method")
     from .crew_evidence import digest, MAX_AGE
     from .adapters.solana_execution import MAINNET_GENESIS
     validate_address(mint)
@@ -45,12 +47,29 @@ def collect(rpc, mint, clock):
     filters = [{'memcmp': {'offset': 0, 'bytes': mint}}]
     if program == TOKEN:
         filters.insert(0, {'dataSize': 165})
-    response = rpc('getProgramAccounts', [program, {'encoding': 'jsonParsed',
-        'commitment': 'finalized', 'withContext': True,
-        'minContextSlot': first['context']['slot'], 'filters': filters}])
-    slot, rows = response['context']['slot'], response['value']
-    if type(slot) is not int or slot < first['context']['slot'] or not isinstance(rows, list) or not 0 < len(rows) <= MAX_ACCOUNTS:
-        raise ValueError('Complete holder enumeration outside supported bound')
+    options = {'encoding': 'jsonParsed', 'commitment': 'finalized', 'withContext': True,
+               'minContextSlot': first['context']['slot'], 'filters': filters}
+    pages, rows, cursors, slot = [], [], set(), None
+    for _ in range(4):
+        if method == 'getProgramAccountsV2': options['limit'] = 1024
+        response = rpc(method, [program, options.copy()])
+        current = response['context']['slot']
+        if type(current) is not int or current < first['context']['slot'] or (slot is not None and current != slot):
+            raise ValueError('Holder pages do not share a finalized snapshot slot')
+        slot = current; pages.append(response)
+        value = response['value']
+        page = value['accounts'] if method == 'getProgramAccountsV2' else value
+        if not isinstance(page, list): raise ValueError('Invalid holder page')
+        rows.extend(page)
+        if len(rows) > MAX_ACCOUNTS: raise ValueError('Holder enumeration exceeds bound')
+        cursor = value['paginationKey'] if method == 'getProgramAccountsV2' else None
+        if cursor is None: break
+        if not isinstance(cursor, str) or not cursor or cursor in cursors:
+            raise ValueError('Invalid/repeated holder cursor')
+        cursors.add(cursor); options['paginationKey'] = cursor
+    else:
+        raise ValueError('Holder pagination incomplete at request bound')
+    if not rows: raise ValueError('Empty holder snapshot')
     covered, owners, seen, total = [], set(), set(), 0
     for row in rows:
         address = validate_address(row['pubkey'])
@@ -74,11 +93,11 @@ def collect(rpc, mint, clock):
     if type(stamp) is not int or not 0 <= int(clock())-stamp <= MAX_AGE or not block.get('blockhash'):
         raise ValueError('Holder snapshot has no current canonical timestamp')
     context = {'slot': slot, 'block_hash': block['blockhash'], 'block_time': stamp,
-        'commitment': 'finalized', 'accounts_sha256': digest(response),
+        'commitment': 'finalized', 'accounts_sha256': digest(pages),
         'minted_supply_raw': str(supply), 'covered_balance_raw': str(total),
         'accounts_examined': len(rows), 'covered_accounts': sorted(covered, key=lambda x:x['address']),
         'positive_owners': sorted(owners), 'token_program': program,
-        'enumeration': 'full_program_accounts_v1', 'max_accounts': MAX_ACCOUNTS,
+        'rpc_method': method, 'pages': len(pages), 'enumeration': 'full_program_accounts_v1', 'max_accounts': MAX_ACCOUNTS,
         'holder_definition': 'distinct owners of positive visible token balances; infrastructure included'}
     if total != supply:
         return {'status': 'UNKNOWN', 'reason': 'enumerated_balances_do_not_reconcile_to_supply', 'context': context}

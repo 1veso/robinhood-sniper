@@ -44,13 +44,17 @@ def require_program_review(payload, *, now):
         for name in ('venue','exit'):
             component=payload[name];context=component['context'];proof=component['program_review']
             pins=proof['program_pins'];stamp=context['block_time'];captured=component['observed_at']
+            from . import pumpswap_evidence as pump
+            program=payload['venue'].get('program',cp.PROGRAM)
+            if program not in (cp.PROGRAM,pump.PROGRAM):raise ValueError('Unsupported reviewed program')
+            programs={cp.PROGRAM,cp.TOKEN,cp.ATA} if program==cp.PROGRAM else {pump.PROGRAM,pump.FEE_PROGRAM,cp.TOKEN,pump.TOKEN_2022,cp.ATA}
             if (component['status']!='VALID' or set(proof)!=required
                     or proof['scope']!='CREW_READ_ONLY_PROGRAM_REVIEW'
                     or proof['account_id']!=payload['account_id'] or proof['config_sha256']!=payload['config_sha256']
                     or not isinstance(proof['review_reference'],str) or not proof['review_reference'].strip()
                     or any(type(x)is not int for x in (proof['reviewed_at'],proof['expires_at'],stamp,captured))
                     or not 0<=proof['reviewed_at']<=stamp<=captured<=now<proof['expires_at']
-                    or not isinstance(pins,dict) or set(pins)!={cp.PROGRAM,cp.TOKEN,cp.ATA}
+                    or not isinstance(pins,dict) or set(pins)!=programs
                     or pins!=context['program_observations'] or context['commitment']!='finalized'
                     or component['review_sha256']!=digest(proof)
                     or (expected is not None and expected!=proof)):
@@ -91,13 +95,20 @@ def _exit(payload,dossier):
     from .adapters.solana_execution import USDC
     r=payload['exit'];s=r['state'];mint=dossier['mint'];ticket=_number(dossier['ticket_usd'],positive=True)
     usd=_number(r['base_usd'],positive=True);price=_number(r['reference_price_usd'],positive=True)
-    if {s['mint0'],s['mint1']}!={mint,USDC}:raise ValueError('Unsupported route assets')
+    from . import pumpswap_evidence as pump
+    model=r.get('quote_model','raydium-cp-v1')
+    if model not in ('raydium-cp-v1',pump.MODEL):raise ValueError('Unsupported quote model')
+    adapter=pump if model==pump.MODEL else cp
+    quote_mint=r.get('quote_mint',USDC);quote_decimals=r.get('quote_decimals',6)
+    if quote_mint not in (USDC,cp.WSOL) or quote_decimals!=(6 if quote_mint==USDC else 9):raise ValueError('Unsupported quote precision')
+    if {s['mint0'],s['mint1']}!={mint,quote_mint}:raise ValueError('Unsupported route assets')
+    if payload['venue'].get('program',cp.PROGRAM)!=adapter.PROGRAM:raise ValueError('Quote model/program differs')
     direction=0 if s['mint0']==mint else 1
     if type(s[f'decimals{direction}'])is not int or not 0<=s[f'decimals{direction}']<=18:raise ValueError('Invalid precision')
-    raw=int((ticket/usd*10**6).to_integral_value(rounding=ROUND_DOWN))
-    acquired=cp.quote_output(s,USDC,raw)
+    raw=int((ticket/usd*10**quote_decimals).to_integral_value(rounding=ROUND_DOWN))
+    acquired=adapter.quote_output(s,quote_mint,raw)
     paper=int((ticket/price*10**s[f'decimals{direction}']).to_integral_value(rounding=ROUND_UP))
-    covered=max(acquired,paper);output=cp.quote_output(s,mint,covered)
+    covered=max(acquired,paper);output=adapter.quote_output(s,mint,covered)
     for key,value in (('input_usdc_raw',raw),('buy_quantity_raw',acquired),('paper_quantity_upper_bound_raw',paper),('sell_quantity_raw',covered),('sell_output_usdc_raw',output)):
         if str(value)!=r[key]:raise ValueError('Route arithmetic contradiction')
     a,b=s[f'reserve{direction}'],s[f'reserve{1-direction}']
@@ -106,10 +117,10 @@ def _exit(payload,dossier):
     for _ in range(48):
         if low>=high:break
         mid=(low+high+1)//2
-        try:cp.quote_output(s,mint,mid)
+        try:adapter.quote_output(s,mint,mid)
         except ValueError:high=mid-1
         else:low=mid
-    capacity=Decimal(low)*b/a/10**6*usd
+    capacity=Decimal(low)*b/a/10**quote_decimals*usd
     context=r['context'];v=payload['venue']
     if (r['status']!='VALID' or v['status']!='VALID' or v['phase']!='AMM' or context!=v['context']
             or context['commitment']!='finalized' or not context.get('block_hash') or not context.get('program_observations')

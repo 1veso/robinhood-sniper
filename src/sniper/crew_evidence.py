@@ -123,7 +123,7 @@ class EvidenceStore:
 
 
 class ReadOnlyRpc(SolanaExecutionReader):
-    ALLOWED_RPC=SolanaExecutionReader.ALLOWED_RPC|{'getMultipleAccounts','getBlockTime','getBlock','getTokenLargestAccounts','getProgramAccounts'}
+    ALLOWED_RPC=SolanaExecutionReader.ALLOWED_RPC|{'getMultipleAccounts','getBlockTime','getBlock','getTokenLargestAccounts','getProgramAccounts','getProgramAccountsV2','getSignaturesForAddress'}
 
 
 class Producer:
@@ -141,11 +141,11 @@ class Producer:
     def _check(self):
         if self.clock()>=self.deadline: raise TimeoutError('Evidence collection budget expired')
 
-    def _rpc(self,method,params=None):
+    def _rpc(self,method,params=None,*,reader=None):
         self._check()
         if self.rpc_calls>=self.max_rpc_calls: raise TimeoutError('Evidence RPC request bound reached')
         self.rpc_calls+=1
-        result=self.rpc.rpc(method,params or [])
+        result=(reader or self.rpc).rpc(method,params or [])
         self._check()
         return result
 
@@ -165,21 +165,34 @@ class Producer:
 
     def _holders(self,mint):
         from .holder_evidence import collect
-        return collect(self._rpc, mint, self.clock)
+        settings=self.root/'runtime/crew/collector-settings.json'
+        method='getProgramAccounts'
+        if settings.is_file():
+            method=json.loads(settings.read_text(encoding='utf-8-sig')).get('holder_rpc_method',method)
+        endpoint=self.root/'runtime/crew/holder-rpc-url.txt'
+        holder_reader=ReadOnlyRpc(rpc_url=endpoint.read_text(encoding='utf-8-sig').strip()) if endpoint.is_file() else self.rpc
+        return collect(lambda name,args:self._rpc(name,args,reader=holder_reader), mint, self.clock, method=method)
 
     def _pool(self,identity,mint,pool,ticket,reference_price):
         if self._rpc('getGenesisHash')!=MAINNET_GENESIS: raise ValueError('Solana mainnet identity required')
-        initial,first=self._batch([pool,cp.PROGRAM,cp.TOKEN,cp.ATA])
-        state=cp.pool_state(initial[pool],int(self.clock()))
-        if {state['mint0'],state['mint1']}!={mint,USDC}: raise ValueError('Only direct classic-SPL CP/USDC supported')
+        from . import pumpswap_evidence as pump
+        initial,first=self._batch([pool])
+        adapter=pump if initial[pool] and initial[pool].get('owner')==pump.PROGRAM else cp
+        state=adapter.pool_state(initial[pool],int(self.clock()))
+        quote_mint=state['mint1'] if adapter is pump else next((x for x in (state['mint0'],state['mint1']) if x!=mint),None)
+        if quote_mint not in (USDC,cp.WSOL) or {state['mint0'],state['mint1']}!={mint,quote_mint}:
+            raise ValueError('Only direct supported WSOL/USDC pools qualify')
+        programs=(cp.PROGRAM,cp.TOKEN,cp.ATA) if adapter is cp else (pump.PROGRAM,pump.FEE_PROGRAM,cp.TOKEN,pump.TOKEN_2022,cp.ATA)
+        initial,first=self._batch([pool,*programs],first)
+        state=adapter.pool_state(initial[pool],int(self.clock()))
         extra=[]
-        for program in (cp.PROGRAM,cp.TOKEN,cp.ATA):
+        for program in programs:
             raw=cp.blob(initial[program],executable=True)
             if initial[program]['owner']==cp.UPGRADEABLE:
                 if len(raw)!=36 or raw[:4]!=b'\2\0\0\0': raise ValueError('Unsupported program loader')
                 extra.append(cp.key(raw,4))
-        keys=[pool,cp.PROGRAM,cp.TOKEN,cp.ATA,*extra,state['config'],state['observation'],
-              state['vault0'],state['vault1'],mint,USDC]
+        keys=[pool,*programs,*extra,state['config'],
+              state['fee_config'] if adapter is pump else state['observation'],state['vault0'],state['vault1'],mint,quote_mint]
         accounts,slot=self._batch(keys,first)
         stamp=self._rpc('getBlockTime',[slot])
         if type(stamp)is not int or not 0<=int(self.clock())-stamp<=MAX_AGE: raise ValueError('Stale finalized state')
@@ -188,8 +201,9 @@ class Producer:
             raise ValueError('Canonical slot identity unavailable')
         # A public program address is only a placeholder for pure ATA derivation;
         # no user wallet is read and no wallet-specific execution is asserted.
-        state=cp.inspect_pool(pool,USDC,mint,cp.PROGRAM,accounts,int(self.clock()))
-        pins={p:cp.deployment_observation(p,accounts) for p in (cp.PROGRAM,cp.TOKEN,cp.ATA)}
+        state=adapter.inspect_pool(pool,quote_mint,mint,adapter.PROGRAM,accounts,int(self.clock()))
+        quote_decimals=state["decimals0" if state["mint0"]==quote_mint else "decimals1"]
+        pins={p:cp.deployment_observation(p,accounts) for p in programs}
         context={'slot':slot,'block_hash':block['blockhash'],'block_time':stamp,
                  'commitment':'finalized','accounts_sha256':digest(accounts),'program_observations':pins}
         review=self.program_review
@@ -206,18 +220,18 @@ class Producer:
         # Publish only the independently reviewed, nonsecret allowlisted contract.
         review={k:plain(review[k]) for k in ('scope','account_id','config_sha256','review_reference','reviewed_at','expires_at','program_pins')}
         self._check()
-        usd=(self.usd_market or DexScreenerClient(timeout=5)).quote(USDC,now=int(self.clock()))
+        usd=(self.usd_market or DexScreenerClient(timeout=5)).quote(quote_mint,now=int(self.clock()))
         self._check()
         usd_price=number(usd.price_usd,positive=True)
-        if not 0<=int(self.clock())-usd.observed_at<=MAX_AGE: raise ValueError('USDC/USD observation stale')
-        raw=int((ticket/usd_price*10**6).to_integral_value(rounding=ROUND_DOWN))
+        if not 0<=int(self.clock())-usd.observed_at<=MAX_AGE: raise ValueError('Quote/USD observation stale')
+        raw=int((ticket/usd_price*10**quote_decimals).to_integral_value(rounding=ROUND_DOWN))
         if not 0<raw<2**64: raise ValueError('Ticket outside raw-unit bounds')
-        acquired=cp.quote_output(state,USDC,raw)
+        acquired=adapter.quote_output(state,quote_mint,raw)
         direction=0 if state['mint0']==mint else 1
         paper_bound=int((ticket/number(reference_price,positive=True)*10**state[f'decimals{direction}']).to_integral_value(rounding=ROUND_UP))
         covered=max(acquired,paper_bound)
         if not 0<covered<2**64:raise ValueError('Paper holding coverage outside raw-unit bounds')
-        output=cp.quote_output(state,mint,covered)
+        output=adapter.quote_output(state,mint,covered)
         a,b=state[f'reserve{direction}'],state[f'reserve{1-direction}']
         impact=max(Decimal(0),1-Decimal(output)*a/(Decimal(covered)*b))*100
         # Bounded integer search reuses the same quote math and its 3% bound.
@@ -225,23 +239,23 @@ class Producer:
         for _ in range(48):
             if low>=high: break
             mid=(low+high+1)//2
-            try: cp.quote_output(state,mint,mid)
+            try: adapter.quote_output(state,mint,mid)
             except ValueError: high=mid-1
             else: low=mid
-        capacity=Decimal(low)*b/a/10**6*usd_price
+        capacity=Decimal(low)*b/a/10**quote_decimals*usd_price
         if capacity<ticket: raise ValueError('Size-bounded exit capacity below intended ticket')
         recheck=self._rpc('getBlock',[slot,{'commitment':'finalized','transactionDetails':'none','rewards':False}])
         if recheck.get('blockhash')!=block['blockhash']: raise ValueError('Canonical slot changed')
         at=int(self.clock())
         if at>=review['expires_at']:raise ValueError('Program review expired during collection')
-        venue={'status':'VALID','phase':'AMM','observed_at':at,'program':cp.PROGRAM,'context':context,
-               'review_sha256':digest(review),'program_review':review,'scope':'Verified direct classic-SPL Raydium CP pool structure and reviewed program pins'}
+        venue={'status':'VALID','phase':'AMM','observed_at':at,'program':adapter.PROGRAM,'context':context,
+               'review_sha256':digest(review),'program_review':review,'scope':'Verified direct pool structure and reviewed program pins'}
         route={'status':'VALID','observed_at':at,'ticket_usd':str(ticket),'input_usdc_raw':str(raw),
-            'buy_quantity_raw':str(acquired),'paper_quantity_upper_bound_raw':str(paper_bound),'reference_price_usd':str(reference_price),
+            'quote_mint':quote_mint,'quote_decimals':quote_decimals,'quote_model':state.get('quote_model','raydium-cp-v1'),'buy_quantity_raw':str(acquired),'paper_quantity_upper_bound_raw':str(paper_bound),'reference_price_usd':str(reference_price),
             'sell_quantity_raw':str(covered),'sell_output_usdc_raw':str(output),'exit_capacity_usd':str(capacity),
             'exit_price_impact_pct':str(impact),'base_usd':str(usd_price),'base_usd_observed_at':usd.observed_at,
             'state':plain(state),
-            'context':context,'review_sha256':digest(review),'program_review':review,'scope':'Deterministic exact-size quote on finalized pinned pool reserves; fees included',
+            'context':context,'review_sha256':digest(review),'program_review':review,'scope':'Deterministic exact-size quote on finalized pinned reserves; legacy usdc_raw field names denote quote_mint units; fees included',
             'state_after_buy_applied':False,'wallet_simulated':False,'network_costs_included':False,'real_money_enabled':False}
         return venue,route
 
@@ -257,10 +271,10 @@ class Producer:
             'account_id':identity['account_id'],'config_sha256':identity['config_sha256'],
             'mint':mint,'pool':pool,'observed_at':started,'received_at':started,
             'observations':{},'holder_coverage':unknown('not_collected'),'venue':unknown('not_collected'),'exit':unknown('not_collected'),
-            'independence':unknown('No independently verified controller evidence producer is configured'),
+            'independence':unknown('Buyer/control evidence not collected'),
             'dossier_fields':{'observations':{},'venue_phase':None,'exit_route':None,'independence_review':None},
             'source_refs':{},'errors':[],
-            'limitations':['Holder totals are provider reports, not complete independently verified ownership.',
+            'limitations':['Holder coverage is valid only after complete finalized supply reconciliation.',
                 'No inference of controller independence from distinct wallets, owners, fee payers or routers.',
                 'Exact one-hour windows require recorded endpoints; no rounding, interpolation or historical backfill.',
                 'State-based exit quotes are not wallet simulations, fills or guaranteed future liquidity.']}
@@ -317,6 +331,13 @@ class Producer:
                             out['dossier_fields']['observations'][name]={'value':float(number(route[field])),'observed_at':at}
                 except Exception as exc:
                     error('pool',exc);out['venue']=unknown('unsupported_or_unavailable_pinned_pool');out['exit']=unknown('unsupported_or_unavailable_size_bounded_exit')
+                try:
+                    self._check();self._reader()
+                    from .buyer_evidence import collect as collect_buyers
+                    out['independence']=collect_buyers(self._rpc,mint,pool,self.clock)
+                except Exception as exc:
+                    error('buyer_control',exc)
+                    out['independence']=unknown('buyer_control_receipts_unavailable')
         finally:
             out['observed_at']=max([started]+[x['observed_at'] for x in out['dossier_fields']['observations'].values()])
             out['received_at']=max(out['observed_at'],int(self.clock()))

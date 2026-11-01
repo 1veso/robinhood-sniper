@@ -49,3 +49,31 @@ class HolderEvidenceTests(unittest.TestCase):
             return out
         with self.assertRaises(ValueError):collect(changed,MINT,lambda:NOW)
         with self.assertRaises(ValueError):collect(self.rpc,MINT,lambda:NOW+31)
+
+    def test_pagination_requires_terminal_cursor_and_same_slot(self):
+        def pages(slot=123,cursor=None):
+            def rpc(method,params):
+                if method!='getProgramAccountsV2':return self.rpc(method,params)
+                return {'context':{'slot':slot},'value':{'accounts':copy.deepcopy(self.rows),'paginationKey':cursor}}
+            return rpc
+        out=collect(pages(),MINT,lambda:NOW,method='getProgramAccountsV2')
+        self.assertEqual(out['value'],1)
+        with self.assertRaises(ValueError):collect(pages(cursor='repeat'),MINT,lambda:NOW,method='getProgramAccountsV2')
+        calls=0
+        def drift(method,params):
+            nonlocal calls
+            if method!='getProgramAccountsV2':return self.rpc(method,params)
+            calls+=1
+            return {'context':{'slot':122+calls},'value':{'accounts':[], 'paginationKey':'next' if calls==1 else None}}
+        with self.assertRaises(ValueError):collect(drift,MINT,lambda:NOW,method='getProgramAccountsV2')
+
+    def test_short_nonterminal_page_does_not_claim_complete(self):
+        calls=0
+        def paged(method,params):
+            nonlocal calls
+            if method!='getProgramAccountsV2':return self.rpc(method,params)
+            calls+=1
+            return {'context':{'slot':123},'value':{'accounts':[] if calls==1 else copy.deepcopy(self.rows),
+                'paginationKey':'continue' if calls==1 else None}}
+        result=collect(paged,MINT,lambda:NOW,method='getProgramAccountsV2')
+        self.assertEqual(result['context']['pages'],2);self.assertEqual(result['status'],'VALID')

@@ -140,3 +140,10 @@ The first live validation attempt against the existing Alchemy endpoint received
 HTTP 429. It did not produce verified holder evidence or an entry. PumpSwap route
 coverage, matched historical endpoints and buyer-controller evidence remain
 outstanding; this component alone does not unblock Xenon/Argon fills.
+
+## November 1 collector extension
+
+See [SOLANA_EVIDENCE_COLLECTORS.md](SOLANA_EVIDENCE_COLLECTORS.md) for finalized
+holder pagination, direct PumpSwap/WSOL/USDC quotes, bounded signed buyer
+receipts, live validation, and the remaining provider/controller evidence gates.
+These additions preserve paper-only operation and do not claim new strategy fills.
