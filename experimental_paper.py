@@ -43,7 +43,7 @@ def run(root=ROOT,limit=12):
      try:
       e=feed.capture(mint);now=int(time.time())
       for bot,book in accounts.items():
-       if book.observe(e,now):status['buys'].append({'bot':bot,'mint':mint,'pool':e['quote']['pool'],'simulated':True})
+       if book.observe(e,int(time.time())):status['buys'].append({'bot':bot,'mint':mint,'pool':e['quote']['pool'],'simulated':True})
      except SourceUnavailable as exc:
       atomic(cooldown,encode({'retry_after':int(time.time())+120,'error_type':str(exc)}));raise
      except ValueError as exc:status['rejections'].append({'mint':mint,'reason':str(exc)[:160]})
