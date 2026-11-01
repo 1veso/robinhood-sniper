@@ -19,6 +19,7 @@ from sniper.autopilot_trial import enrollment, read
 from sniper.process_tree import launch
 
 EXTRA={
+    'experimental-paper':(60,190,['experimental_paper.py','once']),
     'crew':(60,45,['crew.py','run']),
     'oxygen-watch':(600,590,['oxygen_bot.py','watch']),
     'oxygen-scan':(7200,600,['oxygen_bot.py','scan']),
