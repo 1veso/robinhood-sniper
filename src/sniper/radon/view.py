@@ -50,10 +50,13 @@ def snapshot(db, now):
     source = meta.get('source', {})
     fresh = source.get('state') == 'OK' and 0 <= now-source.get('through', -1) <= cfg['source_max_age_seconds']
     runs = [dict(r, payload=json.loads(r['payload'])) for r in db.execute('SELECT * FROM runs ORDER BY started_at DESC,rowid DESC LIMIT 20')]
+    collector = meta.get('chain_collector', {})
+    collecting = collector.get('state') == 'COLLECTING_HISTORY' and 0 <= now-collector.get('observed_at', 0) < 180
     return {'bot': 'radon', 'title': 'Radon', 'purpose': 'Copy Trading Desk', 'slot': 8, 'initialized': True,
         'account_id': meta['account_id'], 'demo': meta['demo'], 'mode': 'paper', 'assets': [],
         'evidence_label': 'synthetic' if meta['demo'] else 'prospective_paper', 'config': cfg,
-        'status': {'health': 'PAPER_RESEARCH' if fresh else 'SOURCE_UNAVAILABLE', 'source': dict(source, fresh=fresh),
+        'status': {'health': 'PAPER_RESEARCH' if fresh else ('COLLECTING_HISTORY' if collecting else 'SOURCE_UNAVAILABLE'), 'source': dict(source, fresh=fresh),
+            'chain_collector': collector,
             'model_gate': meta.get('model_gate', {'enabled': False}), 'error_count': sum(r['state']=='ERROR' for r in runs)},
         'summary': {'starting_cash': str(start), 'cash': str(cash), 'equity': str(equity) if equity is not None else None,
             'known_equity_subtotal': str(known), 'buying_turnover': meta['turnover'], 'peak_deployed': meta['peak_deployed'],
@@ -72,7 +75,7 @@ def snapshot(db, now):
             'Historical replay is conditional on archived numerical evidence; historical X/safety gates are not reconstructed.',
             'Pool age is not token launch time. Distinct wallets do not establish distinct controllers.',
             'Reserved token-account rent is retained capital, not an assumed refund.',
-            'Slot seven is reserved. Radon never initializes or trades another bot account.']}
+            'NITROGEN occupies slot seven. Radon never initializes or trades another bot account.']}
 
 
 def view(root, now=None):

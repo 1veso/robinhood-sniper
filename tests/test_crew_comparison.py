@@ -20,6 +20,28 @@ def full_quote(now=NOW, **kwargs):
 
 
 class CrewComparisonTests(unittest.TestCase):
+    def test_explicit_relocation_preserves_manifest_and_requires_the_same_source_identity(self):
+        from contextlib import closing
+        import sqlite3
+        initialize(self.folder,self.root,now=NOW)
+        original=(self.folder/'manifest.json').read_bytes()
+        manifest=json.loads(original)
+        moved=Path(self.temp.name)/'relocated/rug_desk'
+        (moved/'runtime').mkdir(parents=True)
+        with closing(sqlite3.connect(moved/'runtime/book.sqlite3')) as dest:self.source.db.backup(dest)
+        (moved/'runtime/account.json').write_bytes((self.root/'runtime/account.json').read_bytes())
+        location={k:manifest[k] for k in ('comparison_id','source_account_id','source_stream_id')}
+        location.update(source_root=str(moved),authorization_reference='Test restored source relocation')
+        (self.folder/'source-location.json').write_text(encode(location))
+        with closing(Comparison(self.folder,source_account_id=self.account)) as comparison:
+            self.assertEqual(comparison.source_root,moved)
+        self.assertEqual((self.folder/'manifest.json').read_bytes(),original)
+        other=Path(self.temp.name)/'different/rug_desk'
+        with closing(Book(other,initialize=True)):pass
+        location['source_root']=str(other)
+        (self.folder/'source-location.json').write_text(encode(location))
+        with self.assertRaises(ValueError):Comparison(self.folder,source_account_id=self.account)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

@@ -36,6 +36,7 @@ JOBS = {
     'nitrogen-scan': ('NITROGEN Search and Judge', 1, 110, ['nitrogen_bot.py', 'scan']),
     'nitrogen-watch': ('NITROGEN Paper Exits', 1, 50, ['nitrogen_bot.py', 'watch']),
     'nitrogen-head': ('NITROGEN Outcomes and Report', 1, 50, ['nitrogen_bot.py', 'head', '--scheduled']),
+    'radon-collect': ('RADON Chain Collector', 1, 50, ['radon_bot.py', 'collect']),
     'radon-research': ('RADON Copier Research', 1, 600, ['radon_bot.py', 'scheduled', '--job', 'research']),
     'radon-entries': ('RADON Paper Entries', 1, 55, ['radon_bot.py', 'run', '--job', 'entries', '--duration-seconds', '50']),
     'radon-watch': ('RADON Paper Exits', 1, 55, ['radon_bot.py', 'run', '--job', 'watch', '--duration-seconds', '50']),
@@ -135,13 +136,27 @@ def report_due(now):
 
 
 def child(args, timeout, root=ROOT):
-    command = [sys.executable, str(Path(root) / args[0]), *args[1:]]
+    command = [sys.executable, '-X', 'utf8', str(Path(root) / args[0]), *args[1:]]
+    environment = os.environ.copy()
+    if not environment.get('SSL_CERT_FILE'):
+        import certifi
+        environment['SSL_CERT_FILE'] = certifi.where()
     flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
     return subprocess.run(command, cwd=root, timeout=timeout or None,
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags).returncode
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                          creationflags=flags, env=environment).returncode
 
 
-def worker(name, root=ROOT):
+def worker_arguments(name, no_send=False):
+    args = list(JOBS[name][3])
+    if no_send:
+        args = [arg for arg in args if arg != '--send']
+        if name in ('neon-signals', 'neon-watch'):
+            args.append('--no-send')
+    return args
+
+
+def worker(name, root=ROOT, *, no_send=False):
     root = Path(root)
     folder = root / 'runtime/desktop'
     folder.mkdir(parents=True, exist_ok=True)
@@ -159,7 +174,7 @@ def worker(name, root=ROOT):
         if name.startswith('radon-') and not (root/'radon_bot/runtime/book.sqlite3').is_file():
             return 0
         result = {'started_at': started, 'job': name, 'finished_at': None, 'exit_code': None,
-                  'pid': os.getpid(), 'phase': 'STARTING_CHILD'}
+                  'pid': os.getpid(), 'phase': 'STARTING_CHILD', 'notifications_disabled': no_send}
         if os.name == 'nt':
             import ctypes
             session = ctypes.c_ulong()
@@ -167,7 +182,7 @@ def worker(name, root=ROOT):
                 result['windows_session_id'] = session.value
         atomic(folder / (name + '.json'), encode(result))
         try:
-            result['exit_code'] = child(JOBS[name][3], JOBS[name][2], root)
+            result['exit_code'] = child(worker_arguments(name, no_send), JOBS[name][2], root)
         except subprocess.TimeoutExpired:
             result.update(exit_code=124, error='Child exceeded time budget; journal remains authoritative')
         except Exception as exc:
@@ -225,10 +240,11 @@ def main():
     p = sub.add_parser('import-input'); p.add_argument('name', choices=INPUTS); p.add_argument('source', type=Path)
     p = sub.add_parser('pair'); p.add_argument('username')
     p = sub.add_parser('worker'); p.add_argument('name', choices=JOBS)
+    p.add_argument('--no-send', action='store_true', help='Run locally without Telegram delivery')
     args = parser.parse_args()
     try:
         if args.command == 'worker':
-            return worker(args.name)
+            return worker(args.name, no_send=args.no_send)
         if args.command == 'import-input':
             out = import_input(ROOT, args.name, args.source)
         elif args.command == 'pair':

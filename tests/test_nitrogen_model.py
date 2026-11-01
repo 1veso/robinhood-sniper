@@ -45,9 +45,11 @@ class ModelTests(unittest.TestCase):
         audit=json.loads(self.book.db.execute('SELECT payload FROM api_requests').fetchone()[0])
         self.assertEqual(audit['account_id'],self.book.identity);self.assertIsNone(audit['usage']['billed_usd']);self.assertEqual(audit['reservation_usd'],'0.01')
         self.assertNotIn('fixture-secret-only',encode(audit))
-        for path in (self.book.folder/'jev-budget.sqlite3',self.root/'runtime/jev-review/budget.sqlite3',self.root/'rug_desk/runtime/ai-budget.sqlite3'):
+        for path in (self.book.folder/'jev-budget.sqlite3',self.root/'runtime/jev-review/budget.sqlite3'):
             import sqlite3
             with closing(sqlite3.connect(path)) as db:self.assertEqual(db.execute('SELECT account_id FROM advisory_request_accounts').fetchone()[0],self.book.identity)
+        self.assertFalse((self.root/'rug_desk/runtime/ai-budget.sqlite3').exists())
+        self.assertEqual(audit['budget_scope'],'JEV_ONLY')
     def test_no_request_replay(self):
         self.model.ask('a',{})
         with self.assertRaises(Exception):self.model.ask('a',{})

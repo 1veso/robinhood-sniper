@@ -59,6 +59,13 @@ def view(app,bot='solana',now=None):
         neon_workspace=workspace(db,account,report,positions,fills,now) if bot=='neon' else None
     observed=report.get('generated_at');stale=type(observed) is not int or not 0<=now-observed<=(180 if bot=='neon' else 2100)
     blockers=list(report.get('blockers',[])) if bot=='neon' else []
+    if bot=='solana':
+        from .jev_lifecycle import enabled_for
+        if enabled_for(app, account['account_id']):
+            from .jev_readiness import report as jev_readiness
+            current = jev_readiness(app, now=now)
+            blockers.extend(r['reason'] for r in current['requirements']
+                if r['required_for']=='PAPER_OPERATION' and r['status']!='PASS')
     model=report.get('model',{}) if bot=='neon' else {'enabled':report.get('paid_ai_enabled')}
     if model.get('enabled') is not True:blockers.append('Worker evidence does not enable the required model gate')
     if not trial:blockers.append('Paper trial has not started')

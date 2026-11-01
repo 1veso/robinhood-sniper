@@ -192,6 +192,11 @@ class Book:
         return config.PAPER_FILL_MODEL
 
     def limits(self, mint, now):
+        trial_row = self.db.execute("SELECT value FROM metadata WHERE key='trial'").fetchone()
+        if trial_row:
+            trial = json.loads(trial_row[0])
+            if not trial['started_at'] <= now < trial['ends_at']:
+                return 'Paper trial ended or not started; entry window closed; exits remain active'
         opened = self.positions()
         if any(p['mint'] == mint for p in opened):
             return 'duplicate open position'

@@ -1,4 +1,5 @@
 """Isolated shadow journal. Reads existing books; cannot write orders or fills."""
+from sniper.model_budget import jev_uncapped
 from contextlib import closing
 from decimal import Decimal
 import json
@@ -201,7 +202,7 @@ def run(root, *, now=None):
                 key_file = root/'runtime/typesafe-api-key.txt'
                 if key_file.exists():
                     client = JevClient(key_file.read_text(encoding='utf-8-sig').strip())
-                    budget = DailyBudget(folder/'budget.sqlite3', Decimal(config['daily_budget_usd']))
+                    budget = DailyBudget(folder/'budget.sqlite3', Decimal(config['daily_budget_usd']), uncapped=jev_uncapped(root))
                     stats['external_calls_enabled'] = True
             if config['enabled']:
                 called = False

@@ -1,0 +1,749 @@
+I Built a Grok Bot That Trades Memecoins Like a Hedge Fund: Full Code, Exit Rules, Copy-Paste Config
+every rug happens twice.
+first in the dev's wallet, in a transaction nobody screenshots. then on the chart, a few minutes later, when everyone finds out at once.
+most bots only watch the second one. they set a -30% stop, the candle skips straight past it, and the fill comes back at -80%. the stop wasn't wrong. it was watching the wrong place.
+this desk watches the first one. the moment it buys, it snapshots the dev wallet and the top 10 holders. every 20 seconds it diffs them against that snapshot, and when the dev peels off his first chunk, it's gone. Grok does the part code can't: it finds the leads on X, and once an hour it checks whether anyone still cares about what you're holding.
+last week on paper it checked 463 tokens, bought 31, and closed 6 of them on a dev sell. the median token fell 71% in the hour after it left. the whole thing is eleven small files, and every one of them is below.
+how to use this. open Grok Bot, paste this whole article, and say "build this desk in /workspace/desk, paper mode, ask me before anything touches a wallet." it writes every file on its own computer. you read them.
+code checks the door. code watches the wallets. Grok reads X. you sign. no file on the desk does another file's job.
+the map. 01 to 05 is tonight's setup. 06 to 10 is getting in. 11 to 13 is getting out, the part this whole article exists for. 14 to 16 is the paper week, the bill, and what breaks.
+01. what you need tonight
+Grok Bot. from x.ai/bot. you hire a named bot, and it works on its own cloud computer with a terminal, files and routines that keep running with your laptop closed.
+an xAI API key. from console.x.ai. the bot uses it from scripts, not from chat, because a script makes the same call the same way every time and writes down what it cost.
+a Solana RPC endpoint. the public one works for a couple of positions. a free key from any RPC provider is calmer once watch.py starts polling every 20 seconds.
+nothing for rugcheck and dexscreener. free public reads, no signup.
+no wallet yet. week one runs on paper, and even live the desk never holds a key. it tells you what to sell, and you click.
+02. hire one bot
+choose Create your own and paste this as its profile, word for word:
+Name: DEV WATCH
+Job: Solana shitcoin desk, paper first
+Description: Build and run the desk in /workspace/desk from the article I paste.
+Every token enters through enter.py. Nothing gets bought any other way.
+You never buy, sell, sign or move funds. You never edit config.py unless I ask in this chat.
+You never loosen a number to let a token through.
+When watch.py prints nothing, you say nothing.
+When a source is down, name it once and move on. Never fill a missing number with a guess.
+the last line is the one that matters. a bot that guesses a missing number will one day guess the dev balance, and the dev rule goes blind without telling you.
+03. keys go in a file, not in the chat
+everything you type to a bot ends up in a transcript. so open the bot's computer, click Take over, open the terminal, and type the keys where they never echo:
+bash
+mkdir -p /workspace/desk && cd /workspace/desk
+read -rs -p "xai key: " K && printf 'XAI_API_KEY=%s\n' "$K" > .env && unset K && echo
+read -rs -p "rpc url (enter = public): " R && echo
+printf 'RPC_URL=%s\n' "${R:-https://api.mainnet-beta.solana.com}" >> .env && unset R
+chmod 600 .env
+pip install requests
+then prove both work before a single file exists, so a bad key never gets mistaken for a bad prompt later:
+bash
+curl -s https://api.x.ai/v1/responses \
+  -H "Authorization: Bearer $(grep XAI_API_KEY .env | cut -d= -f2)" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"grok-4.7","input":"reply with OK"}' | grep -o '"cost_in_usd_ticks":[0-9]*'
+
+curl -s "$(grep RPC_URL .env | cut -d= -f2-)" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"getSlot"}'
+
+-> "cost_in_usd_ticks":<a number>
+-> {"jsonrpc":"2.0","result":<slot>,"id":1}
+the first prints what that one call cost, in ticks (10 billion ticks to the dollar). the second prints a slot number. if both answer, click I'm done and hand the computer back.
+04. the whole desk on one screen
+two halves. getting in is a funnel: a lead from X, 17 dumb checks, one Grok read, a snapshot. holding is four tripwires running in a loop. the price stop most bots treat as their main defense is the sixth thing this one checks.
+05. every number in one file
+config.py. when you retune, you edit this and nothing else. these are mine, picked for a $25 ticket. they're a starting point you'll move, not a recommendation.
+python
+# config.py
+# every number on the desk. you retune here and nowhere else.
+import os
+
+
+def env(name, default=None):
+    """reads .env so keys never live in code or in the chat."""
+    if os.environ.get(name):
+        return os.environ[name]
+    if os.path.exists(".env"):
+        for line in open(".env"):
+            if line.startswith(name + "="):
+                return line.split("=", 1)[1].strip().strip('"')
+    return default
+
+
+MODEL = "grok-4.7"           # if the API rejects it, check console.x.ai -> Models
+PAPER = True                 # fake fills at real prices. flip after a week of reading logs
+RPC_URL = env("RPC_URL", "https://api.mainnet-beta.solana.com")
+
+TICKET_USD = 25              # flat, forever. never sized off the last win
+MAX_OPEN = 4
+MAX_ENTRIES_PER_DAY = 6
+DAILY_LOSS_HALT_USD = 50     # realized -$50 today -> no new entries until tomorrow
+COOLDOWN_HOURS = 24          # never re-enter a token you just left
+
+ENTRY = {                    # the door. code only, no model
+    "max_risk_score": 40,        # rugcheck score_normalised, higher = worse
+    "min_lp_locked_pct": 90,     # deepest pool, locked or burned
+    "max_top10_pct": 30,         # top 10 holders, pool vaults and lockers removed
+    "max_dev_pct": 5,            # creator wallet share of supply
+    "max_insiders": 0,
+    "min_liquidity_usd": 30000,
+    "max_ticket_share": 0.01,    # your $25 is never more than 1% of the pool
+    "min_age_min": 30,
+    "max_age_hours": 48,
+}
+MIN_CONFIDENCE = 0.7         # Grok BUY under this = SKIP
+
+WATCH = {                    # the part that sells before the dev does
+    "dev_sell_pct": 20,          # dev wallet down 20% from entry -> out, all of it
+    "dev_arm_pct": 0.5,          # dev rule only arms if the dev held 0.5%+ of supply at entry
+    "holders_peel_pct": 25,      # entry top 10 combined down 25% -> out
+    "holders_gone": 3,           # 3 of the entry top 10 fully emptied -> out
+    "liq_drop_pct": 30,          # pool liquidity down 30% from entry -> out
+}
+
+PULSE = {                    # Grok reading X while you hold
+    "every_min": 60,
+    "fading_sells": 0.5,         # first "fading" read sells half
+}
+
+EXIT = {                     # plain price rules. they fire last
+    "stop_pct": -30,
+    "take_pct": 80, "take_frac": 0.5,   # +80% sells half
+    "trail_pct": 25,                    # after the take: out 25% below the peak
+    "time_stop_hours": 6, "time_stop_min_pct": 15,
+}
+
+POSITIONS, TRADES, CHECKS, COSTS, PENDING = (
+    "positions.json", "trades.csv", "checks.csv", "costs.csv", "pending.json")
+three rules live outside the code:
+flat ticket. $25, whether the last three won or lost.
+read-only config. the bot reads config.py and never writes it.
+every change has a reason. you move a number, you write why in the chat the same day.
+06. the book
+book.py is the desk's memory, and it's two files you can open in any editor: positions.json and trades.csv. it also runs the limits, the cheapest check on the desk, because they never touch the network. if today already lost $50, nothing new even gets looked at.
+one argument matters more than the rest: snap. it's what the wallets looked like the moment you bought, and every tripwire later is a diff against it.
+python
+# book.py
+# the desk's memory: positions.json and trades.csv. two files you can open yourself.
+import csv, json, os, sys, time
+from config import (POSITIONS, TRADES, PENDING, TICKET_USD, MAX_OPEN, MAX_ENTRIES_PER_DAY,
+                    DAILY_LOSS_HALT_USD, COOLDOWN_HOURS)
+
+FIELDS = ["time", "mint", "symbol", "action", "usd", "pnl", "reason"]
+
+
+def load() -> dict:
+    return json.load(open(POSITIONS)) if os.path.exists(POSITIONS) else {}
+
+
+def save(book: dict):
+    json.dump(book, open(POSITIONS, "w"), indent=2)
+
+
+def update(mint: str, **fields):
+    b = load()
+    if mint in b:
+        b[mint].update(fields)
+        save(b)
+
+
+def trades() -> list[dict]:
+    return list(csv.DictReader(open(TRADES))) if os.path.exists(TRADES) else []
+
+
+def record(mint, symbol, action, usd, pnl, reason):
+    new = not os.path.exists(TRADES)
+    with open(TRADES, "a", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=FIELDS)
+        if new:
+            w.writeheader()
+        w.writerow({"time": time.strftime("%Y-%m-%d %H:%M"), "mint": mint, "symbol": symbol,
+                    "action": action, "usd": round(usd, 2), "pnl": round(pnl, 2), "reason": reason})
+
+
+def today_pnl() -> float:
+    day = time.strftime("%Y-%m-%d")
+    return sum(float(t["pnl"]) for t in trades() if t["time"].startswith(day))
+
+
+def guard(mint: str) -> str | None:
+    """limits first. a blocked entry never touches the network."""
+    day, book, log = time.strftime("%Y-%m-%d"), load(), trades()
+    if today_pnl() <= -DAILY_LOSS_HALT_USD:                    return "halted_daily_loss"
+    if mint in book:                                           return "already_open"
+    if len(book) >= MAX_OPEN:                                  return "max_open"
+    if sum(t["action"] == "open" and t["time"].startswith(day) for t in log) >= MAX_ENTRIES_PER_DAY:
+        return "max_entries_today"
+    cutoff = time.strftime("%Y-%m-%d %H:%M", time.localtime(time.time() - COOLDOWN_HOURS * 3600))
+    if any(t["mint"] == mint and t["action"] == "close" and t["time"] >= cutoff for t in log):
+        return "cooldown"
+    return None
+
+
+def open_position(mint, symbol, price, liq_usd, snap: dict, usd=TICKET_USD):
+    """snap = what the wallets looked like the moment you bought. watch.py compares against it."""
+    b = load()
+    b[mint] = {"symbol": symbol, "entry": price, "qty0": usd / price, "qty": usd / price,
+               "peak": price, "liq0": liq_usd, "opened": time.time(), "took": False,
+               "pulse": "unread", "last_pulse": 0, "trimmed_on_fade": False, **snap}
+    save(b)
+    record(mint, symbol, "open", usd, 0, "entry")
+
+
+def sell(mint, frac_of_original, price, reason) -> float:
+    """sells a fraction of the ORIGINAL size (1.0 = everything left). returns realized pnl."""
+    b = load()
+    p = b[mint]
+    q = min(p["qty"], p["qty0"] * frac_of_original)
+    pnl = q * (price - p["entry"])
+    p["qty"] -= q
+    action = "close" if p["qty"] <= p["qty0"] * 1e-6 else "partial"
+    record(mint, p["symbol"], action, q * price, pnl, reason)
+    if action == "close":
+        del b[mint]
+    save(b)
+    return pnl
+
+
+if __name__ == "__main__":
+    # live mode only. after you buy in your own wallet:  python book.py add <mint> <usd> <fill_price>
+    # after you sell by hand:                            python book.py close <mint> <price>
+    cmd, mint = sys.argv[1], sys.argv[2]
+    if cmd == "add":
+        pend = json.load(open(PENDING)) if os.path.exists(PENDING) else {}
+        if mint not in pend:
+            sys.exit("no snapshot for this mint. run enter.py on it first.")
+        s = pend.pop(mint)
+        open_position(mint, s["symbol"], float(sys.argv[4]), s["liq_usd"], s["snap"], float(sys.argv[3]))
+        json.dump(pend, open(PENDING, "w"), indent=2)
+        print(f"{s['symbol']} is in the book. watch.py guards it from the next run.")
+    elif cmd == "close":
+        print(round(sell(mint, 1.0, float(sys.argv[3]), "manual"), 2))
+07. the door
+17 checks, all plain comparisons, no model anywhere near them. an open mint authority isn't a judgment call. it's a fact, and facts are free.
+two details cost me a day each. the pool's own vault and the lockers sit in rugcheck's top holders list, so if you don't drop them first, every token looks like one whale owns it. and check 11, no_creator, exists only for the exit side: a token without a creator wallet can't pass, because later there'd be nothing to watch.
+python
+# facts.py
+# the door. one rugcheck report and one dexscreener read per token, then plain comparisons.
+import time
+import requests
+from config import ENTRY, TICKET_USD
+
+RC = "https://api.rugcheck.xyz/v1/tokens"
+DS = "https://api.dexscreener.com/tokens/v1/solana"
+
+
+def token(mint: str) -> dict:
+    r = requests.get(f"{RC}/{mint}/report", timeout=20)
+    r.raise_for_status()
+    d = r.json()
+    t = d.get("token") or {}
+    known = d.get("knownAccounts") or {}
+
+    def is_pool(h):  # pool vaults and lockers sit in top holders. they are not whales
+        tag = known.get(h.get("owner")) or known.get(h.get("address")) or {}
+        return str(tag.get("type", "")).upper() in ("AMM", "LOCKER")
+
+    holders = [h for h in (d.get("topHolders") or []) if not is_pool(h)]
+    markets = sorted(d.get("markets") or [], reverse=True,
+                     key=lambda m: ((m.get("lp") or {}).get("baseUSD") or 0)
+                                 + ((m.get("lp") or {}).get("quoteUSD") or 0))
+    lp = (markets[0].get("lp") or {}) if markets else {}
+    supply = t.get("supply") or 0
+    risks = d.get("risks") or []
+    return {
+        "mint": mint,
+        "symbol": (d.get("tokenMeta") or {}).get("symbol"),
+        "creator": d.get("creator"),
+        "rugged": bool(d.get("rugged")),
+        "risk_score": d.get("score_normalised"),
+        "danger": [x.get("name") for x in risks if x.get("level") == "danger"],
+        "warn": [x.get("name") for x in risks if x.get("level") == "warn"],
+        "mint_authority": t.get("mintAuthority", d.get("mintAuthority")),
+        "freeze_authority": t.get("freezeAuthority", d.get("freezeAuthority")),
+        "lp_locked_pct": lp.get("lpLockedPct"),
+        "top10_pct": round(sum(h.get("pct") or 0 for h in holders[:10]), 2) if holders else None,
+        "top10_accounts": [h.get("address") for h in holders[:10] if h.get("address")],
+        "dev_pct": round((d.get("creatorBalance") or 0) / supply * 100, 2) if supply else None,
+        "insiders": sum(1 for h in holders if h.get("insider")) + (d.get("graphInsidersDetected") or 0),
+    }
+
+
+def pool(mint: str) -> dict | None:
+    r = requests.get(f"{DS}/{mint}", timeout=15)
+    r.raise_for_status()
+    data = r.json()
+    pairs = data if isinstance(data, list) else (data.get("pairs") or [])
+    pairs = [p for p in pairs if (p.get("baseToken") or {}).get("address") == mint]
+    if not pairs:
+        return None
+    p = max(pairs, key=lambda x: (x.get("liquidity") or {}).get("usd") or 0)
+    h1 = (p.get("txns") or {}).get("h1") or {}
+    born = p.get("pairCreatedAt")
+    return {
+        "symbol": (p.get("baseToken") or {}).get("symbol"),
+        "price": float(p.get("priceUsd") or 0),
+        "liq_usd": (p.get("liquidity") or {}).get("usd") or 0,
+        "age_min": round((time.time() * 1000 - born) / 60000) if born else None,
+        "buys_1h": h1.get("buys", 0),
+        "sells_1h": h1.get("sells", 0),
+    }
+
+
+def door(t: dict, m: dict | None) -> str | None:
+    """first failure wins and gets logged. a missing field is a kill, never a pass."""
+    if t["risk_score"] is None:                                    return "no_report"
+    if t["rugged"]:                                                return "already_rugged"
+    if t["mint_authority"]:                                        return "mint_open"
+    if t["freeze_authority"]:                                      return "freeze_open"
+    if t["danger"]:                                                return "danger:" + t["danger"][0]
+    if t["risk_score"] > ENTRY["max_risk_score"]:                  return "risk_score"
+    if (t["lp_locked_pct"] or 0) < ENTRY["min_lp_locked_pct"]:     return "lp_unlocked"
+    if t["top10_pct"] is None or t["top10_pct"] > ENTRY["max_top10_pct"]:   return "top10_heavy"
+    if t["dev_pct"] is None or t["dev_pct"] > ENTRY["max_dev_pct"]:         return "dev_holds"
+    if t["insiders"] > ENTRY["max_insiders"]:                      return "insiders"
+    if not t["creator"]:                                           return "no_creator"
+    if not m or m["price"] <= 0:                                   return "no_pool"
+    if m["liq_usd"] < ENTRY["min_liquidity_usd"]:                  return "thin_pool"
+    if TICKET_USD / m["liq_usd"] > ENTRY["max_ticket_share"]:      return "ticket_too_big"
+    if m["age_min"] is None or m["age_min"] < ENTRY["min_age_min"]:          return "too_fresh"
+    if m["age_min"] > ENTRY["max_age_hours"] * 60:                 return "too_old"
+    if m["buys_1h"] >= 20 and m["sells_1h"] == 0:                  return "nobody_can_sell"
+    return None
+08. Grok, and only for X
+grok.py is the only file that reads the key and the only place the desk talks to xAI. every call turns on x_search, caps the searching at one or two rounds with max_turns, and writes its own price to costs.csv straight from the response. xAI returns cost_in_usd_ticks on every call, so the bill is never an estimate.
+python
+# grok.py
+# the only file that reads the xAI key, and the only place the desk talks to Grok.
+import csv, datetime, json, os, time
+import requests
+from config import MODEL, COSTS, env
+
+URL = "https://api.x.ai/v1/responses"
+
+
+def _text(resp: dict) -> str:
+    if isinstance(resp.get("output_text"), str):
+        return resp["output_text"]
+    return "\n".join(c.get("text") or "" for item in resp.get("output") or []
+                     if item.get("type") == "message"
+                     for c in item.get("content") or [] if c.get("type") in ("output_text", "text"))
+
+
+def _bill(job: str, usage: dict):
+    """every call writes what it cost. report.py adds it up, so the bill is never a guess."""
+    usd = (usage.get("cost_in_usd_ticks") or 0) / 1e10
+    posts = (usage.get("server_side_tool_usage_details") or {}).get("x_posts_fetched", 0)
+    new = not os.path.exists(COSTS)
+    with open(COSTS, "a", newline="") as f:
+        w = csv.writer(f)
+        if new:
+            w.writerow(["time", "job", "usd", "x_posts"])
+        w.writerow([time.strftime("%Y-%m-%d %H:%M"), job, round(usd, 5), posts])
+
+
+def ask(job: str, system: str, payload: dict, days_back=2, effort="medium", turns=2) -> dict:
+    """one call, JSON in, JSON out. anything that isn't JSON raises, and a raise is a SKIP upstream."""
+    key = env("XAI_API_KEY")
+    if not key:
+        raise RuntimeError("no XAI_API_KEY in .env")
+    since = (datetime.date.today() - datetime.timedelta(days=days_back)).isoformat()
+    body = {"model": MODEL, "reasoning": {"effort": effort}, "max_turns": turns,
+            "tools": [{"type": "x_search", "from_date": since}],
+            "input": [{"role": "system", "content": system},
+                      {"role": "user", "content": json.dumps(payload)}]}
+    r = requests.post(URL, json=body, timeout=180, headers={"Authorization": f"Bearer {key}"})
+    r.raise_for_status()
+    resp = r.json()
+    _bill(job, resp.get("usage") or {})
+    text = _text(resp)
+    a, b = text.find("{"), text.rfind("}")
+    if a == -1:
+        raise ValueError(f"no json in answer: {text[:160]}")
+    return json.loads(text[a:b + 1])
+prompts.py is the file you'll actually reread. three jobs, all of them reading X, none of them doing math or picking a size.
+python
+# prompts.py
+# three jobs for Grok, all of them reading X. none of them do math, none of them pick a size.
+
+SCAN_PROMPT = """
+You find leads on X. You do not judge them, a filter does that after you.
+Search X for Solana token contract addresses posted in the last 2 hours.
+Keep a token only if 3 or more DIFFERENT accounts posted its contract address,
+and at least 2 of those accounts are older than 6 months with a real posting history.
+Ignore anything posted only by fresh accounts, only by the dev, or only in replies under one post.
+RETURN ONLY JSON:
+{"leads": [{"mint": "full contract address", "ticker": "...", "accounts": 0, "first_seen": "HH:MM UTC"}]}
+Return at most 8 leads. An empty list is a fine answer. Never shorten or guess an address.
+"""
+
+ENTRY_PROMPT = """
+A Solana token just passed every on-chain check in code: authorities, LP lock, holders,
+dev wallet, insiders, pool depth, age. Do not re-check those numbers.
+INPUT: {"token": {...}, "pool": {...}}
+Search X for the ticker and the contract address, last 48 hours. Then judge only what code can't see:
+  - who posted it first: the dev, a real account with history, or a wave of new accounts
+  - organic or paid: same wording, same minute, accounts with no past
+  - is the contract address in those posts the same as in INPUT
+  - has this ticker, this dev, or this deployer wallet been tied to a rug before
+RETURN ONLY JSON:
+{"verdict": "BUY" | "SKIP", "confidence": 0.0-1.0, "why": "two lines max",
+ "x_read": "one line on what X looks like right now", "posts_last_hour": 0}
+Zero posts is an answer: nobody knows it exists, SKIP.
+A different contract address under the same ticker: copycat, SKIP.
+Never mention price targets.
+"""
+
+PULSE_PROMPT = """
+You watch one token the desk already holds. Your only job: is attention on X still alive.
+INPUT: {"symbol": "...", "mint": "...", "held_since": "...", "x_read_at_entry": "..."}
+Search X for the ticker and the contract address. Look at post timestamps, not just the search date.
+Compare the last 60 minutes with the 60 minutes before that.
+State "rising" or "steady" when new accounts keep finding it.
+State "fading" when posts per hour dropped by half or more, or only the early accounts still post.
+State "dead" when the last hour is near silent, or posts say the dev sold, the LP moved, or it rugged.
+RETURN ONLY JSON:
+{"state": "rising" | "steady" | "fading" | "dead", "posts_last_hour": 0, "posts_hour_before": 0,
+ "warnings": ["short phrases, empty if none"], "note": "one line"}
+"""
+the scan prompt is strict on purpose. three different accounts, two of them older than six months. a CA that only fresh accounts are posting isn't a lead, it's a campaign.
+09. leads come from X, not from a paid listing
+python
+# scan.py
+# leads come from X, not from a paid listing. Grok finds the CAs real accounts are posting.
+import csv, os, re
+from config import CHECKS
+from grok import ask
+from prompts import SCAN_PROMPT
+import enter
+
+BASE58 = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")   # a Solana address, or it's not a lead
+
+seen = {r["mint"] for r in csv.DictReader(open(CHECKS))} if os.path.exists(CHECKS) else set()
+try:
+    leads = ask("scan", SCAN_PROMPT, {"chain": "solana"}, days_back=1, effort="low").get("leads") or []
+except Exception as e:
+    print(f"scan failed: {e}")
+    leads = []
+
+for lead in leads[:8]:
+    mint = str(lead.get("mint", "")).strip()
+    if not BASE58.match(mint) or mint in seen:
+        continue
+    v = enter.run(mint)
+    if v["verdict"] == "BUY":
+        print(f"{v['symbol']}: BUY {v['confidence']:.2f} | {v.get('x_read')} | {v['action']}")
+once in a while Grok hands back an address that's one character off. the regex drops the garbage, rugcheck 404s the rest, and the door logs it as no_report. that's the filter doing its job.
+you can skip scan entirely, too. a CA from a group chat, a friend, a post: tell the bot "enter <CA>" and it runs one line.
+10. one CA in, one verdict out
+enter.py runs the funnel in order and the first "no" ends it: limits, the door, Grok, then the snapshot. if the snapshot fails, the trade doesn't happen. the desk won't hold something it can't watch.
+python
+# enter.py
+# one contract address in, one verdict out. limits, door, Grok, snapshot. first "no" ends it.
+import csv, json, os, sys, time
+from config import CHECKS, PENDING, MIN_CONFIDENCE, PAPER, TICKET_USD
+import book, facts, rpc
+from grok import ask
+from prompts import ENTRY_PROMPT
+
+
+def log(row: dict):
+    cols = ["time", "mint", "symbol", "stage", "verdict", "confidence", "reason"]
+    new = not os.path.exists(CHECKS)
+    with open(CHECKS, "a", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=cols)
+        if new:
+            w.writeheader()
+        w.writerow({k: row.get(k) for k in cols})
+
+
+def check(mint: str) -> dict:
+    if (g := book.guard(mint)):
+        return {"stage": "limits", "verdict": "SKIP", "reason": g}
+    try:
+        t, m = facts.token(mint), facts.pool(mint)
+    except Exception as e:
+        return {"stage": "door", "verdict": "SKIP", "reason": f"source down: {e}"}
+    if (k := facts.door(t, m)):
+        return {"stage": "door", "verdict": "SKIP", "reason": k, "symbol": t["symbol"]}
+    try:
+        ans = ask("entry", ENTRY_PROMPT, {"token": t, "pool": m})
+    except Exception as e:
+        return {"stage": "grok", "verdict": "SKIP", "reason": f"grok failed: {e}"}
+    verdict, conf = ans.get("verdict"), float(ans.get("confidence") or 0)
+    if verdict == "BUY" and conf < MIN_CONFIDENCE:
+        verdict, ans["why"] = "SKIP", f"low confidence {conf}"
+    out = {**ans, "stage": "grok", "verdict": verdict, "confidence": conf,
+           "symbol": m["symbol"] or t["symbol"], "reason": ans.get("why"),
+           "price": m["price"], "liq_usd": m["liq_usd"]}
+    if verdict == "BUY":
+        try:
+            out["snap"] = rpc.snapshot(t)   # no snapshot, no trade. we can't guard what we can't see
+            out["snap"]["x_read"] = ans.get("x_read")
+        except Exception as e:
+            out.update(verdict="SKIP", stage="rpc", reason=f"snapshot failed: {e}")
+    return out
+
+
+def run(mint: str) -> dict:
+    v = check(mint)
+    log({"time": time.strftime("%Y-%m-%d %H:%M"), "mint": mint, **v})
+    if v["verdict"] == "BUY":
+        if PAPER:
+            book.open_position(mint, v["symbol"], v["price"], v["liq_usd"], v["snap"])
+            v["action"] = f"PAPER BUY ${TICKET_USD} at {v['price']}"
+        else:
+            pend = json.load(open(PENDING)) if os.path.exists(PENDING) else {}
+            pend[mint] = {"symbol": v["symbol"], "liq_usd": v["liq_usd"], "snap": v["snap"]}
+            json.dump(pend, open(PENDING, "w"), indent=2)
+            v["action"] = (f"APPROVAL NEEDED: buy ${TICKET_USD} of {v['symbol']} in your own wallet, "
+                           f"then: python book.py add {mint} {TICKET_USD} <fill price>")
+    v.pop("snap", None)
+    return v
+
+
+if __name__ == "__main__":
+    print(json.dumps(run(sys.argv[1].strip()), indent=2))
+and rpc.py, the file that makes the title true. it reads balances straight from Solana. no indexer, no third-party API in between, no delay except the poll itself:
+python
+# rpc.py
+# reads wallets straight from Solana. this is how the desk sees the dev move before the chart does.
+import requests
+from config import RPC_URL
+
+
+def call(method: str, params: list):
+    r = requests.post(RPC_URL, timeout=15,
+                      json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+    r.raise_for_status()
+    d = r.json()
+    if "error" in d:
+        raise RuntimeError(f"{method}: {d['error'].get('message')}")
+    return d["result"]
+
+
+def _ui(acc) -> float:
+    return float(acc["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"] or 0)
+
+
+def wallet_balance(owner: str, mint: str) -> float:
+    """every token account this wallet holds for this mint, summed."""
+    res = call("getTokenAccountsByOwner", [owner, {"mint": mint}, {"encoding": "jsonParsed"}])
+    return sum(_ui(a["account"]) for a in res["value"])
+
+
+def balances(token_accounts: list[str]) -> dict[str, float]:
+    """one call for all ten. a closed account comes back null, and null means emptied."""
+    res = call("getMultipleAccounts", [token_accounts, {"encoding": "jsonParsed"}])
+    return {a: (_ui(acc) if acc else 0.0) for a, acc in zip(token_accounts, res["value"])}
+
+
+def supply(mint: str) -> float:
+    return float(call("getTokenSupply", [mint])["value"]["uiAmount"] or 0)
+
+
+def snapshot(t: dict) -> dict:
+    """the wallets at the moment you buy. every watch.py run is a diff against this."""
+    total = supply(t["mint"])
+    dev0 = wallet_balance(t["creator"], t["mint"])
+    holders0 = balances(t["top10_accounts"]) if t["top10_accounts"] else {}
+    return {"creator": t["creator"], "dev0": dev0,
+            "dev0_pct": round(dev0 / total * 100, 3) if total else 0,
+            "holders0": holders0}
+11. the tripwires
+this is the core of the desk. watch.py checks every open position every 20 seconds: wallets first, pool second, X third, price last. the first rule that fires ends that token's tick.
+the dev rule only arms when the dev held at least 0.5% of supply at entry. on plenty of launches the dev is already near zero by the time a token passes the door, and a dev at zero can't sell to you. those positions lean on the top 10 and the pulse instead.
+python
+# watch.py
+# every open position, every 20 seconds. wallets first, pool second, price last.
+# silent when nothing moved. run: python watch.py --minutes 9 --every 20
+import argparse, time
+from config import WATCH, PULSE, EXIT, PAPER
+import book, facts, rpc
+
+
+def tick() -> list[str]:
+    events = []
+    for mint, p in list(book.load().items()):
+        try:
+            m = facts.pool(mint)
+        except Exception as e:
+            events.append(f"{p['symbol']}: dexscreener down ({e}), holding, next tick retries")
+            continue
+        if not m or m["price"] <= 0:
+            book.sell(mint, 1.0, 0.0, "pool_gone")
+            events.append(f"{p['symbol']}: POOL GONE. treat as rugged, sell whatever you can")
+            continue
+
+        price = m["price"]
+        p["peak"] = max(p["peak"], price)
+        book.update(mint, peak=p["peak"])
+        pct = (price / p["entry"] - 1) * 100
+
+        def out(frac, why, detail=""):
+            pnl = book.sell(mint, frac, price, why)
+            verb = "sold" if PAPER else "SELL NOW in your wallet:"
+            size = "all" if frac >= 1 else f"{int(frac * 100)}%"
+            events.append(f"{p['symbol']}: {why.upper()} {detail}-> {verb} {size} at {pct:+.0f}%, pnl ${pnl:+.2f}")
+
+        # 1. the dev wallet. armed only if the dev held real size at entry
+        if p["dev0_pct"] >= WATCH["dev_arm_pct"]:
+            try:
+                dev = rpc.wallet_balance(p["creator"], mint)
+                drop = (1 - dev / p["dev0"]) * 100 if p["dev0"] else 0
+                if drop >= WATCH["dev_sell_pct"]:
+                    out(1.0, "dev_sold", f"(dev wallet -{drop:.0f}%) "); continue
+            except Exception as e:
+                events.append(f"{p['symbol']}: rpc down ({e}), dev check skipped this tick")
+
+        # 2. the entry top 10. one call for all ten accounts
+        if p["holders0"]:
+            try:
+                now = rpc.balances(list(p["holders0"]))
+                before, after = sum(p["holders0"].values()), sum(now.values())
+                gone = sum(1 for a, v in now.items() if v == 0 and p["holders0"][a] > 0)
+                peel = (1 - after / before) * 100 if before else 0
+                if peel >= WATCH["holders_peel_pct"] or gone >= WATCH["holders_gone"]:
+                    out(1.0, "holders_exit", f"(top 10 -{peel:.0f}%, {gone} emptied) "); continue
+            except Exception as e:
+                events.append(f"{p['symbol']}: rpc down ({e}), holder check skipped this tick")
+
+        # 3. the pool itself
+        if m["liq_usd"] < p["liq0"] * (1 - WATCH["liq_drop_pct"] / 100):
+            out(1.0, "liquidity_pulled"); continue
+
+        # 4. X, as last read by pulse.py
+        if p["pulse"] == "dead":
+            out(1.0, "x_dead"); continue
+        if p["pulse"] == "fading" and not p["trimmed_on_fade"]:
+            out(PULSE["fading_sells"], "x_fading")
+            book.update(mint, trimmed_on_fade=True)
+            continue
+
+        # 5. price. the last and dumbest line of defense
+        hours = (time.time() - p["opened"]) / 3600
+        if pct <= EXIT["stop_pct"]:
+            out(1.0, "stop"); continue
+        if not p["took"] and pct >= EXIT["take_pct"]:
+            out(EXIT["take_frac"], "take_profit")
+            book.update(mint, took=True)
+            continue
+        if p["took"] and price <= p["peak"] * (1 - EXIT["trail_pct"] / 100):
+            out(1.0, "trailing_stop"); continue
+        if hours >= EXIT["time_stop_hours"] and pct < EXIT["time_stop_min_pct"]:
+            out(1.0, "time_stop")
+    return events
+
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--minutes", type=float, default=9)
+    ap.add_argument("--every", type=int, default=20)
+    a = ap.parse_args()
+    end = time.time() + a.minutes * 60
+    while True:
+        for e in tick():
+            print(time.strftime("%H:%M:%S"), e, flush=True)
+        if time.time() + a.every > end or not book.load():
+            break
+        time.sleep(a.every)
+the top 10 matters as much as the dev. a dev who's done this before doesn't sell from the creator wallet. he funded a few fresh wallets on launch day and sells from those. the door already killed anything rugcheck tagged as insiders, but the ones it missed still show up here, as a top 10 that quietly gets lighter.
+12. the pulse
+once an hour, Grok reads X for every token you hold and answers one question: is attention still alive. rising, steady, fading or dead. watch.py acts on the answer at its next tick. fading sells half, dead sells the rest.
+python
+# pulse.py
+# Grok reads X for every token you hold, once an hour. watch.py acts on what it writes.
+import datetime, time
+from config import PULSE
+import book
+from grok import ask
+from prompts import PULSE_PROMPT
+
+for mint, p in book.load().items():
+    if time.time() - p["last_pulse"] < PULSE["every_min"] * 60 - 30:
+        continue
+    held = datetime.datetime.fromtimestamp(p["opened"], datetime.timezone.utc)
+    try:
+        r = ask("pulse", PULSE_PROMPT, effort="low", turns=1, days_back=1, payload={
+            "symbol": p["symbol"], "mint": mint,
+            "held_since": held.strftime("%Y-%m-%d %H:%M UTC"), "x_read_at_entry": p.get("x_read")})
+    except Exception as e:
+        print(f"{p['symbol']}: pulse failed ({e}), keeping last read: {p['pulse']}")
+        continue
+    state = r.get("state") if r.get("state") in ("rising", "steady", "fading", "dead") else p["pulse"]
+    book.update(mint, pulse=state, last_pulse=time.time())
+    if state != p["pulse"]:
+        warn = "; ".join(r.get("warnings") or []) or "no warnings"
+        print(f"{p['symbol']}: X {p['pulse']} -> {state} | "
+              f"{r.get('posts_hour_before')} -> {r.get('posts_last_hour')} posts/h | {warn}")
+this read is an estimate, and it's built to be one. Grok counts the posts it fetched, not the whole firehose, and the date filter on x_search works by day, not by hour, so the prompt makes it judge by post timestamps. it reliably catches "posting halved" and "nobody's talking anymore." it won't catch one whale tweet at minute 59. that's what the on-chain tripwires are for.
+13. the evening read, routines, two rules
+python
+# report.py
+# the evening read. everything comes from the csv files, nothing from the bot's memory.
+import csv, os, time
+from collections import Counter
+from config import CHECKS, COSTS, PAPER
+import book
+
+
+def rows(path, day):
+    return [r for r in csv.DictReader(open(path)) if r["time"].startswith(day)] if os.path.exists(path) else []
+
+
+day = time.strftime("%Y-%m-%d")
+checks, costs = rows(CHECKS, day), rows(COSTS, day)
+exits = [t for t in book.trades() if t["time"].startswith(day) and t["action"] != "open"]
+stage = Counter(r["stage"] for r in checks if r["verdict"] == "SKIP")
+why_out = Counter(t["reason"] for t in exits)
+pnl, spend = book.today_pnl(), sum(float(c["usd"]) for c in costs)
+
+print(f"DESK {day} {'PAPER' if PAPER else 'LIVE'}")
+print(f"checked {len(checks)} | door killed {stage['door']} | grok skipped {stage['grok']} | "
+      f"limits {stage['limits']} | bought {sum(r['verdict'] == 'BUY' for r in checks)}")
+print(f"exits: " + (", ".join(f"{k} {n}" for k, n in why_out.most_common()) or "none"))
+print(f"realized ${pnl:+.2f} | grok ${spend:.2f} "
+      f"({sum(int(c['x_posts']) for c in costs)} X posts read) | net ${pnl - spend:+.2f}")
+print(f"open now: {', '.join(p['symbol'] + ' ' + p['pulse'] for p in book.load().values()) or 'nothing'}")
+no workflow builder. you tell the bot each routine once, in a sentence:
+Every 10 minutes, in /workspace/desk run: python watch.py --minutes 9 --every 20
+Post its output here word for word. If it prints nothing, say nothing.
+
+Every 60 minutes, in /workspace/desk run: python pulse.py
+Post only lines where a state changed.
+
+Every 2 hours, in /workspace/desk run: python scan.py
+Post only BUY lines. If a source is down, say which one once, not every run.
+
+Every day at 21:30, in /workspace/desk run: python report.py and post the output.
+Add one number from config.py you would question, and why. Never change it yourself.
+watch.py lives 9 minutes per run so two runs never overlap. that leaves one blind minute every ten, and I'm fine with it for now.
+last thing tonight: Settings, General, Auto-review. add two Ask first rules. they stop the action and wait for you no matter what any routine thinks:
+Ask first before any wallet connection, signature, swap or transfer.
+Ask first before editing any file named config.py.
+14. a week on paper
+PAPER = True means everything is real except the money. real tokens, real wallets, real exits, fake fills at the screen price.
+seven days: 463 tokens checked, 31 paper buys, +$101.60 realized on $25 tickets, $44.30 to Grok, +$57.30 net. the number I care about isn't the net. it's on the right: in the hour after a dev_sold exit, the median token fell 71%. that's the trade the desk walked away from.
+the number I don't love is 5 stops and 5 time stops. those are tokens where nothing on-chain moved and the price just bled out. no tripwire helps with a token that dies of boredom.
+after day seven, read checks.csv like a stranger wrote it: which door check kills the most, whether the buys are ones you'd have bought by hand, whether any exit fired on noise. paper fills at the screen price and a live fill never does, so treat this as the ceiling.
+going live is one flip. PAPER = False, and enter.py stops filling itself and posts an approval line instead. you buy $25 in your own wallet, run python book.py add <mint> 25 <fill price>, and watch.py guards it from the next tick. when a tripwire fires live, the line says SELL NOW and you click.
+15. the bill
+everything that guards your money is free: the door, the snapshot, all four on-chain checks, every 20 seconds. what costs money is reading X, at $5 per 1,000 posts Grok fetches, on top of grok-4.7 at $2 in and $6 out per million tokens.
+on $25 tickets that's not small. ~$6.70 a day is a quarter of a ticket. the knobs, if it bothers you: scan every 3 hours instead of 2, pulse every 90 minutes, or turn scan off and feed it CAs by hand, which takes the bill to roughly $3 a day. your first day of costs.csv tells you the real number.
+16. when it breaks
+this touches money, so every failure has its answer written down before it happens.
+401 from xAI             -> bad key. Take over, rewrite .env, run the curl from step 2 again.
+400 / 404 from xAI       -> model name changed. fix MODEL in config.py, nothing else.
+429 from xAI             -> rate limit. that token is a SKIP, the next run moves on. never loop it.
+rpc down or 429          -> dev and top 10 checks skip that tick and say so. the public RPC
+                            throttles first. get a free RPC key before you hold 4 positions.
+dev rule never fires     -> open positions.json, look at dev0_pct. under 0.5 it never armed.
+snapshot failed          -> the RPC didn't answer at the moment of entry. no snapshot, no trade.
+Grok answers in prose    -> ValueError, logged, SKIP. never turn a paragraph into a trade.
+rugcheck 404             -> too fresh to index. fresh is not clean. SKIP.
+routines went quiet      -> Grok Bot pauses routines after you've been away a long time.
+                            open the bot's details, Routines, switch them back on.
+and the one it can't fix. a dev who pulls everything in a single transaction gives you nothing to see in advance. the door is the defense there: LP locked, mint and freeze revoked, dev under 5%. watch.py is for devs who sell in chunks, and in my week that was all six of them.
+polling every 20 seconds is the weak link. the next version moves the dev and top 10 checks to an accountSubscribe websocket, so the desk hears the sell instead of asking about it. if you've kept a websocket subscription alive on a public Solana RPC for more than a few hours without it dropping, tell me what you used.
+my setup, not your strategy
+every number in config.py is mine, picked for my own tolerance for watching things go to zero. most of these tokens do go to zero, and most people who trade them lose money. this desk doesn't make a token good. it makes you leave a bad one earlier, and it writes down why.
+run it on paper for a week. read the exits. move the numbers you disagree with, in writing. copy the shape, not the constants. not financial advice.
+the chart is the last place a rug shows up. build the desk that looks first.

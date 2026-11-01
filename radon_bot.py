@@ -15,7 +15,7 @@ from sniper.radon.book import Book, bound_config, folder_for
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', nargs='?', default='status', choices=['init','status','import','research','entries','watch','report','replay','run','scheduled','model-status','model-binding','model-test'])
+    parser.add_argument('command', nargs='?', default='status', choices=['init','status','import','collect','research','entries','watch','report','replay','run','scheduled','model-status','model-binding','model-test'])
     parser.add_argument('--root', type=Path, default=ROOT)
     parser.add_argument('--source', type=Path)
     parser.add_argument('--history', action='store_true', help='Import the research export rather than the event feed')
@@ -24,7 +24,7 @@ def main(argv=None):
     parser.add_argument('--demo', action='store_true', help='Run a synthetic acceptance scenario in a separate runtime')
     parser.add_argument('--duration-seconds', type=int, default=0, help='Bound run-loop lifetime for desktop workers')
     parser.add_argument('--allow-paid', action='store_true', help='Explicitly permit one funded validation, subject to existing authorizations and budgets')
-    parser.add_argument('--test-kind', choices=['inference','x-search'])
+    parser.add_argument('--test-kind', choices=['inference','x-search','combined'])
     parser.add_argument('--mint')
     args = parser.parse_args(argv)
     if args.mode != 'paper':
@@ -57,6 +57,16 @@ def main(argv=None):
         path = folder/'replays'/f'{int(time.time())}.json'
         atomic(path, encode(result)); print(encode({'replay_file': str(path), 'result': result})); return 0
     cfg = bound_config(root)
+    if args.command == 'collect':
+        from sniper.radon.collector import collect
+        with process_lock(folder/'collect.lock'):
+            book = Book(root, cfg)
+            try:
+                result = collect(book)
+                print(encode(result))
+                return 2 if result.get('state') == 'ERROR' else 0
+            finally:
+                book.close()
     if args.command == 'import':
         if not args.source:
             parser.error('--source is required')

@@ -1,0 +1,12 @@
+{
+  "authorization": "User: fix the exit issue so it only records a sale after I confirm the actual fill, and keep everything else exactly as written in the article",
+  "date": "2026-10-31",
+  "files": {
+    "book.py": {
+      "sha256": "c4294d5c57b4b5587812f43e526c4c1a76ae8c800c1f20e10506def38ce87cd2"
+    },
+    "watch.py": {
+      "sha256": "bb131924211978d91dc31bca2f423cc956f3a314fa8b2c8db602b89c0bcd16cf"
+    }
+  }
+}

@@ -58,8 +58,8 @@ def entries(book, providers=None, model=None, clock=time.time):
     try:
         if policy_hash(load(book.root/'radon_bot')) != policy_hash(book.cfg):
             raise ValueError('Entry config changed; explicit migration required; exits retain bound policy')
-        sync_source(book, int(clock()))
         book.set('model_gate', dict(model.gate(), observed_at=int(clock())))
+        sync_source(book, int(clock()))
         # The entries process lock guarantees these belong to a prior interrupted run.
         for row in book.db.execute("SELECT id FROM events WHERE state='RESEARCHING'").fetchall():
             book.skip(row['id'], 'Interrupted research; possible billing retained, no automatic retry', int(clock()))

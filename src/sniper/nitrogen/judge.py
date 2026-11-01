@@ -1,6 +1,6 @@
 """NITROGEN's versioned TypeSafe contract; no shared policy mutation."""
 from copy import deepcopy
-from sniper.jev import MODEL, URL, numeric, distribution
+from sniper.jev import MODEL, URL, numeric, distribution, validate_score, conservative_score
 from sniper.adapters.solana import request_json
 from sniper.krypton.config import encode, digest
 
@@ -46,8 +46,7 @@ def validate(raw):
     out['action'] = dict(v, probabilities=probs, confidence=numeric(v['confidence'], 0, 1))
     v = a['exit_risk']; legend = {str(i): level for i, level in enumerate(LEVELS)}
     if not isinstance(v, dict) or set(v) != {'type', 'score', 'confidence', 'legend', 'probabilities'} or v['type'] != 'score' or v['legend'] != legend: raise ValueError('Invalid Score legend')
-    probs = distribution(v['probabilities'], legend); score = numeric(v['score'], 0, 4)
-    if abs(score-sum(int(k)*p for k,p in probs.items())) > .0001: raise ValueError('Score differs from distribution')
+    probs = distribution(v['probabilities'], legend); score = validate_score(v['score'], probs)
     out['exit_risk'] = dict(v, score=score, probabilities=probs, confidence=numeric(v['confidence'], 0, 1))
     usage = raw['usage']
     if not isinstance(usage, dict) or set(usage) != {'input_tokens', 'output_tokens'} or any(type(v) is not int or not 0 <= v < 10**9 for v in usage.values()): raise ValueError('Invalid usage')
@@ -63,7 +62,7 @@ def gate(raw, watch_count=0):
               (a['action']['probabilities']['buy'] >= .70, 'buy_probability_below_0.70'),
               (a['organic']['noul'] >= .65, 'organic_probability_below_0.65'),
               (a['late']['noul'] < .5, 'late_yes_or_tie'),
-              (a['exit_risk']['score'] <= 2, 'displayed_exit_risk_above_3')]
+              (conservative_score(a['exit_risk']) <= 2, 'displayed_exit_risk_above_3')]
     return next((('PASS', reason) for ok, reason in checks if not ok), ('BUY', 'all_four_conditions_pass'))
 
 

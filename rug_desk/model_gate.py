@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import time
 from rug_desk import config
+from sniper.model_budget import shared_grok_limit
 
 
 def strategy_binding(root):
@@ -27,6 +28,7 @@ def status(root,now=None):
     result={'enabled':False,'model':config.MODEL,'paid_calls_made':0,'blockers':[],
             'daily_limit_usd':str(config.AI_DAILY_LIMIT_USD),'per_call_reservation_usd':str(config.AI_RESERVATION_USD)}
     try:
+        result['daily_limit_usd'] = str(shared_grok_limit(root.parent))
         def read(name):
             p=root/'runtime'/name
             return json.loads(p.read_text(encoding='utf-8-sig')) if p.exists() else {}

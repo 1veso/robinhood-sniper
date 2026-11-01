@@ -108,12 +108,14 @@ def validate_advice(text: str, evidence_ids: set[str]) -> dict:
 
 class DailyBudget:
     """Atomic, persistent reservation accounting; failed requests keep reservations."""
-    def __init__(self, path: str | Path, daily_limit_usd=Decimal("1")):
+    def __init__(self, path: str | Path, daily_limit_usd=Decimal("1"), *, uncapped=False):
         self.path = str(path)
         if self.path == ":memory:":
             raise AdvisoryError("advisory budget must persist across process restarts")
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self.limit = decimal_value(daily_limit_usd, "daily API budget")
+        if type(uncapped) is not bool: raise AdvisoryError("Invalid uncapped authorization")
+        self.uncapped = uncapped
         self.db = sqlite3.connect(self.path, timeout=10)
         self.db.execute("CREATE TABLE IF NOT EXISTS advisory_reservations (day TEXT NOT NULL, request_id TEXT PRIMARY KEY, reserved_usd TEXT NOT NULL, created_at INTEGER NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS advisory_usage (request_id TEXT PRIMARY KEY, billed_usd TEXT, payload TEXT NOT NULL)")
@@ -132,7 +134,7 @@ class DailyBudget:
             if any(row[1] is not None and row[2] is None for row in rows):
                 raise AdvisoryError("Unverified prior API cost; reconcile usage before further requests")
             used = sum((max(Decimal(row[0]), Decimal(row[2] or 0)) for row in rows), Decimal(0))
-            if used + amount > self.limit:
+            if not self.uncapped and used + amount > self.limit:
                 raise AdvisoryError("daily advisory reservation budget exhausted")
             self.db.execute("INSERT INTO advisory_reservations VALUES (?,?,?,?)", (day, request_id, str(amount), now))
             self.db.commit()

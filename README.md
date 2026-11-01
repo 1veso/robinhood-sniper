@@ -16,7 +16,18 @@ calls remain disabled. Restricted live-executor code exists, but no live
 deployment is enabled or validated by paper results. A profitable edge has not
 been established.
 
-## Console views, distinct strategies
+## Nine views, distinct strategies
+
+Slots 7–9 are Nitrogen, Radon, and Oxygen. Oxygen is the DEV WATCH article desk,
+now in paper mode at `?bot=oxygen`; the old `?bot=devwatch` link remains an alias.
+Its isolated article strategy and confirmation regression tests are retained.
+See [Oxygen integration](docs/DEV_WATCH.md). Local runtime restoration and fresh
+paper accounts preserve separate ledgers; installed source is not proof that a
+bot has current feeds, authorized paid-model evidence, or trading readiness.
+The operating states below describe the upstream reference installation; the
+November 1 local restore has Oxygen's schedules and the Solana paper workers
+active, with entry gates still requiring individual validation. See
+[local Solana activation](docs/SOLANA_PAPER_ACTIVATION.md).
 
 | Console view | Purpose and account boundary | Current operating state |
 | --- | --- | --- |
@@ -28,9 +39,10 @@ been established.
 | **Helium** (`helium`) | Standalone Solana research team; separate $1,000 virtual account | Krypton's trading baseline plus a bound Jev review of Grok; both paid model gates remain disabled |
 | **NITROGEN** (`nitrogen`, slot 7) | Independent $500 Jev Judgment Desk with staged operator-approved paper orders | Implemented; factual sources, own paid authorization and operator approval required; no workers enabled. |
 | **Radon** (slot 8) | Independent fixed-ticket Solana copier research and paper account. | Source and paid research unavailable until explicitly configured; no workers installed by this change. |
+| **Oxygen** (`oxygen`, slot 9) | DEV WATCH article developer-wallet desk; isolated JSON/CSV ledger | Paper fills using live market signals |
 
-Eight implemented views do **not** represent eight independent bankrolls. NITROGEN
-occupies slot seven, and Radon occupies slot eight. Shared adapters and
+Nine implemented views do **not** represent nine independent bankrolls. NITROGEN
+occupies slot seven, Radon slot eight, and Oxygen slot nine. Shared adapters and
 model-budget accounting do not merge strategy accounts or returns. Krypton and
 Helium have no live adapter or Telegram delivery. Other strategies' durable
 notification queues remain separate from comparison studies.

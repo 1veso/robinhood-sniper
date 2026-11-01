@@ -1,2 +1,7 @@
 helium_bot/config.json text eol=lf
 krypton_bot/config.json text eol=lf
+
+# Keep the article's checksum-verified source identical on Windows checkouts.
+dev_watch/*.py text eol=lf
+dev_watch/ARTICLE.txt -text
+dev_watch/*.json text eol=lf

@@ -1,4 +1,5 @@
 """Prospective Jev filter on the shared Solana entry path; never an executor."""
+from sniper.model_budget import jev_uncapped
 from contextlib import closing
 from decimal import Decimal
 import json
@@ -35,7 +36,7 @@ def assessment(root,identity,facts,quote,now,*,client=None,enrich=None,baseline_
             key=Path(root)/'runtime/typesafe-api-key.txt'
             if key.is_file():
                 client=JevClient(key.read_text(encoding='utf-8-sig').strip())
-                budget=DailyBudget(Path(root)/'runtime/jev-review/budget.sqlite3',Decimal(config['daily_budget_usd']))
+                budget=DailyBudget(Path(root)/'runtime/jev-review/budget.sqlite3',Decimal(config['daily_budget_usd']), uncapped=jev_uncapped(root))
                 real_provider=True
         with closing(Journal(root)) as j:
             result=j.assess(dossier,baseline,now=now,client=client,

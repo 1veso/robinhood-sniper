@@ -4,6 +4,28 @@ This is a normalized **input contract**, not a claim that Fomo offers this API.
 Only feed data you are authorized to access and automate. Radon does not accept
 session cookies or use a third-party leaderboard as if it were Fomo.
 
+`radon_bot.py collect` now maintains Radon's own `runtime/chain.sqlite3` archive.
+It independently discovers public research candidates and reads finalized
+Solana wallet signatures and receipts. It requires an explicit collector.json
+authorization bound to the current Radon account and policy. Each invocation
+allows at most eight read requests and a 40-second work window. Durable head and
+backfill cursors survive restarts; unavailable receipts and unsupported routes
+remain explicit. The separate desktop worker runs once per minute.
+
+This is an initial raw collector, not a completed export producer. It never
+writes source.json/history.json, shortlists, orders or fills. Address history
+alone does not prove token-account coverage. Opening-inventory reconciliation,
+route decoding, historical quote/cost reconstruction and full coverage validation
+remain implementation work before its archive can satisfy the contract below.
+The existing normalized-export input remains available. `COLLECTING_HISTORY`
+means the collector is active, not that Radon is ready to enter trades.
+
+The public leaderboard is a third-party discovery source; performance and
+identity claims are not promoted into verified history. The collector reuses
+pure parsing functions, but never reads another bot's account or evidence DB.
+RPC behavior follows Solana's [signature pagination](https://solana.com/docs/rpc/http/getsignaturesforaddress)
+and [transaction retrieval](https://solana.com/docs/rpc/http/gettransaction) contracts.
+
 Top-level JSON fields:
 
 | Field | Contract |

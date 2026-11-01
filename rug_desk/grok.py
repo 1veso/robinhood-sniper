@@ -17,6 +17,7 @@ from rug_desk.book import atomic, encode, number, process_lock
 from rug_desk.prompts import JUDGE_PROMPT
 from sniper.adapters.solana import request_json, validate_address
 from sniper.advisor import DailyBudget, response_text, response_usage, _unique_object
+from sniper.model_budget import shared_grok_limit
 
 URL = 'https://api.x.ai/v1/responses'
 SEARCHES = {'x_keyword_search', 'x_semantic_search', 'x_user_search', 'x_thread_fetch'}
@@ -29,6 +30,24 @@ def is_x_url(url):
         return parsed.scheme == 'https' and parsed.hostname in ('x.com', 'www.x.com', 'twitter.com', 'www.twitter.com') and not parsed.username and not parsed.password
     except (ValueError, TypeError):
         return False
+
+
+def citation_identity(url):
+    """X's /i/status and handle/status routes identify the same post ID.
+
+    Only provider-annotated IDs establish retrieval. A model-supplied handle
+    is not verified author identity, so output uses the annotated URL.
+    """
+    if not is_x_url(url):
+        return None
+    parsed = urlsplit(url)
+    try:
+        if parsed.port not in (None, 443):
+            return None
+    except ValueError:
+        return None
+    post = re.fullmatch(r'/[A-Za-z0-9_]{1,15}/status/([0-9]+)/?', parsed.path)
+    return ('x-post', post.group(1)) if post else ('exact-url', url)
 
 
 def validate(response):
@@ -65,8 +84,12 @@ def validate(response):
         raise ValueError('Search execution or billed usage is unverified')
     urls = set(re.findall(r'https?://[^\s<>"\)\]]+', ' '.join(out[k] for k in ('why', 'x_read', 'main_risk'))))
     urls = {u.rstrip('.,;') for u in urls}
-    if any(not is_x_url(u) or u not in citations for u in urls):
+    annotated = {citation_identity(u): u for u in sorted(citations) if citation_identity(u) is not None}
+    if any(citation_identity(u) is None or citation_identity(u) not in annotated for u in urls):
         raise ValueError('Judgment contains an unverified source URL')
+    for field in ('why', 'x_read', 'main_risk'):
+        for url in sorted(urls, key=len, reverse=True):
+            out[field] = out[field].replace(url, annotated[citation_identity(url)])
     if out['verdict'] == 'BUY' and (usage['x_posts_fetched'] == 0 or not urls or not citations):
         raise ValueError('BUY requires retrieved X posts and cited evidence')
     # Provenance is mechanically checked; semantic entailment remains a model
@@ -104,7 +127,7 @@ class Judge:
             if not key or '\n' in key or '\r' in key:
                 raise ValueError('Missing or malformed xAI credential file')
             request_id = 'rug-desk:' + uuid.uuid4().hex
-            budget = DailyBudget(budget_runtime / 'ai-budget.sqlite3', Decimal(config.AI_DAILY_LIMIT_USD))
+            budget = DailyBudget(budget_runtime / 'ai-budget.sqlite3', shared_grok_limit(self.budget_root.parent))
             from rug_desk.model_gate import binding
             # Preserve exactly what the model was allowed to judge, without credentials.
             audit = {'request_id': request_id, 'at': now, 'model': config.MODEL, **context,
@@ -184,7 +207,7 @@ def main():
         runtime = args.root / 'runtime'
         with process_lock(runtime / 'paid-request.lock'):
             key = (args.root.parent / 'runtime' / 'xai-api-key.txt').read_text(encoding='utf-8-sig').strip()
-            budget = DailyBudget(runtime / 'ai-budget.sqlite3', Decimal(config.AI_DAILY_LIMIT_USD))
+            budget = DailyBudget(runtime / 'ai-budget.sqlite3', shared_grok_limit(args.root.parent))
             request_id = 'rug-desk-basic:' + uuid.uuid4().hex
             try:
                 budget.reserve(request_id, Decimal(config.AI_RESERVATION_USD), int(time.time()))

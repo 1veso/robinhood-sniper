@@ -19,7 +19,12 @@
   "max_holder_accounts": 4096,
   "candidates_per_scan": 1,
   "judge_binding": "dad6a428eafb83d407791ef3f26339599ad49797577b963a5e21c8fe42729c49",
-  "tracked_wallets": [],
+  "tracked_wallets": [
+    "AnCMde5PQzP7hVQmh5TeeCiUgGAqTY8kK9d9o91nEs3Q",
+    "DmopudSGaQQenK4cW5NgmHUsexMB3sEJNn6n1EfLKs28",
+    "Beqv6dzTcjV2eodo8RRXCiCcnSYrS1vkQKhfqwHXqeit",
+    "6qX4Sqi4jDJpDC95ZA6URGSuasv1ef1btAKgF6h38YfH"
+  ],
   "max_exposure_pct": "0.08",
   "max_open": 4,
   "max_entries_per_day": 6,

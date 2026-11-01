@@ -46,7 +46,8 @@ def snapshot(db,now):
     wins=[p for p in closed if p>0];losses=[p for p in closed if p<0]
     status={'finished_at':min((r['finished_at'] for r in workers.values() if r.get('finished_at')),default=None),'cadence_seconds':60,'error_count':error_count,
         'overdue_workers':overdue,'worker_completions':{k:r.get('finished_at') for k,r in workers.items()},'provider_errors':provider_errors,
-        'health':'DEGRADED' if unresolved or error_count or overdue or provider_errors else 'SETUP_BLOCKED',
+        'health':('DEGRADED' if unresolved or error_count or overdue or provider_errors else
+                  'PAPER_READY' if meta.get('model_gate',{}).get('enabled') is True else 'SETUP_BLOCKED'),
         'model_gate':meta.get('model_gate',{'enabled':False,'blockers':['Paid Grok calls disabled']}),
         'signing_calls':0,'broadcast_calls':0,'external_model_attempts':attempts,'live_execution_ready':False}
     return {'account_id':meta['account_id'],'config_hash':meta['config_hash'],'created_at':meta['created_at'],

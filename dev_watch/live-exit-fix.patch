@@ -1,0 +1,244 @@
+--- article/book.py
++++ dev_watch/book.py
+@@ -1,20 +1,63 @@
+ # book.py
+ # the desk's memory: positions.json and trades.csv. two files you can open yourself.
+ import csv, json, os, sys, time
++import math, tempfile, uuid
++from functools import wraps
+ from config import (POSITIONS, TRADES, PENDING, TICKET_USD, MAX_OPEN, MAX_ENTRIES_PER_DAY,
+                     DAILY_LOSS_HALT_USD, COOLDOWN_HOURS)
+ 
+ FIELDS = ["time", "mint", "symbol", "action", "usd", "pnl", "reason"]
+ 
+ 
++def _locked(fn):
++    """Serialize ledger writes so a watch/pulse update cannot undo a confirmed fill."""
++    @wraps(fn)
++    def wrapped(*args, **kwargs):
++        with open(POSITIONS + ".lock", "a+b") as lock:
++            if os.name == "nt":
++                import msvcrt
++                lock.seek(0, os.SEEK_END)
++                if lock.tell() == 0:
++                    lock.write(b"\0")
++                    lock.flush()
++                lock.seek(0)
++                msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
++            else:
++                import fcntl
++                fcntl.flock(lock, fcntl.LOCK_EX)
++            try:
++                return fn(*args, **kwargs)
++            finally:
++                if os.name == "nt":
++                    lock.seek(0)
++                    msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
++                else:
++                    fcntl.flock(lock, fcntl.LOCK_UN)
++    return wrapped
++
++
+ def load() -> dict:
+-    return json.load(open(POSITIONS)) if os.path.exists(POSITIONS) else {}
++    if not os.path.exists(POSITIONS):
++        return {}
++    with open(POSITIONS) as f:
++        return json.load(f)
+ 
+ 
+ def save(book: dict):
+-    json.dump(book, open(POSITIONS, "w"), indent=2)
+-
+-
++    # Readers see either the complete previous book or the complete new book.
++    path = None
++    try:
++        with tempfile.NamedTemporaryFile(mode="w", dir=os.path.dirname(os.path.abspath(POSITIONS)),
++                                         prefix=".positions-", suffix=".tmp", delete=False) as f:
++            path = f.name
++            json.dump(book, f, indent=2)
++        os.replace(path, POSITIONS)
++    finally:
++        if path and os.path.exists(path):
++            os.unlink(path)
++
++
++@_locked
+ def update(mint: str, **fields):
+     b = load()
+     if mint in b:
+@@ -23,7 +66,10 @@
+ 
+ 
+ def trades() -> list[dict]:
+-    return list(csv.DictReader(open(TRADES))) if os.path.exists(TRADES) else []
++    if not os.path.exists(TRADES):
++        return []
++    with open(TRADES) as f:
++        return list(csv.DictReader(f))
+ 
+ 
+ def record(mint, symbol, action, usd, pnl, reason):
+@@ -55,6 +101,7 @@
+     return None
+ 
+ 
++@_locked
+ def open_position(mint, symbol, price, liq_usd, snap: dict, usd=TICKET_USD):
+     """snap = what the wallets looked like the moment you bought. watch.py compares against it."""
+     b = load()
+@@ -65,6 +112,7 @@
+     record(mint, symbol, "open", usd, 0, "entry")
+ 
+ 
++@_locked
+ def sell(mint, frac_of_original, price, reason) -> float:
+     """sells a fraction of the ORIGINAL size (1.0 = everything left). returns realized pnl."""
+     b = load()
+@@ -80,9 +128,68 @@
+     return pnl
+ 
+ 
++@_locked
++def request_exit(mint, frac_of_original, reason):
++    """Live alert only: retain holdings and P&L until an explicit fill confirmation."""
++    b = load()
++    if mint not in b:
++        return None
++    p = b[mint]
++    pending = p.get("pending_exit")
++    # Keep the remaining quantity after a partial fill; never reset it each tick.
++    if pending and pending["reason"] == reason:
++        return pending
++    filled = (p.get("exit_filled") or {}).get(reason, 0)
++    pending = {"id": uuid.uuid4().hex, "reason": reason,
++               "qty": min(p["qty"], p["qty0"] * frac_of_original - filled)}
++    p["pending_exit"] = pending
++    save(b)
++    return pending
++
++
++@_locked
++def confirm_exit(mint, exit_id, actual_qty, fill_price):
++    """Record one actual fill. Each alert ID can be confirmed only once."""
++    if not math.isfinite(actual_qty) or actual_qty <= 0:
++        raise ValueError("actual token quantity must be finite and positive")
++    if not math.isfinite(fill_price) or fill_price <= 0:
++        raise ValueError("actual fill price must be finite and positive")
++    b = load()
++    if mint not in b:
++        raise ValueError("no open position; this fill may already have been confirmed")
++    p = b[mint]
++    pending = p.get("pending_exit")
++    if not pending or pending["id"] != exit_id:
++        raise ValueError("stale or already confirmed exit ID; use the current pending exit")
++    if actual_qty > p["qty"]:
++        raise ValueError("actual quantity exceeds the recorded holding; no sale recorded")
++    pnl = actual_qty * (fill_price - p["entry"])
++    p["qty"] -= actual_qty
++    if pending["reason"] in ("take_profit", "x_fading"):
++        filled = p.setdefault("exit_filled", {})
++        filled[pending["reason"]] = filled.get(pending["reason"], 0) + actual_qty
++    complete = actual_qty >= pending["qty"]
++    if complete:
++        p.pop("pending_exit")
++        if pending["reason"] == "take_profit":
++            p["took"] = True
++        if pending["reason"] == "x_fading":
++            p["trimmed_on_fade"] = True
++    else:
++        pending["qty"] -= actual_qty
++        pending["id"] = uuid.uuid4().hex  # replaying this confirmation cannot sell twice
++    action = "close" if p["qty"] <= p["qty0"] * 1e-6 else "partial"
++    record(mint, p["symbol"], action, actual_qty * fill_price, pnl, pending["reason"])
++    if action == "close":
++        del b[mint]
++    save(b)
++    return pnl
++
++
+ if __name__ == "__main__":
+     # live mode only. after you buy in your own wallet:  python book.py add <mint> <usd> <fill_price>
+     # after you sell by hand:                            python book.py close <mint> <price>
++    # confirm an alerted fill: python book.py confirm <mint> <exit_id> <actual_token_qty> <fill_price>
+     cmd, mint = sys.argv[1], sys.argv[2]
+     if cmd == "add":
+         pend = json.load(open(PENDING)) if os.path.exists(PENDING) else {}
+@@ -94,3 +201,16 @@
+         print(f"{s['symbol']} is in the book. watch.py guards it from the next run.")
+     elif cmd == "close":
+         print(round(sell(mint, 1.0, float(sys.argv[3]), "manual"), 2))
++    elif cmd == "confirm":
++        if len(sys.argv) != 6:
++            sys.exit("usage: python book.py confirm <mint> <exit_id> <actual_token_qty> <fill_price>")
++        try:
++            pnl = confirm_exit(mint, sys.argv[3], float(sys.argv[4]), float(sys.argv[5]))
++        except ValueError as e:
++            sys.exit(str(e))
++        print(f"Confirmed fill recorded. Realized pnl ${pnl:+.2f}")
++        p = load().get(mint)
++        if p and p.get("pending_exit"):
++            pending = p["pending_exit"]
++            print(f"Still pending: {pending['qty']:.12g} tokens. After the next actual fill: "
++                  f"python book.py confirm {mint} {pending['id']} <actual_token_qty> <fill_price>")
+--- article/watch.py
++++ dev_watch/watch.py
+@@ -15,8 +15,15 @@
+             events.append(f"{p['symbol']}: dexscreener down ({e}), holding, next tick retries")
+             continue
+         if not m or m["price"] <= 0:
+-            book.sell(mint, 1.0, 0.0, "pool_gone")
+-            events.append(f"{p['symbol']}: POOL GONE. treat as rugged, sell whatever you can")
++            if PAPER:
++                book.sell(mint, 1.0, 0.0, "pool_gone")
++                events.append(f"{p['symbol']}: POOL GONE. treat as rugged, sell whatever you can")
++            else:
++                pending = book.request_exit(mint, 1.0, "pool_gone")
++                if pending:
++                    events.append(f"{p['symbol']}: POOL GONE. sell whatever you can; no sale recorded. "
++                                  f"After an actual fill: python book.py confirm {mint} {pending['id']} "
++                                  f"<actual_token_qty> <fill_price>")
+             continue
+ 
+         price = m["price"]
+@@ -25,8 +32,17 @@
+         pct = (price / p["entry"] - 1) * 100
+ 
+         def out(frac, why, detail=""):
+-            pnl = book.sell(mint, frac, price, why)
+-            verb = "sold" if PAPER else "SELL NOW in your wallet:"
++            if PAPER:
++                pnl = book.sell(mint, frac, price, why)
++            else:
++                pending = book.request_exit(mint, frac, why)
++                if pending:
++                    events.append(f"{p['symbol']}: {why.upper()} {detail}-> SELL NOW in your wallet: "
++                                  f"{pending['qty']:.12g} tokens at {pct:+.0f}% quoted; no sale recorded. "
++                                  f"After an actual fill: python book.py confirm {mint} {pending['id']} "
++                                  f"<actual_token_qty> <fill_price>")
++                return
++            verb = "sold"
+             size = "all" if frac >= 1 else f"{int(frac * 100)}%"
+             events.append(f"{p['symbol']}: {why.upper()} {detail}-> {verb} {size} at {pct:+.0f}%, pnl ${pnl:+.2f}")
+ 
+@@ -61,7 +77,8 @@
+             out(1.0, "x_dead"); continue
+         if p["pulse"] == "fading" and not p["trimmed_on_fade"]:
+             out(PULSE["fading_sells"], "x_fading")
+-            book.update(mint, trimmed_on_fade=True)
++            if PAPER:
++                book.update(mint, trimmed_on_fade=True)
+             continue
+ 
+         # 5. price. the last and dumbest line of defense
+@@ -70,7 +87,8 @@
+             out(1.0, "stop"); continue
+         if not p["took"] and pct >= EXIT["take_pct"]:
+             out(EXIT["take_frac"], "take_profit")
+-            book.update(mint, took=True)
++            if PAPER:
++                book.update(mint, took=True)
+             continue
+         if p["took"] and price <= p["peak"] * (1 - EXIT["trail_pct"] / 100):
+             out(1.0, "trailing_stop"); continue
