@@ -60,6 +60,10 @@ class Providers:
         values=settings(root, self.settings_folder)
         saved=self.root/'runtime/solana-rpc-url.txt'
         self.rpc_url=values.get('SOLANA_RPC_URL') or (saved.read_text().strip() if saved.exists() else 'https://api.mainnet.solana.com')
+        holder_file=self.root/'runtime/holder-rpc-url.txt'
+        self.holder_rpc_url=holder_file.read_text(encoding='utf-8-sig').strip() if holder_file.is_file() else None
+        if self.holder_rpc_url and not self.holder_rpc_url.startswith('https://'):
+            raise ValueError('Holder reads require an HTTPS RPC endpoint')
         self.native_cache=None
 
     def request(self,provider,url,body=None):
@@ -86,6 +90,16 @@ class Providers:
         if not isinstance(response,dict) or response.get('error') or 'result' not in response:
             self.book.provider('rpc',{'state':'ERROR','finished_at':int(self.clock()),'retry_after':int(self.clock())+60,'error':'RPC response error'})
             raise ValueError('RPC response error')
+        return response['result']
+
+    def holder_rpc(self,method,params):
+        if not self.holder_rpc_url:return self.rpc(method,params)
+        allowed={'getTokenSupply','getTokenLargestAccounts','getMultipleAccounts','getProgramAccounts','getAccountInfo'}
+        if method not in allowed:raise ValueError('Unsupported holder read method')
+        response=self.request('holder_rpc',self.holder_rpc_url,{'jsonrpc':'2.0','id':1,'method':method,'params':params})
+        if not isinstance(response,dict) or response.get('error') or 'result' not in response:
+            self.book.provider('holder_rpc',{'state':'ERROR','finished_at':int(self.clock()),'retry_after':int(self.clock())+60,'error':'RPC response error'})
+            raise ValueError('Holder RPC response error')
         return response['result']
 
     def profiles(self):
@@ -133,12 +147,12 @@ class Providers:
 
     def holders(self,mint,cfg):
         opts={'commitment':'finalized'}
-        supply=self.rpc('getTokenSupply',[mint,opts]); top=self.rpc('getTokenLargestAccounts',[mint,opts])
+        supply=self.holder_rpc('getTokenSupply',[mint,opts]); top=self.holder_rpc('getTokenLargestAccounts',[mint,opts])
         slot=max(supply['context']['slot'],top['context']['slot'])
         if type(slot) is not int or slot<=0: raise ValueError('Missing finalized context')
         addresses=[validate_address(a['address']) for a in top['value']]
         if len(addresses)>20 or len(set(addresses))!=len(addresses): raise ValueError('Invalid largest-accounts sample')
-        snap=self.rpc('getMultipleAccounts',[[mint]+addresses,dict(opts,encoding='jsonParsed',minContextSlot=slot)])
+        snap=self.holder_rpc('getMultipleAccounts',[[mint]+addresses,dict(opts,encoding='jsonParsed',minContextSlot=slot)])
         if snap['context']['slot']<slot or len(snap['value'])!=len(addresses)+1: raise ValueError('RPC snapshot mismatch')
         mint_account=snap['value'][0]
         facts=holder_facts(mint,mint_account,list(zip(addresses,snap['value'][1:])),complete=False)
@@ -150,12 +164,14 @@ class Providers:
         if (facts['mint_disabled'] is not True or facts['freeze_disabled'] is not True
             or number(facts['max_single_holder'] or 0)>number(cfg['max_single_holder'])
             or number(facts['top10_share'] or 0)>number(cfg['max_top10_share'])): return facts
-        full=self.rpc('getProgramAccounts',[TOKEN_PROGRAM,dict(opts,encoding='jsonParsed',withContext=True,
-            minContextSlot=snap['context']['slot'],filters=[{'dataSize':165},{'memcmp':{'offset':0,'bytes':mint}}])])
+        filters=[{'memcmp':{'offset':0,'bytes':mint}}]
+        if mint_account['owner']==TOKEN_PROGRAM:filters.insert(0,{'dataSize':165})
+        full=self.holder_rpc('getProgramAccounts',[mint_account['owner'],dict(opts,encoding='jsonParsed',withContext=True,
+            minContextSlot=snap['context']['slot'],filters=filters)])
         rows=full['value']; fullslot=full['context']['slot']
         if type(fullslot) is not int or fullslot<snap['context']['slot'] or not isinstance(rows,list) or len(rows)>cfg['max_holder_accounts']:
             raise ValueError('Bounded complete holder enumeration unavailable')
-        after=self.rpc('getAccountInfo',[mint,dict(opts,encoding='jsonParsed',minContextSlot=fullslot)])
+        after=self.holder_rpc('getAccountInfo',[mint,dict(opts,encoding='jsonParsed',minContextSlot=fullslot)])
         if after['context']['slot']<fullslot or parsed(after['value'],'mint')!=info: raise ValueError('Mint changed during enumeration')
         complete=holder_facts(mint,mint_account,[(a['pubkey'],a['account']) for a in rows],complete=True)
         complete.update(mint=mint,source='solana_finalized_rpc',observed_at=int(self.clock()),slot=fullslot,

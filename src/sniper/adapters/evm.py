@@ -35,6 +35,13 @@ class RpcError(RuntimeError):
     """An RPC transport, protocol, or server failure. Never means 'safe'."""
 
 
+class LogRangeLimit(RpcError):
+    """An explicitly advertised provider log-range limit (never missing logs)."""
+    def __init__(self, blocks):
+        self.blocks = blocks
+        super().__init__('RPC log range exceeds provider limit')
+
+
 class HistoricalStateUnavailable(RpcError):
     """This provider cannot serve a concrete historical eth_call state."""
 
@@ -44,6 +51,10 @@ def _read_error(method, params, error):
     # and never permit latest-state, log, receipt or arbitrary-error fallback.
     code = error.get('code', 'unknown') if isinstance(error, dict) else 'unknown'
     message = error.get('message') if isinstance(error, dict) else None
+    if method == 'eth_getLogs' and code == -32600 and isinstance(message, str):
+        match = re.match(r'Under the Free tier plan, you can make eth_getLogs requests with up to a ([0-9]+) block range\.', message)
+        if match and 1 <= int(match[1]) <= 5000:
+            return LogRangeLimit(int(match[1]))
     if (method == 'eth_call' and isinstance(params, list) and len(params) == 2
             and isinstance(params[1], str) and re.fullmatch(r'0x[0-9a-fA-F]+', params[1])
             and type(code) is int and code == -32000 and isinstance(message, str)
@@ -153,6 +164,7 @@ class RpcClient:
         self._deadline: float | None = None
         self.batch_enabled = transport is None
         self._next_batch_at = 0.0
+        self._log_range_limit = None
 
     @contextmanager
     def budget(self, seconds: float | None):
@@ -180,7 +192,23 @@ class RpcClient:
         req = urllib.request.Request(self.url, data=body,
                                      headers={"Content-Type": "application/json", "User-Agent": "SNIPER-Paper/0.1"},
                                      method="POST")
-        with urllib.request.urlopen(req, timeout=self.remaining()) as response:
+        try:
+            response = urllib.request.urlopen(req, timeout=self.remaining())
+        except urllib.error.HTTPError as exc:
+            # Alchemy advertises its free-tier range limit in a JSON-RPC error
+            # carried by HTTP 400. Decode its envelope, not its URL or text.
+            if exc.code != 400:
+                raise
+            with exc:
+                raw = read_bounded_response(exc, 65_537, self.remaining if self._deadline is not None else None)
+            try:
+                error = json.loads(raw)
+            except (ValueError, UnicodeDecodeError):
+                raise RpcError('RPC HTTP failure (400); invalid error envelope') from None
+            if len(raw) > 65_536 or not isinstance(error, dict) or 'error' not in error:
+                raise RpcError('RPC HTTP failure (400); invalid error envelope')
+            return error
+        with response:
             raw = read_bounded_response(response, 16_000_001, self.remaining if self._deadline is not None else None)
         if len(raw) > 16_000_000:
             raise RpcError("RPC response exceeds 16 MB; reduce the block range")
@@ -248,6 +276,45 @@ class RpcClient:
         return [by_id[p["id"]]['result'] for p in payload]
 
     def call(self, method: str, params: list[Any] | None = None) -> Any:
+        if method == 'eth_getLogs' and self._log_range_limit is not None:
+            return self._partitioned_logs(params)
+        try:
+            return self._call_one(method, params)
+        except LogRangeLimit as exc:
+            if method != 'eth_getLogs':
+                raise
+            self._log_range_limit = exc.blocks
+            return self._partitioned_logs(params)
+
+    def _partitioned_logs(self, params):
+        # Preserve the exact requested interval and filters. Return no partial
+        # data on timeout, missing batch results, or out-of-range provider logs.
+        if not isinstance(params, list) or len(params) != 1 or not isinstance(params[0], dict):
+            raise RpcError('Explicit bounded log interval required')
+        query = params[0]
+        start, end = quantity(query.get('fromBlock')), quantity(query.get('toBlock'))
+        if 'blockHash' in query or end < start or end - start + 1 > 5000:
+            raise RpcError('Unsupported partitioned log interval')
+        span = self._log_range_limit
+        chunks = [{**query, 'fromBlock': hex(first), 'toBlock': hex(min(end, first + span - 1))}
+                  for first in range(start, end + 1, span)]
+        result = []
+        for offset in range(0, len(chunks), 10):
+            group = chunks[offset:offset + 10]
+            values = (self.call_many([('eth_getLogs', [q]) for q in group]) if self.batch_enabled and len(group) > 1
+                      else [self._call_one('eth_getLogs', [q]) for q in group])
+            for q, rows in zip(group, values):
+                if not isinstance(rows, list) or len(rows) > 20000:
+                    raise RpcError('Invalid or oversized partitioned log response')
+                for row in rows:
+                    if not isinstance(row, dict) or not quantity(q['fromBlock']) <= quantity(row.get('blockNumber')) <= quantity(q['toBlock']):
+                        raise RpcError('Provider log outside partitioned interval')
+                result.extend(rows)
+                if len(result) > 20000:
+                    raise RpcError('Partitioned log response exceeds collection bound')
+        return result
+
+    def _call_one(self, method: str, params: list[Any] | None = None) -> Any:
         if method not in self.READ_METHODS:
             raise RpcError(f"read-only RPC refuses method: {method}")
         self._id += 1
@@ -269,6 +336,9 @@ class RpcClient:
             raise RpcError("RPC envelope or response id is invalid")
         if response.get("error") is not None:
             error = response["error"]
+            if (not isinstance(error, dict) or type(error.get('code')) is not int
+                    or not isinstance(error.get('message'), str) or 'result' in response):
+                raise RpcError('RPC error envelope is invalid')
             raise _read_error(method, payload['params'], error)
         if "result" not in response:
             raise RpcError("RPC response has neither result nor usable error")

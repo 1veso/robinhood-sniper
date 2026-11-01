@@ -137,13 +137,28 @@ class Paper(BaselinePaper):
             task_id = digest({'account_id': self.identity, 'config_hash': digest(self.cfg),
                               'team_policy_hash': TEAM_POLICY_HASH, 'mint': mint,
                               'first_seen': candidate['first_seen']})
-            if self.db.execute('SELECT 1 FROM team_tasks WHERE mint=?', (mint,)).fetchone():
-                raise ValueError('Candidate already has a durable task; no model replay')
+            existing=self.db.execute('SELECT * FROM team_tasks WHERE mint=?',(mint,)).fetchone()
+            if existing:
+                if (existing['state']!='WAITING_EVIDENCE' or existing['task_id']!=task_id
+                        or self.db.execute('SELECT 1 FROM team_artifacts WHERE task_id=?',(task_id,)).fetchone()):
+                    raise ValueError('Candidate already has a durable task; no model replay')
+                self.db.execute("UPDATE team_tasks SET state='RUNNING' WHERE task_id=?",(task_id,))
+                self.handoff(task_id,'discovery','Scout','Resume bounded pre-model evidence collection',now)
+                return task_id
             self.db.execute('INSERT INTO team_tasks VALUES(?,?,?,?,?,?,?,?,?,?,?)',
                             (task_id,mint,now,now,'discovery','RUNNING','Scout',
                              'Collect current pinned-pool observations',None,None,None))
             self.handoff(task_id,'discovery','Scout','Collect current pinned-pool observations',now)
         return task_id
+
+    def defer_evidence(self,mint,payload,now):
+        task=self.db.execute('SELECT * FROM team_tasks WHERE mint=?',(mint,)).fetchone()
+        if task and self.db.execute('SELECT 1 FROM team_artifacts WHERE task_id=?',(task['task_id'],)).fetchone():
+            raise ValueError('Completed team evidence cannot be replayed')
+        deferred=super().defer_evidence(mint,payload,now)
+        if deferred and task:
+            self.handoff(task['task_id'],'integrity','Integrity','Waiting for factual evidence; no model called',now,state='WAITING_EVIDENCE')
+        return deferred
 
     def handoff(self, task_id, stage, owner, reason, now, state='RUNNING'):
         with self._write():

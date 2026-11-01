@@ -20,7 +20,13 @@ class Providers(Base):
     def search(self):
         now=int(self.clock());out=[];remaining=4
         if not self.book.cfg['tracked_wallets']:raise ValueError('No NITROGEN tracked wallets configured')
-        for wallet in self.book.cfg['tracked_wallets']:
+        wallets=self.book.cfg['tracked_wallets']
+        cursor=self.book.provider('search-rotation') or {}
+        offset=cursor.get('offset',0)%len(wallets)
+        wallets=wallets[offset:]+wallets[:offset]
+        self.book.provider('search-rotation',{'offset':(offset+1)%len(wallets),'finished_at':now,'state':'OK'})
+        for wallet in wallets:
+            wallet_remaining=max(1,4//len(wallets))
             rows=self.rpc('getSignaturesForAddress',[wallet,{'limit':20,'commitment':'finalized'}])
             if not isinstance(rows,list):raise ValueError('Invalid signature list')
             for r in rows[:20]:
@@ -28,9 +34,9 @@ class Providers(Base):
                 if r.get('err') is not None or r.get('confirmationStatus')!='finalized' or type(r.get('blockTime')) is not int or not 0<=now-r['blockTime']<=self.book.cfg['whale_max_age_seconds']:continue
                 prior=self.book.db.execute('SELECT payload FROM purchases WHERE signature=?',(sig,)).fetchone()
                 if prior:out.append(json.loads(prior[0]));continue
-                if remaining<=0:continue
+                if remaining<=0 or wallet_remaining<=0:continue
                 if self.book.provider('unsupported:'+str(sig)[:90]):continue
-                remaining-=1
+                remaining-=1;wallet_remaining-=1
                 # Read v1 receipts to record them as unsupported and advance.
                 # The shared decoder still admits only legacy/v0 swaps.
                 receipt=self.rpc('getTransaction',[sig,{'encoding':'json','commitment':'finalized','maxSupportedTransactionVersion':1}])
