@@ -31,6 +31,24 @@ def is_x_url(url):
         return False
 
 
+def citation_identity(url):
+    """X's /i/status and handle/status routes identify the same post ID.
+
+    Only provider-annotated IDs establish retrieval. A model-supplied handle
+    is not verified author identity, so output uses the annotated URL.
+    """
+    if not is_x_url(url):
+        return None
+    parsed = urlsplit(url)
+    try:
+        if parsed.port not in (None, 443):
+            return None
+    except ValueError:
+        return None
+    post = re.fullmatch(r'/[A-Za-z0-9_]{1,15}/status/([0-9]+)/?', parsed.path)
+    return ('x-post', post.group(1)) if post else ('exact-url', url)
+
+
 def validate(response):
     text = response_text(response)
     if len(text) > 12000:
@@ -65,8 +83,12 @@ def validate(response):
         raise ValueError('Search execution or billed usage is unverified')
     urls = set(re.findall(r'https?://[^\s<>"\)\]]+', ' '.join(out[k] for k in ('why', 'x_read', 'main_risk'))))
     urls = {u.rstrip('.,;') for u in urls}
-    if any(not is_x_url(u) or u not in citations for u in urls):
+    annotated = {citation_identity(u): u for u in sorted(citations) if citation_identity(u) is not None}
+    if any(citation_identity(u) is None or citation_identity(u) not in annotated for u in urls):
         raise ValueError('Judgment contains an unverified source URL')
+    for field in ('why', 'x_read', 'main_risk'):
+        for url in sorted(urls, key=len, reverse=True):
+            out[field] = out[field].replace(url, annotated[citation_identity(url)])
     if out['verdict'] == 'BUY' and (usage['x_posts_fetched'] == 0 or not urls or not citations):
         raise ValueError('BUY requires retrieved X posts and cited evidence')
     # Provenance is mechanically checked; semantic entailment remains a model

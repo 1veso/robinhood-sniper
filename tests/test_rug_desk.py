@@ -60,6 +60,16 @@ BUY = validate(response())
 
 
 class DeskCase(unittest.TestCase):
+    def test_x_post_aliases_require_the_same_annotated_post_and_use_provider_url(self):
+        raw=response()
+        part=raw['output'][1]['content'][0]
+        part['annotations'][0]['url']='https://x.com/i/status/123'
+        self.assertEqual(validate(raw)['x_read'], 'Retrieved post https://x.com/i/status/123')
+        for url in ('https://x.com/example/status/124','https://x.com.evil.test/example/status/123',
+                    'https://x.com@evil.test/example/status/123','https://x.com:8443/example/status/123'):
+            value=json.loads(part['text']);value['x_read']=url;part['text']=json.dumps(value)
+            with self.assertRaises(ValueError):validate(raw)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name) / 'desk'

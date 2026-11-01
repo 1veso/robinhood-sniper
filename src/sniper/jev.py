@@ -60,6 +60,23 @@ def distribution(value, keys):
     return result
 
 
+def validate_score(value, probabilities):
+    """Accept the observed two-decimal wire rounding, never a larger mismatch."""
+    score = numeric(value, 0, 4)
+    weighted = sum(int(k) * p for k, p in probabilities.items())
+    difference = abs(score - weighted)
+    rounded_wire = all(abs(float(v) * 100 - round(float(v) * 100)) < 1e-8
+                       for v in (score, *probabilities.values()))
+    if difference > .0001 and not (rounded_wire and difference <= .010000001):
+        raise ValueError('Score does not match probability-weighted levels')
+    return score
+
+
+def conservative_score(answer):
+    # Keep both raw fields in the journal. Neither may bypass the exit cutoff.
+    return max(answer['score'], sum(int(k) * p for k, p in answer['probabilities'].items()))
+
+
 def validate_response(raw):
     if not isinstance(raw, dict) or set(raw) != {'model', 'answers', 'usage'}:
         raise ValueError('Invalid response fields')
@@ -88,9 +105,7 @@ def validate_response(raw):
     if a['legend'] != legend:
         raise ValueError('Score legend differs from supplied rubric')
     probs = distribution(a['probabilities'], legend)
-    score = numeric(a['score'], 0, 4)
-    if abs(score - sum(int(k) * v for k, v in probs.items())) > .0001:
-        raise ValueError('Score does not match probability-weighted levels')
+    score = validate_score(a['score'], probs)
     out['exit_risk'] = {'type': 'score', 'score': score, 'legend': legend,
                         'confidence': numeric(a['confidence'], 0, 1), 'probabilities': probs}
     usage = raw['usage']
@@ -109,7 +124,7 @@ def gate(response, *, watch_count=0):
               (a['action']['probabilities']['buy'] >= POLICY['buy_probability_min'], 'buy_label_probability'),
               (a['organic']['noul'] >= POLICY['organic_yes_min'], 'organic_probability'),
               (a['late']['noul'] <= POLICY['late_yes_max'], 'late_probability'),
-              (a['exit_risk']['score'] <= POLICY['exit_score_max_0_4'], 'exit_score')]
+              (conservative_score(a['exit_risk']) <= POLICY['exit_score_max_0_4'], 'exit_score')]
     return next((('PASS', reason) for ok, reason in checks if not ok), ('BUY', 'experimental_conditions_met'))
 
 

@@ -13,6 +13,20 @@ import desktop
 
 
 class DesktopTests(unittest.TestCase):
+    def test_local_workers_disable_explicit_and_default_notification_delivery(self):
+        for name in ('scan', 'watch', 'report'):
+            self.assertNotIn('--send', desktop.worker_arguments(name, no_send=True))
+            self.assertIn('--send', desktop.JOBS[name][3])
+        for name in ('neon-signals', 'neon-watch'):
+            self.assertIn('--no-send', desktop.worker_arguments(name, no_send=True))
+            self.assertNotIn('--no-send', desktop.JOBS[name][3])
+        with tempfile.TemporaryDirectory() as tmp, patch.object(desktop, 'child', return_value=0) as child:
+            root=Path(tmp)
+            self.assertEqual(desktop.worker('neon-signals', root, no_send=True), 0)
+            self.assertEqual(child.call_args.args[0], ['neon_bot.py', 'signals', '--no-send'])
+            marker=json.loads((root/'runtime/desktop/neon-signals.json').read_text())
+            self.assertTrue(marker['notifications_disabled'])
+
     def test_input_allowlist_never_overwrites_existing_or_accepts_seeds(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp); source=root/'input.txt';source.write_text('server-key-test')

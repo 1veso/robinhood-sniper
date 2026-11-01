@@ -52,14 +52,15 @@ and the installed CA bundle; TLS verification remains enabled.
 ## Individual bot activation
 
 Installed accounts and successful chain reads are not complete strategy readiness.
-Xenon and Neon need current account-bound Grok inference/X Search proofs; Krypton,
-Helium and Radon also need their own bindings. Argon, Helium and Nitrogen need a
-separate TypeSafe/Jev credential and supporting evidence. Nitrogen needs tracked
+Xenon now has current account-bound Grok inference/X Search proofs; Neon,
+Krypton, Helium and Radon still need their own proofs. The user has now supplied
+the TypeSafe/Jev credential; Argon, Helium and Nitrogen still need supporting evidence. Nitrogen needs tracked
 wallets and preserves staged paper-order approval. Radon needs supported live
 event/history exports. Never substitute synthetic fixtures or copied historical
 acceptance records for current provider proofs.
 
 The signals.py CLI and /api/signals are read-only setup inventories. Detailed
 restore, confirmed-public-wallet and chain-check records are in runtime/local-setup.
-Other bots' recurring workers and paid gates are activated during the subsequent
-bot-by-bot phase, after their requirements pass. No real-money execution was enabled.
+Seventeen Solana paper workers and account-bound paid authorizations are now
+installed; remaining proof/evidence gates are documented in
+[Solana paper activation](SOLANA_PAPER_ACTIVATION.md). No real-money execution was enabled.

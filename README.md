@@ -25,8 +25,9 @@ See [Oxygen integration](docs/DEV_WATCH.md). Local runtime restoration and fresh
 paper accounts preserve separate ledgers; installed source is not proof that a
 bot has current feeds, authorized paid-model evidence, or trading readiness.
 The operating states below describe the upstream reference installation; the
-November 1 local restore has Oxygen's schedules active and the other desks
-awaiting individual validation, as detailed in the integration guide.
+November 1 local restore has Oxygen's schedules and the Solana paper workers
+active, with entry gates still requiring individual validation. See
+[local Solana activation](docs/SOLANA_PAPER_ACTIVATION.md).
 
 | Console view | Purpose and account boundary | Current operating state |
 | --- | --- | --- |
