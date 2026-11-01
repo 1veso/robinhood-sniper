@@ -570,6 +570,9 @@ def make_server(root, host='127.0.0.1', port=8765):
              '/radeon-strategies':('radeon-strategies.html','text/html; charset=utf-8'),
              '/radeon-strategies.js':('radeon-strategies.js','text/javascript; charset=utf-8'),
              '/radeon-strategies.css':('radeon-strategies.css','text/css; charset=utf-8')}
+    files.update({'/experiments':('experiments.html','text/html; charset=utf-8'),
+                  '/experiments.js':('experiments.js','text/javascript; charset=utf-8'),
+                  '/experiments.css':('experiments.css','text/css; charset=utf-8')})
     event_waiters=threading.BoundedSemaphore(8)
     control_token = secrets.token_urlsafe(32)
 
@@ -628,6 +631,12 @@ def make_server(root, host='127.0.0.1', port=8765):
                 if url.path in files:
                     name, mime = files[url.path]
                     self.send(200, (static / name).read_bytes(), mime)
+                elif url.path == '/api/experiments':
+                    from .experimental_paper import snapshot
+                    value=snapshot(data.root)
+                    status=data.root/'runtime/experiments/status.json'
+                    value['worker']=read_json(status) if status.exists() else {}
+                    self.send(200,json_text(value).encode())
                 elif url.path == '/api/state':
                     self.send(200, json_text(data.state(params.get('bot', ['robinhood'])[0])).encode())
                 elif url.path == '/api/radeon-strategies':
