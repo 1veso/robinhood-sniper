@@ -33,6 +33,9 @@ JOBS = {
     'krypton-watch': ('KRYPTON Paper Watch', 1, 50, ['krypton_bot.py', 'watch']),
     'helium-scan': ('HELIUM Paper Scan', 1, 50, ['helium_bot.py', 'scan']),
     'helium-watch': ('HELIUM Paper Watch', 1, 50, ['helium_bot.py', 'watch']),
+    'nitrogen-scan': ('NITROGEN Search and Judge', 1, 110, ['nitrogen_bot.py', 'scan']),
+    'nitrogen-watch': ('NITROGEN Paper Exits', 1, 50, ['nitrogen_bot.py', 'watch']),
+    'nitrogen-head': ('NITROGEN Outcomes and Report', 1, 50, ['nitrogen_bot.py', 'head', '--scheduled']),
     'radon-research': ('RADON Copier Research', 1, 600, ['radon_bot.py', 'scheduled', '--job', 'research']),
     'radon-entries': ('RADON Paper Entries', 1, 55, ['radon_bot.py', 'run', '--job', 'entries', '--duration-seconds', '50']),
     'radon-watch': ('RADON Paper Exits', 1, 55, ['radon_bot.py', 'run', '--job', 'watch', '--duration-seconds', '50']),
@@ -150,6 +153,8 @@ def worker(name, root=ROOT):
             if not report_due(started) or read(marker, {}).get('day') == date:
                 return 0
         if name in ('paper', 'research', 'shadow', 'monitor') and not (root / 'runtime/exploration/trial.json').exists():
+            return 0
+        if name.startswith('nitrogen-') and not (root/'nitrogen_bot/runtime/book.sqlite3').is_file():
             return 0
         if name.startswith('radon-') and not (root/'radon_bot/runtime/book.sqlite3').is_file():
             return 0

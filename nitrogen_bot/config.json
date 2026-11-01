@@ -1,0 +1,70 @@
+{
+  "version": "nitrogen_paper_v1",
+  "mode": "paper",
+  "starting_cash_usd": "500",
+  "min_liquidity_usd": "25000",
+  "min_pool_age_minutes": 10,
+  "max_single_holder": "0.10",
+  "max_top10_share": "0.40",
+  "require_mint_disabled": true,
+  "require_freeze_disabled": true,
+  "require_lp_locked": true,
+  "model": "jev-1.14.0",
+  "max_position_pct": "0.02",
+  "max_daily_loss_pct": "0.05",
+  "poll_seconds": 60,
+  "quote_max_age_seconds": 60,
+  "evidence_max_age_seconds": 300,
+  "candidate_expiry_seconds": 7200,
+  "max_holder_accounts": 4096,
+  "candidates_per_scan": 1,
+  "judge_binding": "dad6a428eafb83d407791ef3f26339599ad49797577b963a5e21c8fe42729c49",
+  "tracked_wallets": [],
+  "max_exposure_pct": "0.08",
+  "max_open": 4,
+  "max_entries_per_day": 6,
+  "order_expiry_seconds": 120,
+  "whale_max_age_seconds": 3600,
+  "model_daily_limit_usd": "1",
+  "model_reservation_usd": "0.01",
+  "report_timezone": "Europe/Berlin",
+  "report_time": "21:00",
+  "exit": {
+    "stop_pct": 35,
+    "ladder": [
+      [
+        100,
+        "0.50"
+      ],
+      [
+        200,
+        "0.25"
+      ]
+    ],
+    "trail_pct": 30,
+    "time_stop_hours": 6,
+    "time_stop_min_pct": 20,
+    "liq_drop_pct": 40
+  },
+  "cost_policy": {
+    "model": "solana_cost_scenario_v1",
+    "dex_fee_bps": 30,
+    "platform_fee_bps": 10,
+    "slippage_bps": 100,
+    "base_fee_lamports": 5000,
+    "priority_fee_lamports": 100000,
+    "token_account_rent_lamports": 2039280,
+    "failed_attempts_per_fill": 0,
+    "stress_extra_slippage_bps": 100,
+    "stress_extra_network_attempts": 2,
+    "native_price_max_age_seconds": 30,
+    "assumptions": "Illustrative conservative parameters, not provider-verified costs. Constant-product impact approximates pool depth; concentrated liquidity can differ. Rent is reserved capital, not a fee or an assumed refund."
+  },
+  "baseline_revision": "334c73b9925b069a4bf9e7ce4cae914154fa493b",
+  "baseline_sources": [
+    "krypton_bot/config.json",
+    "rug_desk/config.py",
+    "src/sniper/execution_costs.py"
+  ],
+  "approval_max_price_move_pct": "0.05"
+}

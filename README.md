@@ -26,10 +26,11 @@ been established.
 | **Argon** (`jev`) | Pump/Jev review of the **existing Xenon account**, not another balance | ACTIVE_PAPER admission filter, with entries blocked by disabled models and incomplete factual evidence |
 | **Krypton** (`krypton`) | Standalone Solana token screening; separate $1,000 virtual account | Independent scan/watch jobs; hard checks and authorized Grok evidence are required before entry |
 | **Helium** (`helium`) | Standalone Solana research team; separate $1,000 virtual account | Krypton's trading baseline plus a bound Jev review of Grok; both paid model gates remain disabled |
-| **Radon** (slot 8) | Independent fixed-ticket Solana copier research and paper account. Slot 7 is reserved. | Source and paid research unavailable until explicitly configured; no workers installed by this change. |
+| **NITROGEN** (`nitrogen`, slot 7) | Independent $500 Jev Judgment Desk with staged operator-approved paper orders | Implemented; factual sources, own paid authorization and operator approval required; no workers enabled. |
+| **Radon** (slot 8) | Independent fixed-ticket Solana copier research and paper account. | Source and paid research unavailable until explicitly configured; no workers installed by this change. |
 
-Seven implemented views do **not** represent seven independent bankrolls. Slot seven
-is reserved, and Radon occupies slot eight. Shared adapters and
+Eight implemented views do **not** represent eight independent bankrolls. NITROGEN
+occupies slot seven, and Radon occupies slot eight. Shared adapters and
 model-budget accounting do not merge strategy accounts or returns. Krypton and
 Helium have no live adapter or Telegram delivery. Other strategies' durable
 notification queues remain separate from comparison studies.
@@ -305,7 +306,7 @@ Additional guides: [wallet discovery](docs/WALLET_DISCOVERY.md),
 
 ## Radon copy trading desk
 
-Radon occupies bot slot **8**; slot **7** is reserved. It adds an independent
+Radon occupies bot slot **8**; NITROGEN occupies slot **7**. It adds an independent
 paper account, deterministic fixed-ticket copier replay, per-mint episode caps,
 leader-attributed partial exits, and separate prospective reports to the existing
 console. See [Radon setup and policy](radon_bot/README.md) and the
@@ -315,3 +316,12 @@ console. See [Radon setup and policy](radon_bot/README.md) and the
 `python radon_bot.py status` and `/?bot=radon` are read-only. Initialization,
 authorized source intake, paid model authorization/validation, and worker
 installation are explicit steps; there is no Fomo cookie scraper or live toggle.
+
+## NITROGEN — Jev Judgment Desk (slot 7)
+
+NITROGEN now occupies the previously reserved seventh slot; RADON remains slot 8.
+It has its own $500 paper account, factual RISK/WHALE admission, four-question Jev
+gate, durable WATCH recheck, and `APPROVE #id` staged paper orders. Exits run independently.
+Paid calls start disabled and unsupported factual coverage blocks entry.
+See [operation and exact policy](nitrogen_bot/README.md), [evidence contract](docs/nitrogen-evidence.md),
+and [validation / changed files](docs/nitrogen-validation.md).
