@@ -1,4 +1,4 @@
-"""Read-only projection of DEV WATCH's isolated article ledger. No code imports or API calls."""
+"""Read-only projection of Oxygen (slot 9), the isolated DEV WATCH article desk."""
 import ast
 from collections import Counter, deque
 import csv
@@ -58,7 +58,8 @@ def source_status(folder):
         for name, item in manifest['files'].items():
             data = (folder/name).read_bytes()
             if name == 'config.py':
-                data = data.replace(b'PAPER = False                 #', b'PAPER = True                 #', 1)
+                if data.count(b'PAPER = True                 #') != 1:
+                    return False
             if hashlib.sha256(data).hexdigest() != approved.get(name, item)['sha256']:
                 return False
         return hashlib.sha256((folder/'ARTICLE.txt').read_bytes()).hexdigest() == manifest['article_sha256']
@@ -86,9 +87,9 @@ def csv_rows(folder, name):
 
 def view(root, now=None):
     folder = Path(root)/'dev_watch'
-    result = {'bot':'devwatch', 'title':'DEV WATCH', 'purpose':'Developer-wallet exit monitor',
+    result = {'bot':'oxygen', 'slot':9, 'title':'Oxygen', 'purpose':'DEV WATCH developer-wallet desk',
               'initialized':(folder/'config.py').is_file(), 'account_id':None,
-              'assets':[], 'status':{}, 'execution_target':'manual', 'live_execution_ready':False}
+              'assets':[], 'status':{}, 'execution_target':'paper', 'live_execution_ready':False}
     if not result['initialized']:
         result['status'] = {'health':'NOT_INSTALLED'}
         return result
@@ -130,5 +131,5 @@ def view(root, now=None):
 
 def health(root):
     folder = Path(root)/'dev_watch'
-    return {'available':(folder/'config.py').is_file(), 'account_id':None,
-            'last_completed_at':None, 'execution':'manual_confirmation_only'}
+    return {'available':(folder/'config.py').is_file(), 'account_id':None, 'slot':9,
+            'last_completed_at':None, 'execution':'paper_simulation_only'}

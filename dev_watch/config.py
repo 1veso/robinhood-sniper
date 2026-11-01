@@ -15,7 +15,7 @@ def env(name, default=None):
 
 
 MODEL = "grok-4.7"           # if the API rejects it, check console.x.ai -> Models
-PAPER = False                 # fake fills at real prices. flip after a week of reading logs
+PAPER = True                 # fake fills at real prices. flip after a week of reading logs
 RPC_URL = env("RPC_URL", "https://api.mainnet-beta.solana.com")
 
 TICKET_USD = 25              # flat, forever. never sized off the last win

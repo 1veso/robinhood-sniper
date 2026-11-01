@@ -25,6 +25,10 @@ rug_desk/positions.json
 rug_desk/trades.csv
 rug_desk/checks.csv
 rug_desk/report.html
+neon_bot/positions.json
+neon_bot/trades.csv
+neon_bot/checks.csv
+neon_bot/report.html
 BUILD_CONTRACT.md
 .playwright-cli/
 output/playwright/

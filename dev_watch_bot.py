@@ -1,4 +1,4 @@
-"""Repository entry point for the isolated DEV WATCH bot. No wallet execution."""
+"""Repository entry point for Oxygen (slot 9), the isolated DEV WATCH paper desk."""
 import argparse
 import json
 from pathlib import Path
@@ -20,10 +20,10 @@ def main():
         return 0
     python = folder/'.venv/Scripts/python.exe' if sys.platform == 'win32' else folder/'.venv/bin/python'
     interpreter = str(python) if python.is_file() else sys.executable
-    verified = subprocess.run([interpreter, 'verify_article.py'], cwd=folder)
+    verified = subprocess.run([interpreter, '-X', 'utf8', 'verify_article.py'], cwd=folder)
     if verified.returncode or args.command == 'verify':
         return verified.returncode
-    command = [interpreter, '-u', args.command+'.py']
+    command = [interpreter, '-X', 'utf8', '-u', args.command+'.py']
     if args.command == 'watch':
         command += ['--minutes', '9', '--every', '20']
     return subprocess.run(command, cwd=folder).returncode

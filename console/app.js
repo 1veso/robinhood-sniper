@@ -13,11 +13,13 @@ const stamp = (t, date=false) => t ? new Date(t*1000).toLocaleString('en-GB',{ti
 const age = t => {if(!t)return 'unknown';let s=Math.max(0,Math.floor(Date.now()/1000-t));return s<60?s+'s':s<3600?Math.floor(s/60)+'m '+s%60+'s':Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m';};
 const pretty = v => String(v ?? 'unknown').replace(/[_:]/g,' ');
 const html = (id, content) => {if($(id).innerHTML !== content) $(id).innerHTML=content;};
-let bot=['robinhood','solana','neon','jev','krypton','helium','nitrogen','radon','devwatch'].includes(new URLSearchParams(location.search).get('bot'))?new URLSearchParams(location.search).get('bot'):'robinhood', state=null, chart=null, selectedAsset='', tab='positions', range=21600, query='', generation=0, loading=false, chartKey='', error=false;
+const requestedBot=new URLSearchParams(location.search).get('bot');
+const initialBot=requestedBot==='devwatch'?'oxygen':requestedBot;
+let bot=['robinhood','solana','neon','jev','krypton','helium','nitrogen','radon','oxygen'].includes(initialBot)?initialBot:'robinhood', state=null, chart=null, selectedAsset='', tab='positions', range=21600, query='', generation=0, loading=false, chartKey='', error=false;
 let plot=null;
 let rejectionScope='current_policy';
-const botLabels={robinhood:{name:'Radeon',purpose:'Robinhood Sniper'},solana:{name:'Xenon',purpose:'Solana Rug Desk'},neon:{name:'Neon',purpose:'Solana Leader Follower'},jev:{name:'Argon',purpose:'Pump/Jev Review'},krypton:{name:'Krypton',purpose:'Solana New-Token Scanner'},helium:{name:'Helium',purpose:'Autonomous Trading Team'},nitrogen:{name:'NITROGEN',purpose:'Jev Judgment Desk · Slot 7'},devwatch:{name:'DEV WATCH',purpose:'Developer Wallet Monitor'},radon:{name:'Radon',purpose:'Copy Trading Desk · Slot 8'}};
-function renderBotIdentity(){const label=botLabels[bot];$('account-title').textContent=label.name;$('chain').textContent=label.purpose;}
+const botLabels={robinhood:{name:'Radeon',purpose:'Robinhood Sniper'},solana:{name:'Xenon',purpose:'Solana Rug Desk'},neon:{name:'Neon',purpose:'Solana Leader Follower'},jev:{name:'Argon',purpose:'Pump/Jev Review'},krypton:{name:'Krypton',purpose:'Solana New-Token Scanner'},helium:{name:'Helium',purpose:'Autonomous Trading Team'},nitrogen:{name:'NITROGEN',purpose:'Jev Judgment Desk · Slot 7'},oxygen:{name:'Oxygen',purpose:'DEV WATCH Desk · Slot 9'},radon:{name:'Radon',purpose:'Copy Trading Desk · Slot 8'}};
+function renderBotIdentity(){const label=botLabels[bot];$('account-title').textContent=label.name;$('chain').textContent=label.purpose;$('mode-badge').textContent='PAPER';}
 let neonRefreshQueued=false,neonRefreshGeneration=-1;
 let wallets=null, walletError=false, walletLoading=false, selectedWallet='', walletDetail=null, walletDetailError=false, walletDetailRequest=0, walletDetailLoading='';
 let jevDetail=null,jevDetailError='',jevLoading=false;
@@ -89,7 +91,7 @@ async function refresh(){
     if(token!==generation)return;
     state=next;completed=true;error=false;$('offline').hidden=true;
     if(bot==='neon'){window.NeonWorkspace.update(next);return;}
-    if(bot==='krypton'||bot==='helium'||bot==='nitrogen'||bot==='radon'||bot==='devwatch'){render();return;}
+    if(bot==='krypton'||bot==='helium'||bot==='nitrogen'||bot==='radon'||bot==='oxygen'){render();return;}
     if(!state.assets.some(a=>a.asset_id===selectedAsset))selectedAsset=(state.assets.find(a=>a.state==='open')||state.assets[0]||{}).asset_id||'';
     render();await Promise.all([loadChart(token),tab==='wallets'?loadWallets(token):Promise.resolve()]);
   }catch(e){if(token===generation){error=true;if(bot==='neon')window.NeonWorkspace.disconnected();if(bot==='helium')window.HeliumView.disconnected();if(bot==='nitrogen')window.NitrogenView.disconnected();$('offline').textContent='Data connection interrupted. '+e.message+' Last displayed values are retained; they are not current. Automatic retry every 5 seconds.';$('offline').hidden=false;}}
@@ -136,16 +138,16 @@ function render(){
   setSizingActive();
   window.NeonWorkspace.setActive(bot==='neon');
   window.HeliumView.setActive(bot==='helium');window.NitrogenView.setActive(bot==='nitrogen');
-  document.querySelectorAll('.market-grid,.ledger-panel,.detail-grid').forEach(el=>{el.hidden=bot==='jev'||bot==='krypton'||bot==='helium'||bot==='nitrogen'||bot==='radon'||bot==='devwatch';});
+  document.querySelectorAll('.market-grid,.ledger-panel,.detail-grid').forEach(el=>{el.hidden=bot==='jev'||bot==='krypton'||bot==='helium'||bot==='nitrogen'||bot==='radon'||bot==='oxygen';});
   $('jev-panel').hidden=bot!=='jev';
   $('krypton-panel').hidden=bot!=='krypton';
   $('helium-panel').hidden=bot!=='helium';
   $('nitrogen-panel').hidden=bot!=='nitrogen';
   $('radon-panel').hidden=bot!=='radon';
-  $('devwatch-panel').hidden=bot!=='devwatch';
-  if(bot==='devwatch'){window.DevWatchView.render(state);return;}
+  $('devwatch-panel').hidden=bot!=='oxygen';
+  if(bot==='oxygen'){window.DevWatchView.render(state);return;}
   if(bot==='nitrogen'){window.NitrogenView.render(state);return;}
-  if(bot==='radon'){const radonState={...state,limits:state.limits?.map(l=>l.replace('Slot seven is reserved.','NITROGEN occupies slot seven.'))};window.RadonView.render(radonState);$('trial-deadline').textContent='Slot 8 · NITROGEN occupies slot 7';return;}
+  if(bot==='radon'){window.RadonView.render(state);$('trial-deadline').textContent='Slot 8 · NITROGEN occupies slot 7';return;}
   if(bot==='krypton'){window.KryptonView.render(state);return;}
   if(bot==='helium'){window.HeliumView.render(state);return;}
   if(bot==='jev'){renderJev();return;}
@@ -200,11 +202,11 @@ function freshness(){
   if(!state)return;
   if(bot==='nitrogen'){window.NitrogenView.freshness(state);return;}
   if(bot==='radon'){window.RadonView.freshness(state);return;}
-  if(bot==='devwatch'){
+  if(bot==='oxygen'){
     $('worker-freshness').textContent='Last ledger update '+age(state.status.last_record_at)+' ago · Codex routine timing not verified by this console';
     $('worker-freshness').className='context-status';return;
   }
-  if(bot==='krypton'||bot==='helium'||bot==='radon'||bot==='devwatch'||bot==='devwatch'){
+  if(bot==='krypton'||bot==='helium'||bot==='radon'||bot==='oxygen'){
     const workers=state.status.worker_completions||{},issues=state.status.provider_errors||[];
     $('worker-freshness').textContent=`Scan completed ${age(workers.scan)} ago · exits ${age(workers.watch)} ago${issues.length?' · provider issue: '+issues.join(', '):''}`;
     $('worker-freshness').className='context-status'+(issues.length||state.status.overdue_workers?.length||state.error_count?' warning':'');
@@ -212,7 +214,7 @@ function freshness(){
   }
   const finished=state.status.finished_at,old=!finished||Date.now()/1000-finished>state.cadence_seconds*3;
   $('worker-freshness').textContent=`Worker completed ${age(finished)} ago${old?' · overdue':''}${state.error_count?' · '+state.error_count+' operational error'+(state.error_count===1?'':'s'):''}${state.cycle_issues?.some(i=>i.stage==='position_exit'&&i.code==='route_unavailable')?' · exit route unavailable':''}`;$('worker-freshness').className='context-status'+(old||state.error_count||state.snapshot?.unresolved_positions?' warning':'');
-  if(bot==='jev'||bot==='neon'||bot==='krypton'||bot==='helium'||bot==='nitrogen'||bot==='radon'||bot==='devwatch')return;
+  if(bot==='jev'||bot==='neon'||bot==='krypton'||bot==='helium'||bot==='nitrogen'||bot==='radon'||bot==='oxygen')return;
   if(state.trial.ends_at){const remaining=state.trial.ends_at-Date.now()/1000;
     $('trial-state').textContent=remaining>0?`Paper trial · ${Math.floor(remaining/86400)}d ${Math.floor(remaining%86400/3600)}h remaining`:'Entry period ended · exits continue';
     $('trial-deadline').textContent='Ends '+new Date(state.trial.ends_at*1000).toLocaleString('en-GB',{timeZone:'Europe/Berlin',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})+' CET';
@@ -365,7 +367,7 @@ function drawChart(){
   plot={points,fills:visibleFills,x,y,minT,maxT,left,cw};freshness();
 }
 function drawEquity(){
-  if(bot==='jev'||bot==='krypton'||bot==='helium'||bot==='nitrogen'||bot==='radon'||bot==='devwatch')return;
+  if(bot==='jev'||bot==='krypton'||bot==='helium'||bot==='nitrogen'||bot==='radon'||bot==='oxygen')return;
   const pnlMode=state.snapshot.capital_baseline_supported===false;
   document.querySelector('.equity-label span').textContent=pnlMode?'Net paper P&L - recorded observations':'Equity - recorded valuations';
   const {ctx,w,h}=canvasContext($('equity-chart')),points=pnlMode?(state.pnl_history||[]).filter(p=>p.net_pnl!==null).map(p=>({...p,equity:p.net_pnl})):state.equity_history;if(points.length<2){ctx.fillStyle='#9baaa6';ctx.font='11px Segoe UI';ctx.fillText(pnlMode?'No recorded net P&L series':'No recorded equity series',4,h/2);return;}

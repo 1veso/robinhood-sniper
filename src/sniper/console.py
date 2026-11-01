@@ -224,10 +224,12 @@ class ConsoleData:
             return value
 
     def state(self, bot='robinhood'):
-        if bot not in ('robinhood', 'solana', 'neon', 'jev', 'krypton', 'helium', 'nitrogen', 'radon', 'devwatch'):
+        if bot == 'devwatch':
+            bot = 'oxygen'  # Preserve existing bookmarks after the slot-nine rename.
+        if bot not in ('robinhood', 'solana', 'neon', 'jev', 'krypton', 'helium', 'nitrogen', 'radon', 'oxygen'):
             raise ValueError('Unknown bot')
         def load():
-            if bot == 'devwatch':
+            if bot == 'oxygen':
                 from .devwatch_console import view
                 from .signal_readiness import inventory as signal_inventory
                 data = view(self.root)
@@ -256,8 +258,8 @@ class ConsoleData:
                          'refresh_seconds': 5, 'read_only': True, 'real_money_enabled': False,
                          'execution_target': 'automatic', 'live_execution_ready': False,
                          'jobs': self.jobs()})
-            if bot == 'devwatch':
-                data['execution_target'] = 'manual'
+            if bot == 'oxygen':
+                data['execution_target'] = 'paper' if data.get('mode') == 'PAPER' else 'manual'
             workspace_key = {'neon': 'neon_workspace', 'helium': 'helium_workspace'}.get(bot)
             if workspace_key and data.get(workspace_key):
                 worker=data[workspace_key]['worker'];jobs=data['jobs']
@@ -275,7 +277,7 @@ class ConsoleData:
                         if job.get('name')==task_names[0]:worker['next_scan_at']=planned
                         if job.get('name')==task_names[1]:worker['next_watch_at']=planned
             from .switchover import inventory
-            if bot not in ('neon','jev','krypton','helium','nitrogen','radon','devwatch'):
+            if bot not in ('neon','jev','krypton','helium','nitrogen','radon','oxygen'):
                 data['switchover'] = inventory(self.root, 'evm' if bot=='robinhood' else 'solana')
             if bot=='robinhood':
                 try:
@@ -723,8 +725,8 @@ def make_server(root, host='127.0.0.1', port=8765):
                     from .nitrogen.view import health as nitrogen_health
                     self.send(200, json_text({'service':'TENDIES TRACKER Observation Console','version':__version__,'read_only':False,
                         'read_only_gets':True,'operator_controls':['radeon_paper_entry_switches'],'at':int(time.time()),
-                        'paper_views':['robinhood','solana','neon','jev','krypton','helium','nitrogen','radon'],'bot_views':['robinhood','solana','neon','jev','krypton','helium','nitrogen','radon','devwatch'],'manual_signal_views':['devwatch'],'reserved_bot_slots':[],'event_stream_version':1,
-                        'event_stream_bots':['solana','neon'],'journal_bots':['helium'],'accounts':dict(discover(data.root),krypton=krypton_health(data.root),helium=helium_health(data.root),nitrogen=nitrogen_health(data.root),radon=radon_health(data.root),devwatch=devwatch_health(data.root))}).encode())
+                        'paper_views':['robinhood','solana','neon','jev','krypton','helium','nitrogen','radon','oxygen'],'bot_views':['robinhood','solana','neon','jev','krypton','helium','nitrogen','radon','oxygen'],'manual_signal_views':[],'reserved_bot_slots':[],'event_stream_version':1,
+                        'event_stream_bots':['solana','neon'],'journal_bots':['helium'],'accounts':dict(discover(data.root),krypton=krypton_health(data.root),helium=helium_health(data.root),nitrogen=nitrogen_health(data.root),radon=radon_health(data.root),oxygen=devwatch_health(data.root))}).encode())
                 elif url.path == '/api/jev-assessment':
                     from .jev_review import detail
                     self.send(200, json_text(detail(data.root, params.get('id',[''])[0])).encode())

@@ -5,9 +5,11 @@ from decimal import Decimal as D
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -196,7 +198,16 @@ class RadonTests(unittest.TestCase):
             self.assertEqual(before,(folder/'book.sqlite3').read_bytes())
         if hasattr(Path,'symlink_to'):
             with tempfile.TemporaryDirectory() as other:
-                root=Path(other);(root/'radon_bot').mkdir();(root/'radon_bot/runtime').symlink_to(self.book.folder,target_is_directory=True)
+                root=Path(other);(root/'radon_bot').mkdir();link=root/'radon_bot/runtime'
+                if os.name == 'nt':
+                    # Junctions exercise the same resolved-path guard without requiring
+                    # Windows Developer Mode or the symbolic-link privilege.
+                    subprocess.run(['powershell','-NoProfile','-Command',
+                        "New-Item -ItemType Junction -Path $env:RADON_TEST_LINK -Target $env:RADON_TEST_TARGET -ErrorAction Stop | Out-Null"],
+                        env=dict(os.environ,RADON_TEST_LINK=str(link),RADON_TEST_TARGET=str(self.book.folder)),
+                        check=True,capture_output=True)
+                else:
+                    link.symlink_to(self.book.folder,target_is_directory=True)
                 with self.assertRaisesRegex(ValueError,'redirect'):Book(root,self.cfg)
 
     def test_configuration_binding_prevents_reinterpretation(self):

@@ -135,10 +135,15 @@ def report_due(now):
 
 
 def child(args, timeout, root=ROOT):
-    command = [sys.executable, str(Path(root) / args[0]), *args[1:]]
+    command = [sys.executable, '-X', 'utf8', str(Path(root) / args[0]), *args[1:]]
+    environment = os.environ.copy()
+    if not environment.get('SSL_CERT_FILE'):
+        import certifi
+        environment['SSL_CERT_FILE'] = certifi.where()
     flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
     return subprocess.run(command, cwd=root, timeout=timeout or None,
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=flags).returncode
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                          creationflags=flags, env=environment).returncode
 
 
 def worker(name, root=ROOT):

@@ -15,7 +15,7 @@ PYTHON_HASH = '90905e64a840557d8c1bc4f5b74db3d7ee85e3ffb217611cac1c7813acea4159'
 DEPENDENCIES = {'certifi': '2026.10.23', 'charset_normalizer': '3.5.2', 'idna': '3.20',
                 'requests': '2.34.2', 'tzdata': '2026.5', 'urllib3': '2.8.0'}
 DEV_WATCH_FILES = {'config.py','book.py','facts.py','grok.py','prompts.py','scan.py','enter.py',
-                   'rpc.py','watch.py','pulse.py','report.py','verify_article.py','verify_live_mode.py',
+                   'rpc.py','watch.py','pulse.py','report.py','verify_article.py','verify_live_mode.py','verify_paper_mode.py',
                    'preflight.py','setup_env.ps1','article-manifest.json','approved-live-exit-fix.json',
                    'ARTICLE.txt','SETUP.md','LIVE_EXITS.md','live-exit-fix.patch','requirements.txt','.env.example'}
 

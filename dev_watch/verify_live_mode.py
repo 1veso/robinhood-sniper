@@ -18,7 +18,8 @@ from verify_article import verify
 
 def main():
     verify()
-    assert config.PAPER is False and enter.PAPER is False
+    # Live behavior remains an isolated regression test; the installed desk is paper.
+    assert config.PAPER is True and enter.PAPER is True
     scratch = ROOT / 'runtime' / 'verification'
     scratch.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=scratch) as folder:
@@ -28,7 +29,7 @@ def main():
                    'confidence': 0.9, 'price': 0.01, 'liq_usd': 40000,
                    'snap': {'creator': 'TEST_OWNER', 'dev0': 100, 'dev0_pct': 1,
                             'holders0': {'TEST_ACCOUNT': 500}}}
-        with patch.object(enter, 'PENDING', pending), patch.object(enter, 'CHECKS', checks):
+        with patch.object(enter, 'PAPER', False), patch.object(enter, 'PENDING', pending), patch.object(enter, 'CHECKS', checks):
             with patch.object(enter, 'check', return_value=verdict), \
                  patch.object(enter.book, 'open_position') as open_position:
                 out = enter.run('OFFLINE_TEST_MINT')

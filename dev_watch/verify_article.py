@@ -1,4 +1,4 @@
-"""Verify original article sources plus the exact user-approved live-mode fixes."""
+"""Verify Oxygen's original paper mode plus the approved live-exit confirmation fix."""
 import ast
 import hashlib
 import json
@@ -17,16 +17,14 @@ def verify():
         data = (ROOT / name).read_bytes()
         baseline = data
         if name == 'config.py':
-            approved = b'PAPER = False                 # fake fills at real prices. flip after a week of reading logs'
             original = b'PAPER = True                 # fake fills at real prices. flip after a week of reading logs'
-            if data.count(approved) != 1:
-                raise RuntimeError('Expected the user-approved PAPER=False setting')
-            baseline = data.replace(approved, original, 1)
+            if data.count(original) != 1:
+                raise RuntimeError('Expected the user-approved PAPER=True setting (2026-11-01)')
         expected_hash = approved_fixes['files'].get(name, {}).get('sha256', expected['sha256'])
         if hashlib.sha256(baseline).hexdigest() != expected_hash:
             raise RuntimeError(f'{name} differs from the extracted article')
         ast.parse(data, filename=name)
-    print(f"PASS: {len(manifest['files'])} sources verified; only approved PAPER=False and live exit confirmation fixes differ; syntax valid")
+    print(f"PASS: {len(manifest['files'])} sources verified; PAPER=True; only approved live exit confirmation fixes differ; syntax valid")
 
 
 if __name__ == '__main__':

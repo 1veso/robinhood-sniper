@@ -72,7 +72,7 @@ def snapshot(db, now):
             'Historical replay is conditional on archived numerical evidence; historical X/safety gates are not reconstructed.',
             'Pool age is not token launch time. Distinct wallets do not establish distinct controllers.',
             'Reserved token-account rent is retained capital, not an assumed refund.',
-            'Slot seven is reserved. Radon never initializes or trades another bot account.']}
+            'NITROGEN occupies slot seven. Radon never initializes or trades another bot account.']}
 
 
 def view(root, now=None):

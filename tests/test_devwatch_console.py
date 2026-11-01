@@ -1,4 +1,4 @@
-"""DEV WATCH's seventh view must not trade, execute config, or merge accounts."""
+"""Oxygen's ninth view must not execute config, mutate ledgers, or merge accounts."""
 import csv
 import http.client
 import importlib.util
@@ -54,7 +54,9 @@ class DevWatchConsoleTests(unittest.TestCase):
         self.rows('costs.csv',['time','job','usd','x_posts'],[dict(time='2026-10-31 17:00',job='scan',usd='.5',x_posts=3)])
         before={p.name:p.read_bytes() for p in self.folder.iterdir()}
         result=view(self.root)
-        self.assertEqual(result['mode'],'MANUAL LIVE')
+        self.assertEqual(result['mode'],'PAPER')
+        self.assertEqual(result['bot'],'oxygen')
+        self.assertEqual(result['slot'],9)
         self.assertEqual(result['summary']['realized_pnl'],'-2')
         self.assertEqual(result['summary']['net_realized_after_api'],'-2.5')
         self.assertEqual(result['positions'][0]['qty'],'10')
@@ -94,7 +96,8 @@ class DevWatchConsoleTests(unittest.TestCase):
         (self.root/'runtime').mkdir()
         (self.root/'runtime/xai-api-key.txt').write_text('SECRET')
         result=inventory(self.root)
-        self.assertEqual(len(result['bots']),7)
+        self.assertEqual(len(result['bots']),9)
+        self.assertEqual([x['slot'] for x in result['bots']],list(range(1,10)))
         self.assertTrue(result['credential_file_present'])
         self.assertTrue(all(x['state']=='RESTORE_REQUIRED' for x in result['bots'][:6]))
         self.assertFalse(result['automated_real_money_execution_enabled'])
@@ -107,11 +110,11 @@ class DevWatchConsoleTests(unittest.TestCase):
             thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
             try:
                 client=http.client.HTTPConnection('127.0.0.1',server.server_port)
-                for route in ['/api/state?bot=devwatch','/api/signals','/api/health','/devwatch.js']:
+                for route in ['/api/state?bot=devwatch','/api/state?bot=oxygen','/api/signals','/api/health','/devwatch.js']:
                     client.request('GET',route);response=client.getresponse();body=response.read()
                     self.assertEqual(response.status,200,route)
                     self.assertNotIn(b'xai-DO-NOT-EXPOSE',body)
-                    if route=='/api/health':self.assertEqual(len(json.loads(body)['bot_views']),7)
+                    if route=='/api/health':self.assertEqual(len(json.loads(body)['bot_views']),9)
                 client.request('POST','/api/devwatch/confirm',body='{}',headers={'Content-Type':'application/json'})
                 response=client.getresponse();response.read();self.assertNotEqual(response.status,200)
                 client.close()

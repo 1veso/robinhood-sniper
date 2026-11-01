@@ -1,52 +1,65 @@
-# DEV WATCH — seventh bot integration
+# Oxygen — DEV WATCH desk, slot 9
 
-Open `http://127.0.0.1:8765/?bot=devwatch`. The seventh panel displays the existing
-DEV WATCH ledger: holdings, pending exits, pending buy proposals, checks, recorded
-fills, API costs, original thresholds, and the seven-bot signal readiness table.
-No synthetic cash balance, current valuation, or independently verified wallet
-execution is inferred. Views only read files; they do not run models or confirm fills.
+Open http://127.0.0.1:8765/?bot=oxygen. The legacy devwatch URL remains an alias.
+Nitrogen occupies slot 7 and Radon slot 8, using their merged upstream sources.
 
-The standalone source remains under `dev_watch/`. Integration did not change its
-eleven Python files. The previously authorized live switch and confirmed-exit fix
-remain the only article deviations, checked by its source manifest.
+The user explicitly returned the system to paper trading on November 1, 2026.
+Oxygen uses the article's original PAPER=True: entries and exits are simulated
+from observed prices. The approved live-exit confirmation fix remains available
+and tested. All article thresholds, prompts and rule priority remain unchanged.
+The article does not model trading fees/slippage or define starting cash; the
+console does not invent those values.
 
-```powershell
-.\.venv\Scripts\python.exe dev_watch_bot.py status
-.\.venv\Scripts\python.exe dev_watch_bot.py verify
-.\.venv\Scripts\python.exe signals.py
-```
+Source, credentials and ledger files remain in dev_watch/. The original article,
+source manifest, checks and model cost history are preserved. oxygen_bot.py is
+the new entry point; dev_watch_bot.py remains compatible. Both support status,
+verify, scan, watch, pulse and report. The wrapper verifies sources, uses the
+isolated interpreter and enables UTF-8 so Unicode token names can be logged on
+Windows. Scan/pulse use the existing paid xAI authorization.
 
-The wrapper also supports scan, watch, pulse, and report, in the isolated working
-directory and environment. Scan and pulse can spend xAI credits. Existing Codex
-routines remain the scheduler; do not install a second overlapping set of jobs.
-The console reports the last recorded ledger change, not a fabricated worker
-completion. No HTTP control starts a trade, authorizes a model, or confirms a fill.
+Example from the repository root:
 
-## Restoring the other six views
+    .\scripts\paper-python.ps1 oxygen_bot.py status
+    .\scripts\paper-python.ps1 oxygen_bot.py verify
+    .\scripts\paper-python.ps1 signals.py
 
-The user will supply the original account backup. Preserve these paths together:
+The existing four Codex routines remain Oxygen's only scheduler. Their old IDs
+are retained; do not add duplicate Windows scan/watch jobs. The console only
+reads data and cannot grant model access or confirm fills.
 
-- `runtime/` (Radeon, research, Argon, shared settings and account selectors)
-- `rug_desk/runtime/` (Xenon)
-- `neon_bot/runtime/` (Neon)
-- `krypton_bot/runtime/` (Krypton)
-- `helium_bot/runtime/` (Helium)
+## Runtime restoration
 
-Argon shares Xenon's execution account. Preserve SQLite databases together with
-their WAL files from a consistent stopped-worker backup. Do not replace or merge
-the new `dev_watch/` ledger. Do not overwrite the new shared xAI credential with
-an older backup credential. The local setup remains intentionally uninitialized
-for those accounts until the backup arrives.
+The supplied top-level runtime was restored from D:\SNIPER RUNTIME\runtime.
+All 52 SQLite files passed quick_check, with database and WAL copies verified.
+The existing local Grok key was preserved. Old environments, temporary files,
+process locks and process IDs were excluded. Dependencies were installed from
+the repository requirement files into this machine's environment.
 
-After restoration, validate each bot in order against its original identity and
-settings. A successful DEV WATCH key test is not an account-bound proof for the
-other bots. Xenon and Neon need their current Grok inference/X proofs; Krypton
-and Helium need their own model proofs as well as the shared gate. Argon and
-Helium's Jev reviewer use a separate TypeSafe API credential. Radeon primarily
-uses on-chain purchase signals; Grok is optional research, not a missing entry rule.
-Retain each existing budget, factual gate and paper/live boundary. Do not
-manufacture paid proof files, waive missing facts, or start new accounts to get
-past a missing backup. No unattended real-money executor was enabled.
+The missing Xenon, Neon, Krypton, Helium, Nitrogen and Radon accounts were
+initialized as fresh paper accounts at the user's explicit request. Radeon
+retains its restored identity, balances, history and original trial deadline.
+Argon reviews Xenon and has no separate bankroll. Its old journal is archived
+under runtime/local-setup/archived-argon-20261101; a fresh shadow journal binds
+the replacement Xenon and Neon accounts. Old comparison ledgers retain their
+original identities and are not rebound or presented as fresh results.
 
-`GET /api/signals` and `signals.py` report file presence and remaining validation,
-never imply that a present API key proves all bots are operational.
+Both transferred public wallet addresses were confirmed by the user. No signer
+was configured. Credentials remain in ignored runtime files with restricted
+permissions. The failed public observation RPC was replaced with the verified
+restored RPC. The paper-python.ps1 launcher and desktop child workers use UTF-8
+and the installed CA bundle; TLS verification remains enabled.
+
+## Individual bot activation
+
+Installed accounts and successful chain reads are not complete strategy readiness.
+Xenon and Neon need current account-bound Grok inference/X Search proofs; Krypton,
+Helium and Radon also need their own bindings. Argon, Helium and Nitrogen need a
+separate TypeSafe/Jev credential and supporting evidence. Nitrogen needs tracked
+wallets and preserves staged paper-order approval. Radon needs supported live
+event/history exports. Never substitute synthetic fixtures or copied historical
+acceptance records for current provider proofs.
+
+The signals.py CLI and /api/signals are read-only setup inventories. Detailed
+restore, confirmed-public-wallet and chain-check records are in runtime/local-setup.
+Other bots' recurring workers and paid gates are activated during the subsequent
+bot-by-bot phase, after their requirements pass. No real-money execution was enabled.
