@@ -14,6 +14,10 @@ PYTHON_ZIP = 'python-3.14.10-embed-amd64.zip'
 PYTHON_HASH = '90905e64a840557d8c1bc4f5b74db3d7ee85e3ffb217611cac1c7813acea4159'
 DEPENDENCIES = {'certifi': '2026.10.23', 'charset_normalizer': '3.5.2', 'idna': '3.20',
                 'requests': '2.34.2', 'tzdata': '2026.5', 'urllib3': '2.8.0'}
+DEV_WATCH_FILES = {'config.py','book.py','facts.py','grok.py','prompts.py','scan.py','enter.py',
+                   'rpc.py','watch.py','pulse.py','report.py','verify_article.py','verify_live_mode.py',
+                   'preflight.py','setup_env.ps1','article-manifest.json','approved-live-exit-fix.json',
+                   'ARTICLE.txt','SETUP.md','LIVE_EXITS.md','live-exit-fix.patch','requirements.txt','.env.example'}
 
 
 def digest(path):
@@ -33,7 +37,7 @@ def source_files(root=ROOT):
             continue
         if not path.is_file() or path.is_symlink():
             continue
-        if (len(rel.parts) == 1 and (path.suffix in ('.py', '.toml') or path.name in ('requirements-executor.txt','requirements-krypton.txt'))) or rel.as_posix() in ('krypton_bot/config.json','krypton_bot/README.md','krypton_bot/.env.example','helium_bot/config.json','helium_bot/README.md') or (
+        if (len(rel.parts)==2 and rel.parts[0]=='dev_watch' and rel.name in DEV_WATCH_FILES) or (len(rel.parts) == 1 and (path.suffix in ('.py', '.toml') or path.name in ('requirements-executor.txt','requirements-krypton.txt'))) or rel.as_posix() in ('krypton_bot/config.json','krypton_bot/README.md','krypton_bot/.env.example','helium_bot/config.json','helium_bot/README.md') or (
                 rel.parts[0] in ('src', 'rug_desk', 'console', 'config', 'docs', 'scripts')
                 and path.suffix in ('.py', '.json', '.toml', '.html', '.js', '.css', '.svg', '.md', '.ps1')):
             if any(x in path.name.lower() for x in ('api-key', 'trading-address', 'recipient', 'token.txt')):

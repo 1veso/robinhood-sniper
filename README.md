@@ -16,7 +16,15 @@ calls remain disabled. Restricted live-executor code exists, but no live
 deployment is enabled or validated by paper results. A profitable edge has not
 been established.
 
-## Six views, distinct strategies
+## Seven views, distinct strategies
+
+DEV WATCH is now integrated as the seventh console view (`?bot=devwatch`). It
+retains its isolated article files, Grok/X signals, and user-confirmed live fills.
+Its existing Codex schedules are retained; the console starts no duplicate jobs.
+See [DEV WATCH integration](docs/DEV_WATCH.md). The current local installation is
+awaiting the user's original six-bot account backup. No replacement accounts
+have been initialized. The shared Grok key is available locally; restoring
+accounts and validating their paid-model bindings are separate remaining steps.
 
 | Console view | Purpose and account boundary | Current operating state |
 | --- | --- | --- |
@@ -26,8 +34,9 @@ been established.
 | **Argon** (`jev`) | Pump/Jev review of the **existing Xenon account**, not another balance | ACTIVE_PAPER admission filter, with entries blocked by disabled models and incomplete factual evidence |
 | **Krypton** (`krypton`) | Standalone Solana token screening; separate $1,000 virtual account | Independent scan/watch jobs; hard checks and authorized Grok evidence are required before entry |
 | **Helium** (`helium`) | Standalone Solana research team; separate $1,000 virtual account | Krypton's trading baseline plus a bound Jev review of Grok; both paid model gates remain disabled |
+| **DEV WATCH** (`devwatch`) | Article developer-wallet monitor; separate JSON/CSV ledger | Paid Grok/X signals; live buys and sells require manual wallet execution and actual-fill confirmation |
 
-Six views do **not** represent six independent bankrolls. Shared adapters and
+Seven views do **not** represent seven independent bankrolls. Shared adapters and
 model-budget accounting do not merge strategy accounts or returns. Krypton and
 Helium have no live adapter or Telegram delivery. Other strategies' durable
 notification queues remain separate from comparison studies.

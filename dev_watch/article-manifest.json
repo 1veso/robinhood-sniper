@@ -1,0 +1,49 @@
+{
+  "article_sha256": "148b9fe5c47ef0a979c7a0f199a84fdbc5fdf4080cb11c16cd5d0f5e306b8e2c",
+  "files": {
+    "config.py": {
+      "sha256": "3cad725ba5981de4dd5e1d9fdb238cfab47afdc82ee260bf7050e6d1e771ee90",
+      "lines": 61
+    },
+    "book.py": {
+      "sha256": "1259932f05a54ee2da608f8bcd2a6b8149103f425085b804bed23f58b924dc56",
+      "lines": 96
+    },
+    "facts.py": {
+      "sha256": "711afc1c60bcb7548d9d5ad458749d8b28308dc18a49b5c19d4ffae36b8941de",
+      "lines": 87
+    },
+    "grok.py": {
+      "sha256": "64fec63cd69e1df827d5075bf92d4cb099a293384850c64c3e8b783441ec6876",
+      "lines": 48
+    },
+    "prompts.py": {
+      "sha256": "ca3f72524dd9627f18d5f71f06b69552bdb9ffcb25c6aa88fc4f6067de0058da",
+      "lines": 43
+    },
+    "scan.py": {
+      "sha256": "520cd77afccde7ee046e130e0567e871938bb495f8f1f58355671045eba4803c",
+      "lines": 24
+    },
+    "enter.py": {
+      "sha256": "3f36f4571b294b69abcd9e826ac70fecbd294f16682ae2a6c96b692339d74801",
+      "lines": 66
+    },
+    "rpc.py": {
+      "sha256": "2cf69cb09a2417d1386718a8087e6f6b958ab9a9b184e1bc2a60f80d7585cf9d",
+      "lines": 44
+    },
+    "watch.py": {
+      "sha256": "80632d6ed7c673fc25bbba374a4eb7b395fb9726530bd10e3965c31250ad9853",
+      "lines": 93
+    },
+    "pulse.py": {
+      "sha256": "f208e0f5fe83e7e2e4b2f2db928d63072ac915aea6f5886ad7c4b256accecf72",
+      "lines": 25
+    },
+    "report.py": {
+      "sha256": "4948c3c3aea1dfd24b11ff8bd8a1b4ea4aa031b4ba141cd07d0677480d3756ce",
+      "lines": 26
+    }
+  }
+}

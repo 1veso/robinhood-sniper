@@ -224,10 +224,15 @@ class ConsoleData:
             return value
 
     def state(self, bot='robinhood'):
-        if bot not in ('robinhood', 'solana', 'neon', 'jev', 'krypton', 'helium'):
+        if bot not in ('robinhood', 'solana', 'neon', 'jev', 'krypton', 'helium', 'devwatch'):
             raise ValueError('Unknown bot')
         def load():
-            if bot in ('krypton', 'helium'):
+            if bot == 'devwatch':
+                from .devwatch_console import view
+                data = view(self.root)
+                from .signal_readiness import inventory as signal_inventory
+                data['signal_readiness'] = signal_inventory(self.root)
+            elif bot in ('krypton', 'helium'):
                 if bot == 'helium':
                     from .helium.view import view
                 else:
@@ -247,6 +252,8 @@ class ConsoleData:
                          'refresh_seconds': 5, 'read_only': True, 'real_money_enabled': False,
                          'execution_target': 'automatic', 'live_execution_ready': False,
                          'jobs': self.jobs()})
+            if bot == 'devwatch':
+                data['execution_target'] = 'manual'
             workspace_key = {'neon': 'neon_workspace', 'helium': 'helium_workspace'}.get(bot)
             if workspace_key and data.get(workspace_key):
                 worker=data[workspace_key]['worker'];jobs=data['jobs']
@@ -264,7 +271,7 @@ class ConsoleData:
                         if job.get('name')==task_names[0]:worker['next_scan_at']=planned
                         if job.get('name')==task_names[1]:worker['next_watch_at']=planned
             from .switchover import inventory
-            if bot not in ('neon','jev','krypton','helium'):
+            if bot not in ('neon','jev','krypton','helium','devwatch'):
                 data['switchover'] = inventory(self.root, 'evm' if bot=='robinhood' else 'solana')
             if bot=='robinhood':
                 try:
@@ -544,6 +551,7 @@ def make_server(root, host='127.0.0.1', port=8765):
              '/neon.js':('neon.js','text/javascript; charset=utf-8'),'/neon.css':('neon.css','text/css; charset=utf-8'),
              '/krypton.js':('krypton.js','text/javascript; charset=utf-8'),'/krypton.css':('krypton.css','text/css; charset=utf-8'),
              '/helium.js':('helium.js','text/javascript; charset=utf-8'),'/helium.css':('helium.css','text/css; charset=utf-8'),
+             '/devwatch.js':('devwatch.js','text/javascript; charset=utf-8'),
              '/sizing.css':('sizing.css','text/css; charset=utf-8'),
              '/radeon-strategies':('radeon-strategies.html','text/html; charset=utf-8'),
              '/radeon-strategies.js':('radeon-strategies.js','text/javascript; charset=utf-8'),
@@ -694,14 +702,20 @@ def make_server(root, host='127.0.0.1', port=8765):
                     self.send(200, json_text(evidence).encode(), filename=(evidence['wallet']+'.json') if params.get('download') == ['1'] else None)
                 elif url.path == '/api/wallet-export.csv':
                     self.send(200, data.wallet_csv(), 'text/csv; charset=utf-8', 'wallet-evidence.csv')
+                elif url.path == '/api/signals':
+                    from .signal_readiness import inventory as signal_inventory
+                    self.send(200, json_text(signal_inventory(data.root)).encode())
                 elif url.path == '/api/health':
                     from .solana_console import discover
                     from .krypton.view import health as krypton_health
                     from .helium.view import health as helium_health
+                    from .devwatch_console import health as devwatch_health
                     self.send(200, json_text({'service':'TENDIES TRACKER Observation Console','version':__version__,'read_only':False,
                         'read_only_gets':True,'operator_controls':['radeon_paper_entry_switches'],'at':int(time.time()),
                         'paper_views':['robinhood','solana','neon','jev','krypton','helium'],'event_stream_version':1,
-                        'event_stream_bots':['solana','neon'],'journal_bots':['helium'],'accounts':dict(discover(data.root),krypton=krypton_health(data.root),helium=helium_health(data.root))}).encode())
+                        'bot_views':['robinhood','solana','neon','jev','krypton','helium','devwatch'],
+                        'manual_signal_views':['devwatch'],
+                        'event_stream_bots':['solana','neon'],'journal_bots':['helium'],'accounts':dict(discover(data.root),krypton=krypton_health(data.root),helium=helium_health(data.root),devwatch=devwatch_health(data.root))}).encode())
                 elif url.path == '/api/jev-assessment':
                     from .jev_review import detail
                     self.send(200, json_text(detail(data.root, params.get('id',[''])[0])).encode())

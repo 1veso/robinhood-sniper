@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+runtime/
+positions.json
+positions.json.lock
+.positions-*.tmp
+pending.json
+trades.csv
+checks.csv
+costs.csv

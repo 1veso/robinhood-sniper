@@ -13,11 +13,11 @@ const stamp = (t, date=false) => t ? new Date(t*1000).toLocaleString('en-GB',{ti
 const age = t => {if(!t)return 'unknown';let s=Math.max(0,Math.floor(Date.now()/1000-t));return s<60?s+'s':s<3600?Math.floor(s/60)+'m '+s%60+'s':Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m';};
 const pretty = v => String(v ?? 'unknown').replace(/[_:]/g,' ');
 const html = (id, content) => {if($(id).innerHTML !== content) $(id).innerHTML=content;};
-let bot=['robinhood','solana','neon','jev','krypton','helium'].includes(new URLSearchParams(location.search).get('bot'))?new URLSearchParams(location.search).get('bot'):'robinhood', state=null, chart=null, selectedAsset='', tab='positions', range=21600, query='', generation=0, loading=false, chartKey='', error=false;
+let bot=['robinhood','solana','neon','jev','krypton','helium','devwatch'].includes(new URLSearchParams(location.search).get('bot'))?new URLSearchParams(location.search).get('bot'):'robinhood', state=null, chart=null, selectedAsset='', tab='positions', range=21600, query='', generation=0, loading=false, chartKey='', error=false;
 let plot=null;
 let rejectionScope='current_policy';
-const botLabels={robinhood:{name:'Radeon',purpose:'Robinhood Sniper'},solana:{name:'Xenon',purpose:'Solana Rug Desk'},neon:{name:'Neon',purpose:'Solana Leader Follower'},jev:{name:'Argon',purpose:'Pump/Jev Review'},krypton:{name:'Krypton',purpose:'Solana New-Token Scanner'},helium:{name:'Helium',purpose:'Autonomous Trading Team'}};
-function renderBotIdentity(){const label=botLabels[bot];$('account-title').textContent=label.name;$('chain').textContent=label.purpose;}
+const botLabels={robinhood:{name:'Radeon',purpose:'Robinhood Sniper'},solana:{name:'Xenon',purpose:'Solana Rug Desk'},neon:{name:'Neon',purpose:'Solana Leader Follower'},jev:{name:'Argon',purpose:'Pump/Jev Review'},krypton:{name:'Krypton',purpose:'Solana New-Token Scanner'},helium:{name:'Helium',purpose:'Autonomous Trading Team'},devwatch:{name:'DEV WATCH',purpose:'Developer Wallet Monitor'}};
+function renderBotIdentity(){const label=botLabels[bot];$('account-title').textContent=label.name;$('chain').textContent=label.purpose;$('mode-badge').textContent=bot==='devwatch'?'MANUAL SIGNALS':'PAPER';}
 let neonRefreshQueued=false,neonRefreshGeneration=-1;
 let wallets=null, walletError=false, walletLoading=false, selectedWallet='', walletDetail=null, walletDetailError=false, walletDetailRequest=0, walletDetailLoading='';
 let jevDetail=null,jevDetailError='',jevLoading=false;
@@ -86,7 +86,7 @@ async function refresh(){
     if(token!==generation)return;
     state=next;completed=true;error=false;$('offline').hidden=true;
     if(bot==='neon'){window.NeonWorkspace.update(next);return;}
-    if(bot==='krypton'||bot==='helium'){render();return;}
+    if(bot==='krypton'||bot==='helium'||bot==='devwatch'){render();return;}
     if(!state.assets.some(a=>a.asset_id===selectedAsset))selectedAsset=(state.assets.find(a=>a.state==='open')||state.assets[0]||{}).asset_id||'';
     render();await Promise.all([loadChart(token),tab==='wallets'?loadWallets(token):Promise.resolve()]);
   }catch(e){if(token===generation){error=true;if(bot==='neon')window.NeonWorkspace.disconnected();if(bot==='helium')window.HeliumView.disconnected();$('offline').textContent='Data connection interrupted. '+e.message+' Last displayed values are retained; they are not current. Automatic retry every 5 seconds.';$('offline').hidden=false;}}
@@ -133,10 +133,12 @@ function render(){
   setSizingActive();
   window.NeonWorkspace.setActive(bot==='neon');
   window.HeliumView.setActive(bot==='helium');
-  document.querySelectorAll('.market-grid,.ledger-panel,.detail-grid').forEach(el=>{el.hidden=bot==='jev'||bot==='krypton'||bot==='helium';});
+  document.querySelectorAll('.market-grid,.ledger-panel,.detail-grid').forEach(el=>{el.hidden=bot==='jev'||bot==='krypton'||bot==='helium'||bot==='devwatch';});
   $('jev-panel').hidden=bot!=='jev';
   $('krypton-panel').hidden=bot!=='krypton';
   $('helium-panel').hidden=bot!=='helium';
+  $('devwatch-panel').hidden=bot!=='devwatch';
+  if(bot==='devwatch'){window.DevWatchView.render(state);return;}
   if(bot==='krypton'){window.KryptonView.render(state);return;}
   if(bot==='helium'){window.HeliumView.render(state);return;}
   if(bot==='jev'){renderJev();return;}
@@ -189,7 +191,11 @@ function freshness(){
   $('connection').textContent=error?'Disconnected':state?'Console connected':'Connecting…';$('connection').className='connection'+(error?' negative':'');
   if(bot==='helium')window.HeliumView.tick();
   if(!state)return;
-  if(bot==='krypton'||bot==='helium'){
+  if(bot==='devwatch'){
+    $('worker-freshness').textContent='Last ledger update '+age(state.status.last_record_at)+' ago · Codex routine timing not verified by this console';
+    $('worker-freshness').className='context-status';return;
+  }
+  if(bot==='krypton'||bot==='helium'||bot==='devwatch'){
     const workers=state.status.worker_completions||{},issues=state.status.provider_errors||[];
     $('worker-freshness').textContent=`Scan completed ${age(workers.scan)} ago · exits ${age(workers.watch)} ago${issues.length?' · provider issue: '+issues.join(', '):''}`;
     $('worker-freshness').className='context-status'+(issues.length||state.status.overdue_workers?.length||state.error_count?' warning':'');
@@ -197,7 +203,7 @@ function freshness(){
   }
   const finished=state.status.finished_at,old=!finished||Date.now()/1000-finished>state.cadence_seconds*3;
   $('worker-freshness').textContent=`Worker completed ${age(finished)} ago${old?' · overdue':''}${state.error_count?' · '+state.error_count+' operational error'+(state.error_count===1?'':'s'):''}${state.cycle_issues?.some(i=>i.stage==='position_exit'&&i.code==='route_unavailable')?' · exit route unavailable':''}`;$('worker-freshness').className='context-status'+(old||state.error_count||state.snapshot?.unresolved_positions?' warning':'');
-  if(bot==='jev'||bot==='neon'||bot==='krypton'||bot==='helium')return;
+  if(bot==='jev'||bot==='neon'||bot==='krypton'||bot==='helium'||bot==='devwatch')return;
   if(state.trial.ends_at){const remaining=state.trial.ends_at-Date.now()/1000;
     $('trial-state').textContent=remaining>0?`Paper trial · ${Math.floor(remaining/86400)}d ${Math.floor(remaining%86400/3600)}h remaining`:'Entry period ended · exits continue';
     $('trial-deadline').textContent='Ends '+new Date(state.trial.ends_at*1000).toLocaleString('en-GB',{timeZone:'Europe/Berlin',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})+' CET';
@@ -350,7 +356,7 @@ function drawChart(){
   plot={points,fills:visibleFills,x,y,minT,maxT,left,cw};freshness();
 }
 function drawEquity(){
-  if(bot==='jev'||bot==='krypton'||bot==='helium')return;
+  if(bot==='jev'||bot==='krypton'||bot==='helium'||bot==='devwatch')return;
   const pnlMode=state.snapshot.capital_baseline_supported===false;
   document.querySelector('.equity-label span').textContent=pnlMode?'Net paper P&L - recorded observations':'Equity - recorded valuations';
   const {ctx,w,h}=canvasContext($('equity-chart')),points=pnlMode?(state.pnl_history||[]).filter(p=>p.net_pnl!==null).map(p=>({...p,equity:p.net_pnl})):state.equity_history;if(points.length<2){ctx.fillStyle='#9baaa6';ctx.font='11px Segoe UI';ctx.fillText(pnlMode?'No recorded net P&L series':'No recorded equity series',4,h/2);return;}
@@ -365,6 +371,7 @@ document.querySelectorAll('[data-bot]').forEach(button=>button.addEventListener(
   $('sizing-study-panel').hidden=button.dataset.bot!=='robinhood';
   $('krypton-panel').hidden=true;
   $('helium-panel').hidden=true;
+  $('devwatch-panel').hidden=true;
   bot=button.dataset.bot;window.NeonWorkspace.setActive(bot==='neon');window.HeliumView.setActive(bot==='helium');history.replaceState(null,'','?bot='+bot);generation++;neonRefreshQueued=false;neonRefreshGeneration=-1;selectedAsset='';chart=null;state=null;loading=false;error=false;query='';wallets=null;walletError=false;walletLoading=false;selectedWallet='';walletDetail=null;walletDetailError=false;walletDetailLoading='';$('filter').value='';$('offline').hidden=true;
   document.querySelectorAll('[data-bot]').forEach(b=>{b.classList.toggle('selected',b===button);b.setAttribute('aria-pressed',String(b===button));});
   renderBotIdentity();$('account-id').textContent='Reading selected account…';$('account-id').title='';$('strategy-note').textContent='Reading account policy…';$('worker-freshness').textContent='Waiting for worker status';$('trial-state').textContent='Reading trial status';$('trial-deadline').textContent='—';$('quote-price').textContent='—';$('quote-change').textContent='Loading selected account';$('quote-age').textContent='—';$('instrument-state').textContent='LOADING';html('asset-select','<option>Loading coins…</option>');$('asset-select').disabled=true;for(const id of ['guardrails','health-mini','evidence','rejections','ta'])html(id,'');for(const id of ['open-count','fill-count','trial-return'])$(id).textContent='—';$('trial-detail').textContent='Reading separate account';$('footer-id').textContent='Loading selected account';$('notice').textContent='Observation only · reading separate account';clearCanvas($('equity-chart'));html('metrics',metric('Account','Loading…','Reading separate persistent account'));html('activity','<div class="empty">Reading selected account…</div>');$('chart-empty').hidden=false;$('chart-empty').textContent='Loading selected account…';clearCanvas($('price-chart'));refresh();
