@@ -681,6 +681,9 @@ def make_server(root, host='127.0.0.1', port=8765):
                 elif url.path == '/api/neon-candidate':
                     from .neon_workspace import candidate
                     self.send(200,json_text(candidate(data.root,params.get('mint',[''])[0])).encode())
+                elif url.path == '/api/nitrogen-journal':
+                    from .nitrogen.cockpit import journal
+                    self.send(200,json_text(journal(data.root,after=params.get('after',[None])[0],before=params.get('before',[None])[0],limit=params.get('limit',[100])[0])).encode())
                 elif url.path == '/api/helium-journal':
                     from .helium.cockpit import journal
                     self.send(200,json_text(journal(data.root,

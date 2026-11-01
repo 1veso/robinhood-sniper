@@ -1,1 +1,190 @@
-#nitrogen-panel{display:grid;gap:16px;min-width:0}#nitrogen-panel[hidden]{display:none}.nitrogen-section{min-width:0;overflow:hidden}.nitrogen-section .panel-heading{padding:16px 18px}.nitrogen-note{padding:0 18px 14px;color:var(--muted);line-height:1.6}.nitrogen-pipeline{display:flex;flex-wrap:wrap;gap:10px;padding:12px 18px}.nitrogen-stage{border:1px solid var(--line);border-radius:6px;padding:8px 12px;font-size:12px}.nitrogen-command{display:block;white-space:normal;overflow-wrap:anywhere;margin:7px 0}.nitrogen-section pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto;font-size:11px;padding:12px}.nitrogen-section details{padding:8px 12px}.nitrogen-accounting{display:flex;flex-wrap:wrap;gap:18px;padding:16px 18px}.nitrogen-section table{font-size:12px}.nitrogen-section td{max-width:380px;overflow-wrap:anywhere}@media(max-width:700px){.nitrogen-section{overflow:auto}.nitrogen-section table{min-width:600px}.nitrogen-note{min-width:260px}.nitrogen-command{max-width:280px}}
+/* Scoped cockpit. Other strategy workspaces retain the application shell. */
+body.nitrogen-active{background:#040d0e;color:#e6e6eb}
+body.nitrogen-active #workspace{padding:0;min-width:0;background:#040d0e}
+body.nitrogen-active #workspace>.workspace-title,body.nitrogen-active #workspace>.context-line,body.nitrogen-active #metrics,body.nitrogen-active #notice,body.nitrogen-active #workspace>footer,body.nitrogen-active #offline{display:none}
+#nitrogen-panel{container-type:inline-size;width:min(100%,600px);margin:0 auto;min-width:0;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-variant-numeric:tabular-nums;letter-spacing:-.015em}
+#nitrogen-panel[hidden]{display:none}
+#nitrogen-panel *{box-sizing:border-box}
+#nitrogen-panel button,#nitrogen-panel select{font:inherit;color:inherit;letter-spacing:inherit}
+#nitrogen-panel button{cursor:pointer}
+#nitrogen-panel button:focus-visible,#nitrogen-panel select:focus-visible{outline:2px solid #78dcc6;outline-offset:3px}
+#nitrogen-panel button:disabled{cursor:default;opacity:.55}
+#nitrogen-panel .ni-cockpit{position:relative;padding:2.7cqw 4.5cqw 1.5cqw;background:radial-gradient(ellipse at 55% 28%,#08202155,transparent 48%),#040d0e}
+#nitrogen-panel .ni-session{display:flex;align-items:center;justify-content:space-between;height:6.2cqw;font-size:2.4cqw;color:#8f9aa9;letter-spacing:.015em;gap:2cqw}
+#nitrogen-panel .ni-session>time{color:#b8c1c9;min-width:14cqw;font-size:2.6cqw}
+#nitrogen-panel .ni-head{display:flex;align-items:center;gap:1cqw;border:1px solid #1b2328;background:#080e11;box-shadow:inset 0 1px #ffffff03;border-radius:10cqw;padding:.6cqw 1.5cqw;font-size:2.1cqw;white-space:nowrap;font-weight:700}
+#nitrogen-panel .ni-head span{color:#7c8899;font-weight:400}
+#nitrogen-panel .ni-head i,#nitrogen-panel .ni-status i{display:inline-block;width:.85cqw;height:.85cqw;border-radius:50%;background:#2acfa3;box-shadow:0 0 6px #2acfa350}
+#nitrogen-panel .ni-session-right{display:flex;align-items:center;gap:1.1cqw;font-size:2.1cqw;white-space:nowrap}
+#nitrogen-panel .ni-session-right>span:first-child{color:#bdc8d1}
+#nitrogen-panel #ni-bot-select{border:0;background:#0d1619;border-radius:1cqw;color:#9ca9b7;max-width:7cqw;font-size:2cqw;padding:.5cqw;appearance:none;text-align:center}
+#nitrogen-panel #ni-bot-select option{background:#0d1619;color:#e6e6eb}
+#nitrogen-panel .ni-brand{display:flex;align-items:center;gap:1.8cqw;height:14.5cqw}
+#nitrogen-panel .ni-identity{flex:none;display:grid;place-items:center;width:8.2cqw;height:8.2cqw;background:linear-gradient(145deg,#162729,#0d181b);border:1px solid #2a383c;border-radius:2.1cqw;box-shadow:inset 0 1px #ffffff08;color:#a0f3dd;font-weight:750;font-size:4.2cqw}
+#nitrogen-panel .ni-brand-copy{flex:1;min-width:0}
+#nitrogen-panel h1{font-size:5.1cqw;line-height:1.1;font-weight:800;letter-spacing:-.04em;margin:0 0 .8cqw;color:#e6e6eb}
+#nitrogen-panel .ni-brand-copy p{font-size:2.5cqw;margin:0;color:#80909d;white-space:nowrap}
+#nitrogen-panel .ni-status{display:flex;align-items:center;gap:1cqw;border:1px solid #29413c;background:#10221e;color:#66dabc;font-size:2.1cqw;border-radius:8cqw;padding:.8cqw 1.4cqw;white-space:nowrap}
+#nitrogen-panel .ni-status[data-state="waiting"],#nitrogen-panel .ni-status[data-state="loading"],#nitrogen-panel .ni-status[data-state="paused"]{color:#c6ac7e;background:#201c14;border-color:#3e3425}
+#nitrogen-panel .ni-status[data-state="stale"],#nitrogen-panel .ni-status[data-state="disconnected"]{color:#e59a8c;background:#241a18;border-color:#43312c}
+#nitrogen-panel .ni-status:not([data-state="updating"]) i{background:currentColor;box-shadow:none}
+#nitrogen-panel .ni-ticker{height:7.1cqw;display:flex;align-items:center;overflow:hidden;mask-image:linear-gradient(90deg,#000 95%,transparent);border-bottom:1px solid #23333726}
+#nitrogen-panel #ni-ticker-track{display:flex;align-items:center;gap:3.3cqw;flex:none;min-width:100%;font-size:2.5cqw;will-change:transform}
+#nitrogen-panel .ni-tick{display:flex;align-items:center;gap:1cqw;white-space:nowrap;background:none;border:0;padding:0;font-size:2.55cqw}
+#nitrogen-panel .ni-tick b{max-width:16cqw;overflow:hidden;text-overflow:ellipsis;font-weight:650}
+#nitrogen-panel .ni-token-icon{display:inline-grid;place-items:center;flex:none;background:#172731;border:1px solid #34506466;color:#acd0dc;width:3.5cqw;height:3.5cqw;border-radius:50%;font-weight:700;font-size:1.9cqw}
+#nitrogen-panel .ni-price{color:#8ebfff}
+#nitrogen-panel .ni-change{font-size:2.1cqw;background:#10382e;color:#41d2ac;border-radius:.8cqw;padding:.3cqw .65cqw}
+#nitrogen-panel .ni-change.ni-negative{background:#3b2324;color:#ed827b}
+#nitrogen-panel .ni-scroll{animation:ni-ticker 24s ease-in-out infinite alternate}
+@keyframes ni-ticker{0%,15%{transform:translateX(0)}85%,100%{transform:translateX(min(0px,calc(91cqw - 100%)))}}
+#nitrogen-panel .ni-ticker:hover #ni-ticker-track,#nitrogen-panel .ni-ticker:focus-within #ni-ticker-track{animation-play-state:paused}
+#nitrogen-panel .ni-hero{height:40.3cqw;padding-top:3.1cqw;position:relative}
+#nitrogen-panel .ni-hero-top{display:flex;align-items:center;justify-content:space-between;height:5.7cqw}
+#nitrogen-panel .ni-context{border:0;background:none;padding:0;color:#7e8d9a;font-size:2.55cqw;text-align:left}
+#nitrogen-panel .ni-multiple{color:#04251e;background:#34cfa5;border-radius:1.2cqw;padding:.5cqw 1.5cqw;font-size:3.8cqw;font-weight:750;line-height:1.25;letter-spacing:-.03em}
+#nitrogen-panel .ni-multiple.ni-negative{background:#382321;color:#ef8b80}
+#nitrogen-panel .ni-equity-line{position:relative;display:flex;align-items:baseline;gap:2cqw;height:13.5cqw}
+#nitrogen-panel .ni-equity{display:inline-flex;align-items:baseline;border:0;background:none;padding:0;font-weight:780;white-space:nowrap;letter-spacing:-.055em;line-height:1.1;max-width:100%}
+#nitrogen-panel #ni-whole{font-size:12.3cqw;color:#e8e9ee}
+#nitrogen-panel #ni-cents{font-size:5.7cqw;letter-spacing:-.04em;color:#8f99ab;font-weight:600;margin-left:.2cqw}
+#nitrogen-panel .ni-equity[data-digits="long"] #ni-whole{font-size:8.8cqw}
+#nitrogen-panel .ni-result{position:absolute;right:0;bottom:2cqw;padding:.5cqw 1cqw;border:1px solid #2acfa344;background:#14392d;color:#5ee6b9;border-radius:1cqw;font-size:2.4cqw;animation:ni-chip .3s ease-out}
+#nitrogen-panel .ni-result.ni-negative{background:#3e2524;color:#ef8b80;border-color:#ad535944}
+#nitrogen-panel .ni-result[hidden]{display:none}
+#nitrogen-panel .ni-performance{display:flex;align-items:center;justify-content:space-between;height:4.4cqw;font-size:3.2cqw;font-weight:600}
+#nitrogen-panel .ni-winloss{font-size:2.6cqw;color:#a5b0be;font-weight:500;white-space:nowrap}
+#nitrogen-panel .ni-winloss span{color:#4f616c;margin:0 .6cqw}
+#nitrogen-panel .ni-chart-wrap{height:13.5cqw;margin-top:.4cqw;position:relative}
+#nitrogen-panel #ni-chart{display:block;width:100%;height:100%}
+#nitrogen-panel #ni-chart-empty{position:absolute;inset:0;display:grid;place-items:center;font-size:2.4cqw;color:#586b74}
+#nitrogen-panel #ni-chart-empty[hidden]{display:none}
+#nitrogen-panel .ni-card{background:#0d1016;border:1px solid #242a32;border-radius:4cqw;box-shadow:inset 0 1px #ffffff02;overflow:hidden;margin-bottom:2.2cqw}
+#nitrogen-panel .ni-card-heading{display:flex;align-items:center;justify-content:space-between;gap:1cqw;padding:2.4cqw 2.7cqw 1.5cqw;min-width:0}
+#nitrogen-panel h2{font-size:3.7cqw;line-height:1.2;letter-spacing:-.025em;margin:0;font-weight:700;color:#e5e5eb;white-space:nowrap}
+#nitrogen-panel h2 span{color:#8a94a6;font-size:2.75cqw;font-weight:500;letter-spacing:0}
+#nitrogen-panel .ni-evidence{font-size:1.6cqw;color:#72808d;letter-spacing:.05em}
+#nitrogen-panel .ni-evidence.ni-synthetic{color:#c1a276;border:1px solid #5d493044;border-radius:.8cqw;padding:.4cqw .8cqw}
+#nitrogen-panel .ni-desk{height:53.5cqw}
+#nitrogen-panel .ni-roles{display:grid;gap:.7cqw;padding:.2cqw 1.5cqw 1.7cqw}
+#nitrogen-panel [data-role="SEARCH"]{--role:#58aaff;--role-rgb:65,140,244}
+#nitrogen-panel [data-role="RISK"]{--role:#e3b34f;--role-rgb:224,165,47}
+#nitrogen-panel [data-role="WHALE"]{--role:#909af8;--role-rgb:117,131,237}
+#nitrogen-panel [data-role="SNIPER"]{--role:#43cfa1;--role-rgb:40,181,136}
+#nitrogen-panel [data-role="EXIT"]{--role:#c091ed;--role-rgb:171,111,227}
+#nitrogen-panel [data-role="JUDGE"]{--role:#e99b69;--role-rgb:230,137,84}
+#nitrogen-panel .ni-role{display:flex;align-items:center;gap:1.6cqw;width:100%;height:6.8cqw;padding:.8cqw 1.2cqw;border:1px solid rgba(var(--role-rgb),.09);border-radius:1.65cqw;text-align:left;background:linear-gradient(90deg,rgba(var(--role-rgb),.095),rgba(var(--role-rgb),.025));color:#e6e6eb}
+#nitrogen-panel .ni-role:hover{border-color:rgba(var(--role-rgb),.4)}
+#nitrogen-panel .ni-role-icon{display:grid;place-items:center;flex:none;width:5.1cqw;height:5.1cqw;background:rgba(var(--role-rgb),.12);color:var(--role);border:1px solid rgba(var(--role-rgb),.16);border-radius:1.25cqw}
+#nitrogen-panel .ni-role-icon svg{width:3cqw;height:3cqw;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+#nitrogen-panel .ni-role-name{display:flex;flex-direction:column;flex:none;width:18.3cqw;min-width:0;gap:.15cqw}
+#nitrogen-panel .ni-role-name b{font-size:2.7cqw;line-height:1.1;letter-spacing:.01em;font-weight:650}
+#nitrogen-panel .ni-role-name small{font-size:1.9cqw;color:#7e8b9b;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:0}
+#nitrogen-panel .ni-role-middle{display:flex;flex:1;min-width:0;align-items:center;gap:.7cqw;font-size:2.3cqw;color:#94a0b2;white-space:nowrap}
+#nitrogen-panel .ni-role-middle .ni-token-icon{width:3.4cqw;height:3.4cqw;font-size:1.8cqw}
+#nitrogen-panel .ni-row-token{color:#c9d4e3;font-size:2.4cqw;font-weight:600;max-width:12cqw;overflow:hidden;text-overflow:ellipsis;flex-shrink:1}
+#nitrogen-panel .ni-row-message{overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+#nitrogen-panel .ni-struck{color:#78818f;text-decoration:line-through}
+#nitrogen-panel .ni-role-badge{color:var(--role);background:rgba(var(--role-rgb),.12);border:1px solid rgba(var(--role-rgb),.1);border-radius:1cqw;font-size:2.2cqw;padding:.6cqw .9cqw;white-space:nowrap;line-height:1.1}
+#nitrogen-panel .ni-activity{animation:ni-activity 1.4s ease-out}
+@keyframes ni-activity{from{box-shadow:inset 0 0 25px rgba(var(--role-rgb),.25);border-color:rgba(var(--role-rgb),.6)}to{box-shadow:inset 0 0 0 transparent}}
+#nitrogen-panel .ni-heading-button{width:100%;border:0;background:none;text-align:left}
+#nitrogen-panel .ni-log{height:28.5cqw}
+#nitrogen-panel #ni-vetoes{color:#e58f7c;font-size:2.7cqw;white-space:nowrap}
+#nitrogen-panel #ni-log-rows{padding:.5cqw 2.7cqw 2cqw}
+#nitrogen-panel .ni-log-row{display:flex;align-items:center;gap:1.1cqw;height:3.6cqw;white-space:nowrap;font-size:2.4cqw;min-width:0;letter-spacing:-.015em}
+#nitrogen-panel .ni-log-row>i{width:.8cqw;height:.8cqw;flex:none;border-radius:50%;background:var(--role,#8897aa)}
+#nitrogen-panel .ni-log-row time{color:#667487;font-size:2.2cqw;flex:none}
+#nitrogen-panel .ni-log-row>b{color:var(--role,#8897aa);font-weight:600;flex:none;font-size:2.2cqw}
+#nitrogen-panel .ni-log-row>span{overflow:hidden;text-overflow:ellipsis;color:#a8b0c0}
+#nitrogen-panel .ni-log-row strong{font-weight:500;color:#d1d7e2}
+#nitrogen-panel #ni-log-rows .ni-log-row:nth-child(3){opacity:.85}
+#nitrogen-panel #ni-log-rows .ni-log-row:nth-child(4){opacity:.62}
+#nitrogen-panel #ni-log-rows .ni-log-row:nth-child(5){opacity:.38}
+#nitrogen-panel .ni-kills{height:19.5cqw;margin-bottom:0}
+#nitrogen-panel .ni-kills .ni-card-heading{padding-top:2cqw;padding-bottom:1.2cqw}
+#nitrogen-panel .ni-kills h2{font-size:3.1cqw}
+#nitrogen-panel #ni-bestworst{font-size:1.85cqw;color:#8792a4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#nitrogen-panel .ni-kill-grid{display:grid;grid-template-columns:1fr 1fr;gap:1.1cqw 3cqw;padding:0 2.7cqw}
+#nitrogen-panel .ni-kill{display:grid;grid-template-columns:1fr auto;gap:.1cqw 1cqw;align-items:center;font-size:2.2cqw;color:#9aa6b9;min-width:0}
+#nitrogen-panel .ni-kill>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#nitrogen-panel .ni-kill b{color:#e8867b;font-weight:600}
+#nitrogen-panel .ni-kill i{grid-column:1/-1;height:.3cqw;border-radius:.5cqw;background:linear-gradient(90deg,#9f494a var(--magnitude),#27252b var(--magnitude));opacity:.7}
+#nitrogen-panel .ni-empty{font-size:2.5cqw;color:#637584;margin:1cqw 0;line-height:1.6}
+#nitrogen-panel .ni-kill-grid>.ni-empty{grid-column:1/-1}
+#nitrogen-panel .ni-bottom{display:flex;justify-content:space-between;gap:1cqw;font-size:1.8cqw;color:#526771;padding:1.2cqw .3cqw}
+#nitrogen-panel .ni-bottom button{border:0;background:none;color:#7d969e;padding:0;white-space:nowrap}
+#nitrogen-panel .ni-positive{color:#39cda3}
+#nitrogen-panel .ni-negative{color:#ee8a7e}
+#nitrogen-panel .ni-muted{color:#798796}
+#nitrogen-panel .ni-toast-host{position:absolute;z-index:10;top:6.5cqw;left:4.1cqw;right:4.1cqw;pointer-events:none}
+#nitrogen-panel .ni-toast{--toast:#61dab7;display:flex;align-items:center;gap:1.7cqw;width:100%;min-height:15.3cqw;border:1px solid #314c47;border-radius:4.1cqw;background:linear-gradient(135deg,#182c2a,#0f1a1d);box-shadow:0 12px 40px #0009,inset 0 1px #ffffff07;padding:1.7cqw 2cqw;text-align:left;pointer-events:auto;animation:ni-toast-in .28s ease-out}
+#nitrogen-panel .ni-toast[data-tone="amber"]{--toast:#eec47d;background:linear-gradient(135deg,#28251f,#151a1d);border-color:#524435}
+#nitrogen-panel .ni-toast[data-tone="coral"]{--toast:#ed948a;background:linear-gradient(135deg,#2c2224,#15191f);border-color:#51343c}
+#nitrogen-panel .ni-toast-icon{display:grid;place-items:center;width:8cqw;height:8cqw;flex:none;border:1px solid #5a7b7766;background:#29464455;border-radius:2cqw;color:var(--toast);font-size:4cqw;font-weight:650}
+#nitrogen-panel .ni-toast-copy{display:flex;flex-direction:column;gap:.5cqw;flex:1;min-width:0;font-size:2.6cqw}
+#nitrogen-panel .ni-toast-source{color:#8799a6;font-size:2cqw;letter-spacing:.01em}
+#nitrogen-panel .ni-toast-source time{margin-left:1cqw}
+#nitrogen-panel .ni-toast-copy>b{color:#edf0f2;font-size:3.3cqw;letter-spacing:-.025em}
+#nitrogen-panel .ni-toast-copy>span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#a8b5c3}
+#nitrogen-panel .ni-toast>strong{color:var(--toast);font-size:2.9cqw;font-weight:650;max-width:23cqw;overflow:hidden;text-overflow:ellipsis}
+#nitrogen-panel .ni-toast.ni-leaving{opacity:0;transform:translateY(-12px);transition:opacity .25s,transform .25s}
+@keyframes ni-toast-in{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
+@keyframes ni-chip{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+#nitrogen-panel .ni-drawer{position:fixed;left:auto;right:20px;top:20px;bottom:20px;margin:0;width:min(460px,calc(100vw - 28px));max-width:none;max-height:none;height:calc(100dvh - 40px);padding:0;border:1px solid #33404a;border-radius:20px;background:#0d151b;color:#dce4eb;box-shadow:0 20px 100px #000b;font-size:14px;letter-spacing:0;container-type:inline-size}
+#nitrogen-panel .ni-drawer::backdrop{background:#02090d99;backdrop-filter:blur(2px)}
+#nitrogen-panel .ni-drawer-heading{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:20px;background:#101b22;border-bottom:1px solid #27363f;z-index:1}
+#nitrogen-panel .ni-drawer-heading h2{font-size:21px;white-space:normal}
+#nitrogen-panel .ni-drawer-heading button{font-size:26px;background:none;border:0;min-width:36px;min-height:36px}
+#nitrogen-panel #ni-drawer-body{padding:20px;line-height:1.5}
+#nitrogen-panel .ni-drawer article{border-bottom:1px solid #28363e;padding-bottom:18px;margin-bottom:18px}
+#nitrogen-panel .ni-drawer h3{font-size:16px;color:#cbd6e1;margin:15px 0 8px}
+#nitrogen-panel .ni-drawer p{color:#96a8b6;font-size:13px;overflow-wrap:anywhere}
+#nitrogen-panel .ni-drawer dl{margin:0}
+#nitrogen-panel .ni-drawer dl>div{display:flex;justify-content:space-between;gap:18px;padding:7px 0;border-bottom:1px solid #21313a}
+#nitrogen-panel .ni-drawer dt{color:#94a7b6;flex:none;max-width:54%}
+#nitrogen-panel .ni-drawer dd{margin:0;text-align:right;overflow-wrap:anywhere;color:#dde5ec}
+#nitrogen-panel .ni-drawer code,#nitrogen-panel .ni-drawer pre{display:block;white-space:pre-wrap;overflow-wrap:anywhere;background:#070f14;border:1px solid #24323c;border-radius:8px;padding:12px;font-size:12px;max-height:380px;overflow:auto;color:#b6c8d4}
+#nitrogen-panel .ni-drawer details{margin:12px 0}
+#nitrogen-panel .ni-drawer summary{cursor:pointer;color:#8bcdbb}
+#nitrogen-panel .ni-drawer .ni-log-row{height:auto;min-height:35px;white-space:normal;font-size:12px;align-items:baseline;gap:7px;padding:6px 0;border-bottom:1px solid #1f2a34}
+#nitrogen-panel .ni-drawer .ni-log-row time,#nitrogen-panel .ni-drawer .ni-log-row>b{font-size:10px}
+#nitrogen-panel .ni-drawer .ni-log-row>i{width:4px;height:4px}
+#nitrogen-panel .ni-drawer .ni-log-row>span{overflow:visible}
+#nitrogen-panel .ni-more{margin-top:16px;border:1px solid #344d55;background:#16292c;padding:10px 16px;border-radius:8px}
+@media(max-width:800px){body.nitrogen-active .topbar,body.nitrogen-active .rail{display:none}body.nitrogen-active .shell{display:block}body.nitrogen-active #workspace{width:100%;padding:0}#nitrogen-panel .ni-drawer{right:10px;top:10px;bottom:10px;height:calc(100dvh - 20px);width:calc(100vw - 20px)}}
+@media(min-width:1100px){#nitrogen-panel .ni-drawer::backdrop{background:#02090d44;backdrop-filter:none}}
+@media(prefers-reduced-motion:reduce){#nitrogen-panel *,#nitrogen-panel *::before,#nitrogen-panel *::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+/* Maintain readable, tappable rows on narrower phones without changing their order. */
+@media(max-width:440px){
+ #nitrogen-panel .ni-desk{height:auto;padding-bottom:4px}
+ #nitrogen-panel .ni-role{height:35px;gap:5px}
+ #nitrogen-panel .ni-role-name{width:75px}
+ #nitrogen-panel .ni-role-name b{font-size:12px}
+ #nitrogen-panel .ni-role-name small{font-size:8px}
+ #nitrogen-panel .ni-role-middle{font-size:10px}
+ #nitrogen-panel .ni-row-token{font-size:10px;max-width:45px}
+ #nitrogen-panel .ni-role-badge{font-size:9px}
+ #nitrogen-panel .ni-role-middle .ni-token-icon{display:none}
+ #nitrogen-panel .ni-log{height:132px}
+ #nitrogen-panel .ni-log-row{height:18px;font-size:10px;gap:4px}
+ #nitrogen-panel .ni-log-row time,#nitrogen-panel .ni-log-row>b{font-size:9px}
+ #nitrogen-panel .ni-kills{height:92px}
+ #nitrogen-panel .ni-kill{font-size:10px}
+ #nitrogen-panel .ni-kill-grid{gap:6px 12px}
+ #nitrogen-panel .ni-context{font-size:10px}
+ #nitrogen-panel .ni-brand-copy p{font-size:10px}
+ #nitrogen-panel .ni-card-heading{padding-top:10px;padding-bottom:8px}
+ #nitrogen-panel .ni-card h2{font-size:16px}
+ #nitrogen-panel .ni-kills h2{font-size:13px}
+ #nitrogen-panel #ni-vetoes{font-size:11px}
+ #nitrogen-panel .ni-drawer .ni-log-row{height:auto}
+}
+#nitrogen-panel .ni-number-change{animation:ni-number-change .22s ease-out}
+#nitrogen-panel .ni-log-new{animation:ni-chip .24s ease-out}
+@keyframes ni-number-change{from{opacity:.65;transform:translateY(2px)}to{opacity:1;transform:none}}
+#nitrogen-panel .ni-roles{min-width:0;grid-template-columns:minmax(0,1fr)}
+#nitrogen-panel .ni-role{min-width:0}
+#nitrogen-panel .ni-role-badge{flex:none}
+body.nitrogen-active #workspace>:not(#nitrogen-panel){display:none}
+@media(min-width:1320px){body.nitrogen-detail-open #nitrogen-panel{margin-left:24px;margin-right:auto}}

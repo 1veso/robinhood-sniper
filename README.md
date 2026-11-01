@@ -324,4 +324,5 @@ It has its own $500 paper account, factual RISK/WHALE admission, four-question J
 gate, durable WATCH recheck, and `APPROVE #id` staged paper orders. Exits run independently.
 Paid calls start disabled and unsupported factual coverage blocks entry.
 See [operation and exact policy](nitrogen_bot/README.md), [evidence contract](docs/nitrogen-evidence.md),
+[video-matched cockpit and screenshots](docs/nitrogen-cockpit.md),
 and [validation / changed files](docs/nitrogen-validation.md).

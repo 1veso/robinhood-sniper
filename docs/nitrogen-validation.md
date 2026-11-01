@@ -19,7 +19,7 @@ TypeSafe judgment, durable WATCH and operator-staged approval. RADON is slot eig
 
 ## Offline acceptance
 
-Local result: **1,183 tests, OK with 16 optional-dependency skips**; **51 focused
+Local result: **1,193 tests, OK with 16 optional-dependency skips**; **61 focused
 NITROGEN tests passed**. NITROGEN and RADON real Chromium desktop/mobile checks
 passed with zero page errors. Python compilation, JavaScript syntax and diff whitespace
 checks passed. GitHub CI results are attached to the PR separately.
@@ -37,8 +37,8 @@ shared ceilings, request attribution, invoice reconciliation and report cohorts.
 
 `python tests/verify_nitrogen_console.py` uses real Chromium on a loopback server with
 a separate synthetic account. It verifies slot 7 and slot 8, desktop/mobile rendering,
-NITROGEN/RADON switching, pending-order instructions, no JavaScript errors and rejected
-POST writes. Screenshots are private runtime artifacts in `runtime/nitrogen-ui/`.
+NITROGEN/RADON switching, pending-order instructions, deduplicated notifications, unknown/negative states, reduced motion, no JavaScript errors and rejected
+POST writes. Screenshots are private runtime artifacts in `runtime/nitrogen-cockpit-preview/`.
 
 `python nitrogen_bot.py demo` is a separate synthetic acceptance scenario. Its profits,
 responses and trades are fixtures, not strategy-performance evidence.
@@ -64,3 +64,7 @@ installer were not launched from the Linux development workspace.
 Shared Jev acceptance-bound files and all RADON strategy/account/configuration files
 are preserved. UI routing updates the legacy reserved-slot subtitle without changing
 RADON's own module. No account runtime or credential belongs in the PR.
+
+The video-matched cockpit, data bindings, unavailable fields and screenshot reproduction
+are documented in [NITROGEN cockpit](nitrogen-cockpit.md). The cockpit adds ten focused
+read-only projection/journal/history tests; the original 51 strategy tests remain unchanged.

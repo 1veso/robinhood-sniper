@@ -316,3 +316,9 @@ class Book(BasePaper):
             try:value=self.snapshot(int(self.clock()))
             finally:self.db.rollback()
             atomic(self.folder/'paper_state.json',encode(value))
+            # Presentation-only history: failures cannot change trading or approvals.
+            try:
+                from .cockpit import record
+                record(self,value,int(self.clock()))
+            except (OSError,ValueError,sqlite3.Error):
+                pass

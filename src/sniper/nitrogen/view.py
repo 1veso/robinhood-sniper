@@ -81,7 +81,12 @@ def view(root,now=None):
     if not path.exists():return {'bot':'nitrogen','title':'NITROGEN','purpose':'Jev Judgment Desk','slot':7,'initialized':False,'account_id':None,'assets':[],'status':{'health':'NOT_INITIALIZED'}}
     with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True,isolation_level=None)) as db:
         db.row_factory=sqlite3.Row;db.execute('PRAGMA query_only=ON');db.execute('BEGIN')
-        return snapshot(db,int(time.time()) if now is None else now)
+        observed=int(time.time()) if now is None else now
+        result=snapshot(db,observed)
+        from .cockpit import project
+        try:result['cockpit']=project(db,root,result,observed)
+        except (OSError,ValueError,sqlite3.Error):result['cockpit']={'account_id':result['account_id'],'unavailable':True,'notes':['Cockpit projection unavailable; account data retained.']}
+        return result
 
 
 def health(root):

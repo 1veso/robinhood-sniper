@@ -77,20 +77,23 @@ function renderJev(){
   $('footer-id').textContent='Argon · explicit promotion · shared paper execution';
 }
 
-async function fetchJSON(path){const response=await fetch(path,{cache:'no-store',signal:AbortSignal.timeout(18000)});const data=await response.json();if(!response.ok)throw new Error(data.error||'Console connection interrupted');return data;}
+let nitrogenStateAbort=null;
+async function fetchJSON(path,signal=AbortSignal.timeout(18000)){const response=await fetch(path,{cache:'no-store',signal});const data=await response.json();if(!response.ok)throw new Error(data.error||'Console connection interrupted');return data;}
 async function refresh(){
   if(bot==='robinhood')void refreshSizing();
   if(loading){if(bot==='neon'){neonRefreshQueued=true;neonRefreshGeneration=generation;}return;}loading=true;const token=generation;let completed=false;
   try{
-    const next=await fetchJSON('/api/state?bot='+bot);
+    let stateSignal;
+    if(bot==='nitrogen'){nitrogenStateAbort?.abort();nitrogenStateAbort=new AbortController();stateSignal=AbortSignal.any([nitrogenStateAbort.signal,AbortSignal.timeout(18000)]);}
+    const next=await fetchJSON('/api/state?bot='+bot,stateSignal);
     if(token!==generation)return;
     state=next;completed=true;error=false;$('offline').hidden=true;
     if(bot==='neon'){window.NeonWorkspace.update(next);return;}
     if(bot==='krypton'||bot==='helium'||bot==='nitrogen'||bot==='radon'){render();return;}
     if(!state.assets.some(a=>a.asset_id===selectedAsset))selectedAsset=(state.assets.find(a=>a.state==='open')||state.assets[0]||{}).asset_id||'';
     render();await Promise.all([loadChart(token),tab==='wallets'?loadWallets(token):Promise.resolve()]);
-  }catch(e){if(token===generation){error=true;if(bot==='neon')window.NeonWorkspace.disconnected();if(bot==='helium')window.HeliumView.disconnected();$('offline').textContent='Data connection interrupted. '+e.message+' Last displayed values are retained; they are not current. Automatic retry every 5 seconds.';$('offline').hidden=false;}}
-  finally{loading=false;freshness();if(token===generation&&neonRefreshQueued&&neonRefreshGeneration===token){neonRefreshQueued=false;if(completed&&bot==='neon')setTimeout(()=>{if(bot==='neon'&&generation===token)refresh();},60);}}
+  }catch(e){if(token===generation){error=true;if(bot==='neon')window.NeonWorkspace.disconnected();if(bot==='helium')window.HeliumView.disconnected();if(bot==='nitrogen')window.NitrogenView.disconnected();$('offline').textContent='Data connection interrupted. '+e.message+' Last displayed values are retained; they are not current. Automatic retry every 5 seconds.';$('offline').hidden=false;}}
+  finally{if(token===generation)loading=false;freshness();if(token===generation&&neonRefreshQueued&&neonRefreshGeneration===token){neonRefreshQueued=false;if(completed&&bot==='neon')setTimeout(()=>{if(bot==='neon'&&generation===token)refresh();},60);}}
 }
 async function loadChart(token=generation){
   const a=state?.assets.find(a=>a.asset_id===selectedAsset);
@@ -132,7 +135,7 @@ function ack(q){if(!q?.available)return '<span class="warning">Unavailable</span
 function render(){
   setSizingActive();
   window.NeonWorkspace.setActive(bot==='neon');
-  window.HeliumView.setActive(bot==='helium');
+  window.HeliumView.setActive(bot==='helium');window.NitrogenView.setActive(bot==='nitrogen');
   document.querySelectorAll('.market-grid,.ledger-panel,.detail-grid').forEach(el=>{el.hidden=bot==='jev'||bot==='krypton'||bot==='helium'||bot==='nitrogen'||bot==='radon';});
   $('jev-panel').hidden=bot!=='jev';
   $('krypton-panel').hidden=bot!=='krypton';
@@ -373,7 +376,8 @@ document.querySelectorAll('[data-bot]').forEach(button=>button.addEventListener(
   $('helium-panel').hidden=true;
   $('nitrogen-panel').hidden=true;
   $('radon-panel').hidden=true;
-  bot=button.dataset.bot;window.NeonWorkspace.setActive(bot==='neon');window.HeliumView.setActive(bot==='helium');history.replaceState(null,'','?bot='+bot);generation++;neonRefreshQueued=false;neonRefreshGeneration=-1;selectedAsset='';chart=null;state=null;loading=false;error=false;query='';wallets=null;walletError=false;walletLoading=false;selectedWallet='';walletDetail=null;walletDetailError=false;walletDetailLoading='';$('filter').value='';$('offline').hidden=true;
+  nitrogenStateAbort?.abort();nitrogenStateAbort=null;
+  bot=button.dataset.bot;window.NeonWorkspace.setActive(bot==='neon');window.HeliumView.setActive(bot==='helium');window.NitrogenView.setActive(bot==='nitrogen');history.replaceState(null,'','?bot='+bot);generation++;neonRefreshQueued=false;neonRefreshGeneration=-1;selectedAsset='';chart=null;state=null;loading=false;error=false;query='';wallets=null;walletError=false;walletLoading=false;selectedWallet='';walletDetail=null;walletDetailError=false;walletDetailLoading='';$('filter').value='';$('offline').hidden=true;
   document.querySelectorAll('[data-bot]').forEach(b=>{b.classList.toggle('selected',b===button);b.setAttribute('aria-pressed',String(b===button));});
   renderBotIdentity();$('account-id').textContent='Reading selected account…';$('account-id').title='';$('strategy-note').textContent='Reading account policy…';$('worker-freshness').textContent='Waiting for worker status';$('trial-state').textContent='Reading trial status';$('trial-deadline').textContent='—';$('quote-price').textContent='—';$('quote-change').textContent='Loading selected account';$('quote-age').textContent='—';$('instrument-state').textContent='LOADING';html('asset-select','<option>Loading coins…</option>');$('asset-select').disabled=true;for(const id of ['guardrails','health-mini','evidence','rejections','ta'])html(id,'');for(const id of ['open-count','fill-count','trial-return'])$(id).textContent='—';$('trial-detail').textContent='Reading separate account';$('footer-id').textContent='Loading selected account';$('notice').textContent='Observation only · reading separate account';clearCanvas($('equity-chart'));html('metrics',metric('Account','Loading…','Reading separate persistent account'));html('activity','<div class="empty">Reading selected account…</div>');$('chart-empty').hidden=false;$('chart-empty').textContent='Loading selected account…';clearCanvas($('price-chart'));refresh();
 }));
@@ -390,7 +394,7 @@ $('price-chart').addEventListener('pointermove',e=>{if(!plot)return;const rect=e
 $('price-chart').addEventListener('pointerleave',()=>{$('chart-tip').hidden=true;});
 let resizeTimer;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(()=>{if(state){drawChart();drawEquity();}},100);});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
-renderBotIdentity();window.NeonWorkspace.configure({refresh:()=>{if(bot==='neon')refresh();}});window.NeonWorkspace.setActive(bot==='neon');window.HeliumView.setActive(bot==='helium');document.querySelectorAll('[data-bot]').forEach(b=>{b.classList.toggle('selected',b.dataset.bot===bot);b.setAttribute('aria-pressed',String(b.dataset.bot===bot));});
+renderBotIdentity();window.NeonWorkspace.configure({refresh:()=>{if(bot==='neon')refresh();}});window.NeonWorkspace.setActive(bot==='neon');window.HeliumView.setActive(bot==='helium');window.NitrogenView.setActive(bot==='nitrogen');document.querySelectorAll('[data-bot]').forEach(b=>{b.classList.toggle('selected',b.dataset.bot===bot);b.setAttribute('aria-pressed',String(b.dataset.bot===bot));});
 setSizingActive();setInterval(()=>{if(!document.hidden)refresh();},5000);setInterval(freshness,1000);refresh();
 
 $('rejection-scope').addEventListener('change',event=>{rejectionScope=event.target.value;if(state&&state.rejection_scopes)renderReasons();});
