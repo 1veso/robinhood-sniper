@@ -187,8 +187,9 @@ class RadonTests(unittest.TestCase):
     def test_copied_foreign_ledger_and_runtime_symlink_refused(self):
         with tempfile.TemporaryDirectory() as other:
             root=Path(other);folder=root/'radon_bot/runtime';folder.mkdir(parents=True)
-            with sqlite3.connect(folder/'book.sqlite3') as db:
-                db.execute('CREATE TABLE meta(key TEXT,value TEXT)');db.execute('INSERT INTO meta VALUES(?,?)',('bot_id','"helium"'))
+            with contextlib.closing(sqlite3.connect(folder/'book.sqlite3')) as db:
+                with db:
+                    db.execute('CREATE TABLE meta(key TEXT,value TEXT)');db.execute('INSERT INTO meta VALUES(?,?)',('bot_id','"helium"'))
             (folder/'account.json').write_text('{"bot_id":"helium"}')
             before=(folder/'book.sqlite3').read_bytes()
             with self.assertRaises(ValueError):Book(root,self.cfg,initialize=True)
