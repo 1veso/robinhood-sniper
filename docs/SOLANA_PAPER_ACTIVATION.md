@@ -125,3 +125,18 @@ Neon's isolated full replay passed all eleven checks, including rejected entries
 quote failure, one committed entry, duplicate prevention, recovery and exits.
 That synthetic account remains excluded from live-data paper performance.
 Oxygen completed one verified live-data paper scan with no BUY output.
+
+## Holder collector implementation update
+
+The Xenon/Argon collector now enumerates classic SPL and Token-2022 token accounts
+(up to 4,096 records), counts positive-balance owners, and reconciles raw balances
+to unchanged mint supply. It retains a finalized slot/block timestamp and rejects
+partial enumeration, duplicates, stale state and changing mint metadata. This
+replaces the previous largest-20-only holder coverage restriction. Token-2022
+extensions are not silently excluded by a fixed account-size filter. Holder owner
+counts still do not prove independent controllers or sellability.
+
+The first live validation attempt against the existing Alchemy endpoint received
+HTTP 429. It did not produce verified holder evidence or an entry. PumpSwap route
+coverage, matched historical endpoints and buyer-controller evidence remain
+outstanding; this component alone does not unblock Xenon/Argon fills.

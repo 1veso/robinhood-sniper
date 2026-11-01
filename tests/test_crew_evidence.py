@@ -216,7 +216,14 @@ class CpEvidenceTests(unittest.TestCase):
             self.accounts[address]=token(self.mint,owner,amount)
         original=self.rpc.rpc
         def reader(method,params=None):
-            if method=='getTokenLargestAccounts':return {'context':{'slot':100},'value':[{'address':a} for a in addresses]}
+            if method=='getAccountInfo' and params[0]==self.mint and params[1].get('encoding')=='jsonParsed':
+                return {'context':{'slot':100},'value':{'owner':cp.TOKEN,'executable':False,'data':{'parsed':{'type':'mint','info':{'supply':str(supply),'decimals':6,'isInitialized':True}}}}}
+            if method=='getProgramAccounts':
+                rows=[]
+                for address in addresses:
+                    raw=base64.b64decode(self.accounts[address]['data'][0])
+                    rows.append({'pubkey':address,'account':{'owner':cp.TOKEN,'executable':False,'data':{'parsed':{'type':'account','info':{'mint':self.mint,'owner':cp.key(raw,32),'state':'initialized','tokenAmount':{'amount':str(cp.u64(raw,64)),'decimals':6}}}}}})
+                return {'context':{'slot':100},'value':rows}
             return original(method,params)
         self.rpc.rpc=reader
     def test_supply_complete_holder_accounts_count_owners_not_controllers(self):
@@ -226,17 +233,17 @@ class CpEvidenceTests(unittest.TestCase):
         self.assertEqual(row['dossier_fields']['observations']['holders_now']['value'],1)
         self.assertEqual(row['holder_coverage']['context']['covered_balance_raw'],'100')
         self.assertEqual(row['independence']['status'],'UNKNOWN')
-    def test_partial_largest_accounts_never_claim_complete_holder_count(self):
+    def test_partial_enumeration_never_claims_complete_holder_count(self):
         self.holder_fixture(supply=1000)
         row=self.cp_capture()
         self.assertEqual(row['holder_coverage']['status'],'UNKNOWN')
         self.assertNotIn('holders_now',row['dossier_fields']['observations'])
         self.assertEqual(row['observations']['reported_total_holders']['value'],100)
-    def test_oversized_largest_account_response_is_rejected(self):
+    def test_more_than_twenty_accounts_can_reconcile(self):
         self.holder_fixture(supply=21,amounts=tuple([1]*21))
         row=self.cp_capture()
-        self.assertEqual(row['holder_coverage']['status'],'UNKNOWN')
-        self.assertNotIn('holders_now',row['dossier_fields']['observations'])
+        self.assertEqual(row['holder_coverage']['status'],'VALID')
+        self.assertEqual(row['dossier_fields']['observations']['holders_now']['value'],21)
 
 
 if __name__=='__main__':unittest.main()

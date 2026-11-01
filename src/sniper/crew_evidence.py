@@ -123,7 +123,7 @@ class EvidenceStore:
 
 
 class ReadOnlyRpc(SolanaExecutionReader):
-    ALLOWED_RPC=SolanaExecutionReader.ALLOWED_RPC|{'getMultipleAccounts','getBlockTime','getBlock','getTokenLargestAccounts'}
+    ALLOWED_RPC=SolanaExecutionReader.ALLOWED_RPC|{'getMultipleAccounts','getBlockTime','getBlock','getTokenLargestAccounts','getProgramAccounts'}
 
 
 class Producer:
@@ -164,47 +164,8 @@ class Producer:
             self.rpc=ReadOnlyRpc(rpc_url=path.read_text(encoding='utf-8-sig').strip() if path.is_file() else 'https://api.mainnet-beta.solana.com')
 
     def _holders(self,mint):
-        """At most twenty accounts; only a full supply reconciliation is complete.
-
-        This counts distinct positive classic-SPL account owners. It never
-        excludes infrastructure or equates owner count with controller count.
-        """
-        if self._rpc('getGenesisHash')!=MAINNET_GENESIS:raise ValueError('Solana mainnet identity required')
-        largest=self._rpc('getTokenLargestAccounts',[mint,{'commitment':'finalized'}])
-        first=largest.get('context',{}).get('slot');rows=largest.get('value')
-        if type(first)is not int or not isinstance(rows,list) or not 0<len(rows)<=20:
-            raise ValueError('Bounded largest-account response required')
-        addresses=[validate_address(x['address']) for x in rows]
-        if len(set(addresses))!=len(addresses) or mint in addresses:raise ValueError('Duplicate holder account')
-        accounts,slot=self._batch([mint,*addresses],first)
-        raw=cp.blob(accounts[mint],cp.TOKEN,82)
-        decimals=raw[44];cp.mint_account(accounts[mint],decimals)
-        supply=cp.u64(raw,36)
-        if supply<=0:raise ValueError('Positive minted supply required')
-        total=0;owners=set();covered=[]
-        for address in addresses:
-            token=cp.blob(accounts[address],cp.TOKEN,165)
-            if cp.key(token,0)!=mint or token[108] not in (1,2):raise ValueError('Holder mint/account state differs')
-            amount=cp.u64(token,64);total+=amount
-            owner=cp.key(token,32)
-            covered.append({'address':address,'owner':owner,'balance_raw':str(amount)})
-            if amount:owners.add(owner)
-        stamp=self._rpc('getBlockTime',[slot])
-        if type(stamp)is not int or not 0<=int(self.clock())-stamp<=MAX_AGE:raise ValueError('Holder snapshot stale')
-        block=self._rpc('getBlock',[slot,{'commitment':'finalized','transactionDetails':'none','rewards':False}])
-        if not isinstance(block,dict) or not isinstance(block.get('blockhash'),str) or block.get('blockTime')!=stamp:
-            raise ValueError('Canonical holder slot unavailable')
-        context={'slot':slot,'block_hash':block['blockhash'],'block_time':stamp,'commitment':'finalized',
-                 'accounts_sha256':digest(accounts),'minted_supply_raw':str(supply),'covered_balance_raw':str(total),
-                 'accounts_examined':len(addresses),'covered_accounts':covered,'positive_owners':sorted(owners),
-                 'holder_definition':'distinct owners of positive classic-SPL token balances; infrastructure included'}
-        if total!=supply:
-            return {'status':'UNKNOWN','reason':'largest_accounts_do_not_cover_complete_supply','context':context}
-        recheck=self._rpc('getBlock',[slot,{'commitment':'finalized','transactionDetails':'none','rewards':False}])
-        if recheck.get('blockhash')!=block['blockhash']:raise ValueError('Canonical holder slot changed')
-        return {'status':'VALID','value':len(owners),'observed_at':stamp,'received_at':int(self.clock()),
-                'source':'solana_finalized_supply_reconciled_accounts','independently_verified':True,
-                'source_observation_time_known':True,'context':context,'controller_independence':'UNKNOWN'}
+        from .holder_evidence import collect
+        return collect(self._rpc, mint, self.clock)
 
     def _pool(self,identity,mint,pool,ticket,reference_price):
         if self._rpc('getGenesisHash')!=MAINNET_GENESIS: raise ValueError('Solana mainnet identity required')
