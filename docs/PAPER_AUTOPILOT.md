@@ -1,5 +1,10 @@
 # Seven-day paper autopilot
 
+The optional `desk-analytics` job collects derived DuckDB research snapshots every
+15 minutes through this same supervisor. It is disabled by default; see the
+[installation and source-coverage notes](INTEGRATION_ROADMAP.md). It runs outside
+entry windows, has a 90-second limit, and cannot modify source accounts or entries.
+
 The local supervisor runs all nine desks through their existing isolated workers.
 Argon retains its designed relationship to Xenon's paper account. No signing,
 wallet transaction, real execution or Telegram delivery is authorized by this setup.

@@ -170,6 +170,12 @@ Details: [sizing study](docs/RADEON_SIZING_COMPARISON.md),
 
 ## Console and background operation
 
+Optional [DuckDB analytics and integration roadmap](docs/INTEGRATION_ROADMAP.md)
+adds account-separated research extracts from the existing SQLite ledgers. It
+uses the current supervisor, is disabled by default, and grants no trading
+authority. The roadmap evaluates all ten suggested upstream libraries and records
+which integrations are useful, conditional, or duplicative.
+
 On an initialized installation, open **http://127.0.0.1:8765/** or the
 **TENDIES TRACKER** desktop shortcut. The console provides bot switching,
 positions, cost-aware financials, recorded market charts, decisions, evidence,

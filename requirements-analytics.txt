@@ -1,0 +1,2 @@
+# Optional analytical sidecar only. The paper engine has no DuckDB dependency.
+duckdb==1.4.5
