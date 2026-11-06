@@ -19,6 +19,7 @@ from sniper.autopilot_trial import enrollment, read
 from sniper.process_tree import launch
 
 EXTRA={
+    'desk-analytics':(900,90,['desk_analytics.py','collect']),
     'experimental-paper':(60,190,['experimental_paper.py','once']),
     'crew':(60,45,['crew.py','run']),
     'oxygen-watch':(600,590,['oxygen_bot.py','watch']),
@@ -44,7 +45,14 @@ def dashboard_ready():
             return response.status==200
     except Exception:return False
 
+def job_enabled(name,root):
+    if name=='desk-analytics':
+        from sniper.desk_analytics import enabled
+        return enabled(root)
+    return True
+
 def once(name,root=ROOT):
+    if not job_enabled(name,root):return 0
     with process_lock(root/'runtime/desktop'/(name+'.autopilot-job.lock')):
         state=read(root/'runtime/desktop/paper-autopilot.json')
         if name in WINDOW_JOBS and not window_open(state,time.time()): return 0
@@ -86,6 +94,8 @@ def run(root=ROOT):
                     if len(active)>=8 or launched>=2:break
                     if name in active or now<records[name].get('next_at',0):continue
                     record=records[name]
+                    if not job_enabled(name,root):
+                        record.update(phase='DISABLED',next_at=now+30);continue
                     if name in WINDOW_JOBS and not window_open(manifest,now):
                         record.update(phase='TRIAL_ENDED',next_at=now+60);continue
                     if name=='oxygen-report':
